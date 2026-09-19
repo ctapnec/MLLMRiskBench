@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+
+from .i18n import template as _ui_template, text as _ui_text
+
 import hashlib
 import html
 import math
@@ -21,12 +24,12 @@ from .catalog import _INVENTORY_MAX_ENTRIES, _INVENTORY_MAX_DEPTH
 
 
 _PIPELINE_STAGES: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("Revision receipt", (".project-revision.json",)),
-    ("Source receipts", ("source-conformance.json",)),
-    ("Envelopes", (".request-envelope.json",)),
-    ("Attestations", (".live-attestation.json",)),
-    ("Canaries", (".lane-canary.json", ".canary.json")),
-    ("Grids", (".grid.json",)),
+    (_ui_text("artifacts.revision_receipt"), (".project-revision.json",)),
+    (_ui_text("artifacts.source_receipts"), ("source-conformance.json",)),
+    (_ui_text("artifacts.envelopes"), (".request-envelope.json",)),
+    (_ui_text("artifacts.attestations"), (".live-attestation.json",)),
+    (_ui_text("artifacts.canaries"), (".lane-canary.json", ".canary.json")),
+    (_ui_text("artifacts.grids"), (".grid.json",)),
     ("Level-1/2", ()),  # filled from level1/level2/suite counts below
 )
 _ANALYSIS_MARKERS = ("level1", "level2", "suite-evidence")
@@ -101,8 +104,13 @@ def _pipeline_svg(stages: Mapping[str, StageInventory]) -> str:
     node_w, node_h, gap, top = 128, 58, 24, 12
     total_w = len(_PIPELINE_STAGES) * node_w + (len(_PIPELINE_STAGES) - 1) * gap
     parts = [
-        f"<svg class='pipeline' viewBox='0 0 {total_w} {node_h + 2 * top}' "
-        "role='img' aria-label='campaign pipeline'>",
+        (
+            "<svg class='pipeline' viewBox='0 0 "
+            + f"{total_w}"
+            + " "
+            + f"{node_h + 2 * top}"
+            + _ui_template("' role='img' aria-label='[[attr:artifacts.campaign_pipeline]]'>")
+        ),
         "<defs><marker id='arrowhead' markerWidth='7' markerHeight='7' "
         "refX='6' refY='3.5' orient='auto'><path d='M0 0L7 3.5L0 7z'/>"
         "</marker></defs>",
@@ -110,14 +118,21 @@ def _pipeline_svg(stages: Mapping[str, StageInventory]) -> str:
     for index, (label, _suffixes) in enumerate(_PIPELINE_STAGES):
         x = index * (node_w + gap)
         stage = stages.get(label, StageInventory())
-        cls = "node present" if stage.count else "node"
+        cls = _ui_text("artifacts.node_present") if stage.count else "node"
         if stage.count:
             count_text = f"{stage.count} file{'s' if stage.count != 1 else ''}"
         else:
-            count_text = "none yet"
+            count_text = _ui_text("artifacts.none_yet")
         extra = (
-            f"<text class='count sub' x='{x + node_w / 2}' y='{top + 51}' "
-            f"text-anchor='middle'>+{stage.superseded} archived</text>"
+            (
+                "<text class='count sub' x='"
+                + f"{x + node_w / 2}"
+                + "' y='"
+                + f"{top + 51}"
+                + "' text-anchor='middle'>+"
+                + f"{stage.superseded}"
+                + _ui_template(" [[text:artifacts.archived]]</text>")
+            )
             if stage.superseded
             else ""
         )
@@ -205,6 +220,7 @@ class Job:
             return self.restored_exit
         code = self.process.poll()
         from .job_runtime import read_state
+
         record = getattr(self.process, "terminal", None) or read_state(self.directory)
         if record and record.get("supervisor", {}).get("pid") == getattr(self.process, "pid", None):
             if record["state"] in {"complete", "failed"}:
@@ -251,7 +267,7 @@ def assert_durable_job_state_path_free(
                 model = token[marker + len("vllm:") :].strip()
                 if _is_explicit_local_path(model):
                     raise ValueError(
-                        "refusing to persist an explicit local checkpoint path"
+                        _ui_text("artifacts.refusing_to_persist_an_explicit_local_checkpoint_path")
                     )
                 offset = marker + len("vllm:")
 
@@ -426,15 +442,8 @@ def derived_index_path_quarantined(value: str) -> bool:
     ``engineering-study`` do not match.
     """
 
-    parts = tuple(
-        part.casefold()
-        for part in value.replace("\\", "/").split("/")
-        if part
-    )
-    return any(
-        part in _DERIVED_SCAN_EXCLUDED_DIRS or part.startswith("pytest-")
-        for part in parts
-    )
+    parts = tuple(part.casefold() for part in value.replace("\\", "/").split("/") if part)
+    return any(part in _DERIVED_SCAN_EXCLUDED_DIRS or part.startswith("pytest-") for part in parts)
 
 
 def explicit_engineering_boundary(path: Path) -> bool:
@@ -603,23 +612,31 @@ def _marker_artifact_path(
     """Resolve and byte-check one completion-marker artifact descriptor."""
 
     if not isinstance(descriptor, Mapping):
-        raise ValueError("completion marker artifact descriptor missing")
+        raise ValueError(_ui_text("artifacts.completion_marker_artifact_descriptor_missing"))
     name = str(descriptor.get("file", ""))
     if not name or "/" in name or "\\" in name:
-        raise ValueError(f"artifact descriptor names a non-bare file {name!r}")
+        raise ValueError(
+            (_ui_text("artifacts.artifact_descriptor_names_a_non_bare_file") + f"{name!r}")
+        )
     path = marker_path.parent / name
     if path.is_symlink() or not path.is_file():
-        raise ValueError(f"artifact {name!r} is missing or not a regular file")
+        raise ValueError(
+            ("artifact " + f"{name!r}" + _ui_text("artifacts.is_missing_or_not_a_regular_file"))
+        )
     size = path.stat().st_size
     if size != descriptor.get("bytes"):
-        raise ValueError(f"artifact {name!r} byte size changed since completion")
+        raise ValueError(
+            ("artifact " + f"{name!r}" + _ui_text("artifacts.byte_size_changed_since_completion"))
+        )
     if verify_sha:
         digest = hashlib.sha256()
         with path.open("rb") as handle:
             for block in iter(lambda: handle.read(1024 * 1024), b""):
                 digest.update(block)
         if digest.hexdigest() != descriptor.get("sha256"):
-            raise ValueError(f"artifact {name!r} digest changed since completion")
+            raise ValueError(
+                ("artifact " + f"{name!r}" + _ui_text("artifacts.digest_changed_since_completion"))
+            )
     return path
 
 
@@ -663,9 +680,9 @@ def iter_completed_markers(
                 stats["truncated"] = 1
                 break
             if entry.is_dir():
-                if not derived_scan_directory_excluded(
-                    entry
-                ) and not _under_excluded_root(entry, canonical_exclusions):
+                if not derived_scan_directory_excluded(entry) and not _under_excluded_root(
+                    entry, canonical_exclusions
+                ):
                     stack.append(entry)
                 continue
             name = entry.name
@@ -745,11 +762,23 @@ def usage_rows_from_marker(
                 record = strict_json_loads(line)
             except (ValueError, RecursionError) as exc:
                 raise ValueError(
-                    f"invalid responses usage JSON at {responses_path}:{n_lines}: {exc}"
+                    (
+                        _ui_text("artifacts.invalid_responses_usage_json_at")
+                        + f"{responses_path}"
+                        + ":"
+                        + f"{n_lines}"
+                        + ": "
+                        + f"{exc}"
+                    )
                 ) from exc
             if not isinstance(record, Mapping):
                 raise ValueError(
-                    f"non-object responses usage row at {responses_path}:{n_lines}"
+                    (
+                        _ui_text("artifacts.non_object_responses_usage_row_at")
+                        + f"{responses_path}"
+                        + ":"
+                        + f"{n_lines}"
+                    )
                 )
             provider, model = _response_identity(record)
             raw = record.get("raw")
@@ -763,7 +792,13 @@ def usage_rows_from_marker(
     expected = artifacts["responses"].get("records")
     if isinstance(expected, int) and expected != n_lines:
         raise ValueError(
-            f"responses artifact record count changed since completion ({n_lines} != {expected})"
+            (
+                _ui_text("artifacts.responses_artifact_record_count_changed_since_completion")
+                + f"{n_lines}"
+                + " != "
+                + f"{expected}"
+                + ")"
+            )
         )
     trails_path = _marker_artifact_path(marker_path, artifacts.get("trails"), verify_sha=verify_sha)
     with trails_path.open(encoding="utf-8") as handle:
@@ -774,11 +809,23 @@ def usage_rows_from_marker(
                 record = strict_json_loads(line)
             except (ValueError, RecursionError) as exc:
                 raise ValueError(
-                    f"invalid trails usage JSON at {trails_path}:{line_number}: {exc}"
+                    (
+                        _ui_text("artifacts.invalid_trails_usage_json_at")
+                        + f"{trails_path}"
+                        + ":"
+                        + f"{line_number}"
+                        + ": "
+                        + f"{exc}"
+                    )
                 ) from exc
             if not isinstance(record, Mapping):
                 raise ValueError(
-                    f"non-object trails usage row at {trails_path}:{line_number}"
+                    (
+                        _ui_text("artifacts.non_object_trails_usage_row_at")
+                        + f"{trails_path}"
+                        + ":"
+                        + f"{line_number}"
+                    )
                 )
             raw = record.get("raw")
             raw = raw if isinstance(raw, Mapping) else {}
@@ -787,9 +834,7 @@ def usage_rows_from_marker(
                 continue  # stage made no judge call
             if judge_call.get("sampling_control") == "not_queried_provider_refusal":
                 continue  # provider refused; no call was made or billed
-            provider = canonical_provider_name(
-                str(judge_call.get("provider") or "unknown")
-            )
+            provider = canonical_provider_name(str(judge_call.get("provider") or "unknown"))
             model = str(
                 judge_call.get("provider_resolved_model") or raw.get("judge_model") or "unknown"
             )
@@ -852,9 +897,7 @@ def _judge_row_usage(record: Mapping[str, Any]) -> tuple[str, str, dict[str, int
         return None
     if judge_call.get("sampling_control") == "not_queried_provider_refusal":
         return None
-    provider = canonical_provider_name(
-        str(judge_call.get("provider") or "unknown")
-    )
+    provider = canonical_provider_name(str(judge_call.get("provider") or "unknown"))
     model = str(judge_call.get("provider_resolved_model") or raw.get("judge_model") or "unknown")
     return provider, model, _tokens_by_category(judge_call.get("tokens"), None)
 
@@ -893,9 +936,9 @@ def failed_cell_usage_rows(
             if seen > max_entries:
                 return rows
             if entry.is_dir():
-                if not derived_scan_directory_excluded(
-                    entry
-                ) and not _under_excluded_root(entry, canonical_exclusions):
+                if not derived_scan_directory_excluded(entry) and not _under_excluded_root(
+                    entry, canonical_exclusions
+                ):
                     stack.append(entry)
                 continue
             if not entry.name.endswith(".error.json"):
@@ -984,9 +1027,7 @@ def failed_cell_usage_rows(
                 and not isinstance(logical_calls, bool)
                 and logical_calls > 0
             ):
-                provider = canonical_provider_name(
-                    str(audit.get("provider") or "unknown")
-                )
+                provider = canonical_provider_name(str(audit.get("provider") or "unknown"))
                 model = str(
                     audit.get("resolved_model")
                     or err.get("target")
@@ -1018,13 +1059,18 @@ _USAGE_CACHE = ValidationCache(entries=32)
 
 
 def collect_usage(
-    root: Path, *, verify_sha: bool = False, excluded_roots: tuple[Path, ...] = (),
+    root: Path,
+    *,
+    verify_sha: bool = False,
+    excluded_roots: tuple[Path, ...] = (),
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Reuse unchanged output accounting; explicit full checks bypass the cache."""
     if verify_sha:
         return _collect_usage(root, verify_sha=True, excluded_roots=excluded_roots)
     key = (str(root.absolute()), tuple(str(path.absolute()) for path in excluded_roots))
-    return _USAGE_CACHE.get(key, lambda: _collect_usage(root, excluded_roots=excluded_roots), trees=(root,))
+    return _USAGE_CACHE.get(
+        key, lambda: _collect_usage(root, excluded_roots=excluded_roots), trees=(root,)
+    )
 
 
 def _collect_usage(

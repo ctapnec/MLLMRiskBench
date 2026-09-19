@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+
+from .i18n import text as _ui_text
+
 import json
 import sqlite3
 import threading
@@ -58,7 +61,7 @@ class ConsoleDB(WorkspaceStoreMixin, WorkspaceResultsMixin, WorkspaceCostsMixin)
             self._migrate()
             self.healthy = True
         except sqlite3.Error as exc:
-            self.last_error = f"database open failed: {exc}"
+            self.last_error = _ui_text("storage.database_open_failed") + f"{exc}"
             try:
                 if self._conn is not None:
                     self._conn.close()
@@ -209,7 +212,7 @@ class ConsoleDB(WorkspaceStoreMixin, WorkspaceResultsMixin, WorkspaceCostsMixin)
 
     def _job_row(
         self,
-        job: "Job",
+        job: _ui_text("storage.job"),
         state: str | None = None,
         exit_code: int | None = None,
     ) -> tuple:
@@ -252,7 +255,7 @@ class ConsoleDB(WorkspaceStoreMixin, WorkspaceResultsMixin, WorkspaceCostsMixin)
 
     def upsert_job(
         self,
-        job: "Job",
+        job: _ui_text("storage.job"),
         *,
         state: str | None = None,
         exit_code: int | None = None,
@@ -270,7 +273,7 @@ class ConsoleDB(WorkspaceStoreMixin, WorkspaceResultsMixin, WorkspaceCostsMixin)
 
     def record_terminal(
         self,
-        job: "Job",
+        job: _ui_text("storage.job"),
         pin: str,
         usage_rows: list[dict[str, Any]],
         *,
@@ -415,7 +418,7 @@ class ConsoleDB(WorkspaceStoreMixin, WorkspaceResultsMixin, WorkspaceCostsMixin)
             or not isinstance(limit, int)
             or limit <= 0
         ):
-            raise ValueError("invalid Jobs history window")
+            raise ValueError(_ui_text("storage.invalid_jobs_history_window"))
         return self._query(
             "SELECT * FROM jobs WHERE started_at >= ? AND started_at <= ? "
             "ORDER BY started_at DESC, job_id DESC LIMIT ?",
@@ -431,12 +434,8 @@ class ConsoleDB(WorkspaceStoreMixin, WorkspaceResultsMixin, WorkspaceCostsMixin)
     def load_report_jobs(self, *, limit: int) -> list[sqlite3.Row] | None:
         """Bounded retained Level-1/2 Jobs for report ownership recovery."""
 
-        if (
-            isinstance(limit, bool)
-            or not isinstance(limit, int)
-            or not 1 <= limit <= 10_001
-        ):
-            raise ValueError("invalid report-job limit")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 10_001:
+            raise ValueError(_ui_text("storage.invalid_report_job_limit"))
         return self._query(
             "SELECT job_id, command, argv, state, exit_code FROM jobs "
             "WHERE command IN ('level1_evidence','level2_report') "
@@ -458,7 +457,7 @@ class ConsoleDB(WorkspaceStoreMixin, WorkspaceResultsMixin, WorkspaceCostsMixin)
             or not isinstance(offset, int)
             or offset < 0
         ):
-            raise ValueError("invalid campaign-run page")
+            raise ValueError(_ui_text("storage.invalid_campaign_run_page"))
         return self._query(
             "SELECT * FROM runs ORDER BY created_at DESC, job_id DESC LIMIT ? OFFSET ?",
             (limit, offset),
@@ -487,7 +486,7 @@ class ConsoleDB(WorkspaceStoreMixin, WorkspaceResultsMixin, WorkspaceCostsMixin)
             or not isinstance(offset, int)
             or offset < 0
         ):
-            raise ValueError("invalid campaign page")
+            raise ValueError(_ui_text("storage.invalid_campaign_page"))
         return self._query(
             self._CAMPAIGN_ROWS
             + " ORDER BY created_at DESC,job_id DESC,source_priority ASC LIMIT ? OFFSET ?",
@@ -517,15 +516,10 @@ class ConsoleDB(WorkspaceStoreMixin, WorkspaceResultsMixin, WorkspaceCostsMixin)
     def list_run_owners(self, *, limit: int) -> list[sqlite3.Row] | None:
         """Bounded canonical-output ownership inputs for report association."""
 
-        if (
-            isinstance(limit, bool)
-            or not isinstance(limit, int)
-            or not 1 <= limit <= 10_001
-        ):
-            raise ValueError("invalid run-owner limit")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 10_001:
+            raise ValueError(_ui_text("storage.invalid_run_owner_limit"))
         return self._query(
-            "SELECT job_id, out_dir FROM runs "
-            "ORDER BY created_at DESC, job_id DESC LIMIT ?",
+            "SELECT job_id, out_dir FROM runs ORDER BY created_at DESC, job_id DESC LIMIT ?",
             (limit,),
         )
 
@@ -536,11 +530,7 @@ class ConsoleDB(WorkspaceStoreMixin, WorkspaceResultsMixin, WorkspaceCostsMixin)
         # Rows from an older, overly broad reindex remain non-authoritative
         # derived state.  Hide them immediately; the next reindex deletes and
         # rebuilds the table using the matching discovery boundary.
-        return [
-            row
-            for row in rows
-            if not derived_index_path_quarantined(str(row["path"] or ""))
-        ]
+        return [row for row in rows if not derived_index_path_quarantined(str(row["path"] or ""))]
 
     def usage_totals(
         self,

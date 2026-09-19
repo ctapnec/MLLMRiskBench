@@ -8,6 +8,8 @@ ownership.
 
 from __future__ import annotations
 
+from .i18n import text as _ui_text
+
 import argparse
 import ctypes
 import errno
@@ -79,14 +81,15 @@ _COMPACT_SECRET_OPTION_NAMES = frozenset(
         "refreshtoken",
     }
 )
-_LIVENESS_UNAVAILABLE_DETAIL = (
-    "Exact named-session liveness is unavailable; running state is not asserted."
+_LIVENESS_UNAVAILABLE_DETAIL = _ui_text(
+    "external_measured.exact_named_session_liveness_is_unavailable_running_state_is_not"
 )
-_LIVENESS_UNPROBED_DETAIL = (
-    "Exact named-session liveness was not probed because the bounded scan limit was "
-    "reached; running state is not asserted."
+_LIVENESS_UNPROBED_DETAIL = _ui_text(
+    "external_measured.exact_named_session_liveness_was_not_probed_because_the_bounded_s"
 )
-_LIVENESS_STOPPED_DETAIL = "The exact registered named session is not running."
+_LIVENESS_STOPPED_DETAIL = _ui_text(
+    "external_measured.the_exact_registered_named_session_is_not_running"
+)
 
 
 @dataclass(frozen=True)
@@ -134,13 +137,22 @@ def _strict_epoch(value: object, label: str) -> float:
             epoch = math.inf
     if not math.isfinite(epoch) or not 0 <= epoch <= _MAX_SUPPORTED_EPOCH:
         raise ValueError(
-            f"{label} must be an epoch in the supported UTC datetime range "
-            "1970-01-01 through 3000-01-01"
+            (
+                f"{label}"
+                + _ui_text(
+                    "external_measured.must_be_an_epoch_in_the_supported_utc_datetime_range_1970_01_01_t"
+                )
+            )
         )
     try:
         datetime.fromtimestamp(epoch, timezone.utc)
     except (OSError, OverflowError, ValueError) as exc:
-        raise ValueError(f"{label} is not renderable as a supported UTC datetime") from exc
+        raise ValueError(
+            (
+                f"{label}"
+                + _ui_text("external_measured.is_not_renderable_as_a_supported_utc_datetime")
+            )
+        ) from exc
     return epoch
 
 
@@ -198,9 +210,7 @@ def _secret_bearing_option(argument: str) -> bool:
     if not option_name:
         return False
     components = tuple(
-        component
-        for component in re.split(r"[-_.]+", option_name.casefold())
-        if component
+        component for component in re.split(r"[-_.]+", option_name.casefold()) if component
     )
     if any(component in _SECRET_OPTION_COMPONENTS for component in components):
         return True
@@ -220,13 +230,15 @@ def _canonical_argv_bytes(argv: Sequence[str]) -> bytes:
 
 def _validated_argv(argv: Sequence[str]) -> tuple[tuple[str, ...], str]:
     if isinstance(argv, (str, bytes)) or not isinstance(argv, Sequence):
-        raise ValueError("sanitized argv must be a sequence of strings")
+        raise ValueError(_ui_text("external_measured.sanitized_argv_must_be_a_sequence_of_strings"))
     if not 1 <= len(argv) <= _MAX_ARGV_ITEMS:
-        raise ValueError("sanitized argv item count is outside the safe bound")
+        raise ValueError(
+            _ui_text("external_measured.sanitized_argv_item_count_is_outside_the_safe_bound")
+        )
     retained: list[str] = []
     for item in argv:
         if not isinstance(item, str):
-            raise ValueError("sanitized argv must contain only strings")
+            raise ValueError(_ui_text("external_measured.sanitized_argv_must_contain_only_strings"))
         encoded = item.encode("utf-8")
         if (
             not item
@@ -234,13 +246,17 @@ def _validated_argv(argv: Sequence[str]) -> tuple[tuple[str, ...], str]:
             or "\x00" in item
             or any(ord(character) < 0x20 for character in item)
         ):
-            raise ValueError("sanitized argv contains an unsafe argument")
+            raise ValueError(
+                _ui_text("external_measured.sanitized_argv_contains_an_unsafe_argument")
+            )
         retained.append(item)
     if any(_secret_bearing_option(part) for part in retained):
-        raise ValueError("sanitized argv contains a secret-bearing option")
+        raise ValueError(
+            _ui_text("external_measured.sanitized_argv_contains_a_secret_bearing_option")
+        )
     material = _canonical_argv_bytes(retained)
     if len(material) > _MAX_ARGV_BYTES:
-        raise ValueError("sanitized argv exceeds the safe byte bound")
+        raise ValueError(_ui_text("external_measured.sanitized_argv_exceeds_the_safe_byte_bound"))
     assert_durable_job_state_path_free(retained, None)
     return tuple(retained), hashlib.sha256(material).hexdigest()
 
@@ -254,9 +270,9 @@ def _resolved_results_root(results_root: Path) -> Path:
         # target and is independently prohibited from being a symlink.
         resolved = supplied.resolve(strict=True)
         if not stat.S_ISDIR(resolved.lstat().st_mode):
-            raise ValueError("results root is not a directory")
+            raise ValueError(_ui_text("external_measured.results_root_is_not_a_directory"))
     except OSError as exc:
-        raise ValueError("results root is unavailable") from exc
+        raise ValueError(_ui_text("external_measured.results_root_is_unavailable")) from exc
     return resolved
 
 
@@ -267,7 +283,9 @@ def _registry_root(results_root: Path, *, create: bool) -> Path | None:
         try:
             candidate.mkdir(mode=0o750, exist_ok=True)
         except OSError as exc:
-            raise ValueError("external measured registry cannot be created") from exc
+            raise ValueError(
+                _ui_text("external_measured.external_measured_registry_cannot_be_created")
+            ) from exc
     try:
         if candidate.is_symlink():
             return None
@@ -284,25 +302,39 @@ def _resolved_runner_output(results_root: Path, out_dir: Path) -> tuple[Path, st
     runner = results / "thesis" / "runner"
     supplied = Path(out_dir)
     if not supplied.is_absolute():
-        raise ValueError("external measured out_dir must be absolute")
+        raise ValueError(_ui_text("external_measured.external_measured_out_dir_must_be_absolute"))
     try:
         if supplied.is_symlink():
-            raise ValueError("external measured out_dir must not be a symlink")
+            raise ValueError(
+                _ui_text("external_measured.external_measured_out_dir_must_not_be_a_symlink")
+            )
         resolved = supplied.resolve(strict=True)
         if not stat.S_ISDIR(resolved.lstat().st_mode):
-            raise ValueError("external measured out_dir is not a directory")
+            raise ValueError(
+                _ui_text("external_measured.external_measured_out_dir_is_not_a_directory")
+            )
         runner_resolved = runner.resolve(strict=True)
         if not stat.S_ISDIR(runner_resolved.lstat().st_mode):
-            raise ValueError("Runner output root is not a directory")
+            raise ValueError(_ui_text("external_measured.runner_output_root_is_not_a_directory"))
         relative = resolved.relative_to(runner_resolved)
         if not relative.parts:
-            raise ValueError("external measured out_dir must be below the Runner root")
+            raise ValueError(
+                _ui_text(
+                    "external_measured.external_measured_out_dir_must_be_below_the_runner_root"
+                )
+            )
     except OSError as exc:
-        raise ValueError("external measured out_dir is unavailable") from exc
+        raise ValueError(
+            _ui_text("external_measured.external_measured_out_dir_is_unavailable")
+        ) from exc
     except ValueError as exc:
         if str(exc).startswith("external measured") or str(exc).startswith("Runner"):
             raise
-        raise ValueError("external measured out_dir escapes results_root/thesis/runner") from exc
+        raise ValueError(
+            _ui_text(
+                "external_measured.external_measured_out_dir_escapes_results_root_thesis_runner"
+            )
+        ) from exc
     return resolved, resolved.relative_to(results).as_posix()
 
 
@@ -321,34 +353,42 @@ def _validate_identity(
     tmux_session: str,
 ) -> tuple[tuple[str, ...], str, Path, str]:
     if not isinstance(job_id, str) or _SAFE_JOB_ID.fullmatch(job_id) is None:
-        raise ValueError("external measured job_id is unsafe")
+        raise ValueError(_ui_text("external_measured.external_measured_job_id_is_unsafe"))
     if command != "run_matrix" or declared_kind != "measured":
-        raise ValueError("external registration supports measured run_matrix only")
+        raise ValueError(
+            _ui_text("external_measured.external_registration_supports_measured_run_matrix_only")
+        )
     retained_argv, argv_sha256 = _validated_argv(argv)
     if run_kind(command, list(retained_argv)) != declared_kind:
-        raise ValueError("sanitized argv does not describe a measured run")
+        raise ValueError(
+            _ui_text("external_measured.sanitized_argv_does_not_describe_a_measured_run")
+        )
     positions = [index for index, part in enumerate(retained_argv) if part == "--out"]
     if len(positions) != 1 or positions[0] + 1 >= len(retained_argv):
-        raise ValueError("sanitized argv must contain one exact --out value")
+        raise ValueError(
+            _ui_text("external_measured.sanitized_argv_must_contain_one_exact_out_value")
+        )
     resolved_out, artifact_relative = _resolved_runner_output(results_root, out_dir)
     argv_out = Path(retained_argv[positions[0] + 1])
     if not argv_out.is_absolute():
-        raise ValueError("sanitized argv --out must be absolute")
+        raise ValueError(_ui_text("external_measured.sanitized_argv_out_must_be_absolute"))
     try:
         if argv_out.resolve(strict=True) != resolved_out:
-            raise ValueError("sanitized argv --out differs from registered out_dir")
+            raise ValueError(
+                _ui_text("external_measured.sanitized_argv_out_differs_from_registered_out_dir")
+            )
     except OSError as exc:
-        raise ValueError("sanitized argv --out is unavailable") from exc
+        raise ValueError(_ui_text("external_measured.sanitized_argv_out_is_unavailable")) from exc
     if _HEX40.fullmatch(expected_commit) is None:
-        raise ValueError("expected commit must be lowercase 40-hex")
+        raise ValueError(_ui_text("external_measured.expected_commit_must_be_lowercase_40_hex"))
     if _HEX64.fullmatch(framework_lock_id) is None:
-        raise ValueError("framework lock id must be lowercase 64-hex")
+        raise ValueError(_ui_text("external_measured.framework_lock_id_must_be_lowercase_64_hex"))
     if _HEX64.fullmatch(admission_sha256) is None:
-        raise ValueError("admission digest must be lowercase 64-hex")
+        raise ValueError(_ui_text("external_measured.admission_digest_must_be_lowercase_64_hex"))
     if _SAFE_TOKEN.fullmatch(tmux_socket) is None:
-        raise ValueError("tmux socket is unsafe")
+        raise ValueError(_ui_text("external_measured.tmux_socket_is_unsafe"))
     if _SAFE_TOKEN.fullmatch(tmux_session) is None:
-        raise ValueError("tmux session is unsafe")
+        raise ValueError(_ui_text("external_measured.tmux_session_is_unsafe"))
     return retained_argv, argv_sha256, resolved_out, artifact_relative
 
 
@@ -366,9 +406,7 @@ def _write_create_only(path: Path, document: dict[str, Any]) -> Path:
     temporary: Path | None = None
     descriptor: int | None = None
     for _attempt in range(32):
-        candidate = path.parent / (
-            f".{path.name}.{os.getpid()}.{secrets.token_hex(12)}.tmp"
-        )
+        candidate = path.parent / (f".{path.name}.{os.getpid()}.{secrets.token_hex(12)}.tmp")
         try:
             descriptor = os.open(candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o640)
         except FileExistsError:
@@ -376,7 +414,9 @@ def _write_create_only(path: Path, document: dict[str, Any]) -> Path:
         temporary = candidate
         break
     if temporary is None or descriptor is None:
-        raise OSError("could not allocate a private registration publication file")
+        raise OSError(
+            _ui_text("external_measured.could_not_allocate_a_private_registration_publication_file")
+        )
     try:
         with os.fdopen(descriptor, "wb") as handle:
             descriptor = None
@@ -491,7 +531,7 @@ def register_external_measured_start(
     )
     root = _registry_root(results_root, create=True)
     if root is None:
-        raise ValueError("external measured registry is unsafe")
+        raise ValueError(_ui_text("external_measured.external_measured_registry_is_unsafe"))
     registration_dir = root / job_id
     registration_dir.mkdir(mode=0o750, exist_ok=False)
     try:
@@ -546,18 +586,24 @@ def register_external_measured_terminal(
     """Create the sole immutable terminal event for a registered job."""
 
     if not isinstance(job_id, str) or _SAFE_JOB_ID.fullmatch(job_id) is None:
-        raise ValueError("external measured job_id is unsafe")
+        raise ValueError(_ui_text("external_measured.external_measured_job_id_is_unsafe"))
     if isinstance(exit_code, bool) or not isinstance(exit_code, int) or not 0 <= exit_code <= 255:
-        raise ValueError("terminal exit_code must be an integer from 0 through 255")
+        raise ValueError(
+            _ui_text("external_measured.terminal_exit_code_must_be_an_integer_from_0_through_255")
+        )
     timestamp = _strict_epoch(
         time.time() if ended_at is None else ended_at,
         "ended_at",
     )
     existing = load_external_measured_job(results_root, job_id, probe_session=False)
     if existing is None:
-        raise ValueError("external measured start registration is unavailable or invalid")
+        raise ValueError(
+            _ui_text(
+                "external_measured.external_measured_start_registration_is_unavailable_or_invalid"
+            )
+        )
     if timestamp < existing.started_at:
-        raise ValueError("terminal event precedes its start event")
+        raise ValueError(_ui_text("external_measured.terminal_event_precedes_its_start_event"))
     path = _write_create_only(
         existing.registration_dir / _TERMINAL_FILE,
         {
@@ -753,7 +799,7 @@ def _external_session_spec(job: ExternalMeasuredJob) -> _NamedSessionSpec:
         socket=job.tmux_socket,
         session=job.tmux_session,
         grace_until=job.started_at + _START_SESSION_GRACE_SECONDS,
-        owner_label="external measured controller",
+        owner_label=_ui_text("external_measured.external_measured_controller"),
     )
 
 
@@ -763,11 +809,7 @@ def _apply_external_session_liveness(
     probe_limit: int,
 ) -> tuple[list[ExternalMeasuredJob], int]:
     running = sorted(
-        (
-            (job, _external_session_spec(job))
-            for job in jobs
-            if job.state == "running"
-        ),
+        ((job, _external_session_spec(job)) for job in jobs if job.state == "running"),
         key=lambda item: (item[0].started_at, item[0].job_id),
         reverse=True,
     )
@@ -796,9 +838,7 @@ def _apply_external_session_liveness(
             state="unknown",
             state_detail=_LIVENESS_UNPROBED_DETAIL,
         )
-    return [by_job_id.get(job.job_id, job) for job in jobs], max(
-        0, len(running) - probe_limit
-    )
+    return [by_job_id.get(job.job_id, job) for job in jobs], max(0, len(running) - probe_limit)
 
 
 def load_external_measured_job(
@@ -843,18 +883,22 @@ def scan_external_measured_jobs(
     """Scan only direct registered children, with explicit entry/file bounds."""
 
     if (started_from is None) != (started_to is None):
-        raise ValueError("external measured date window requires both bounds")
+        raise ValueError(
+            _ui_text("external_measured.external_measured_date_window_requires_both_bounds")
+        )
     if started_from is not None:
         lower = _strict_epoch(started_from, "started_from")
         upper = _strict_epoch(started_to, "started_to")
         if lower > upper:
-            raise ValueError("external measured date window is reversed")
+            raise ValueError(
+                _ui_text("external_measured.external_measured_date_window_is_reversed")
+            )
     else:
         lower = upper = 0.0
     try:
         resolved_results = _resolved_results_root(results_root)
     except ValueError:
-        return [], "External measured registry is unavailable."
+        return [], _ui_text("external_measured.external_measured_registry_is_unavailable")
     cache_key = (
         resolved_results,
         probe_session,
@@ -891,11 +935,15 @@ def scan_external_measured_jobs(
                 continue
             jobs.append(job)
     except OSError:
-        return [], "External measured registry could not be scanned."
+        return [], _ui_text("external_measured.external_measured_registry_could_not_be_scanned")
     notices = []
     if truncated:
         notices.append(
-            f"External measured registry scan stopped after {_MAX_REGISTRATIONS} entries."
+            (
+                _ui_text("external_measured.external_measured_registry_scan_stopped_after")
+                + f"{_MAX_REGISTRATIONS}"
+                + " entries."
+            )
         )
     if probe_session:
         jobs, unprobed = _apply_external_session_liveness(
@@ -904,11 +952,17 @@ def scan_external_measured_jobs(
         )
         if unprobed:
             notices.append(
-                "External measured named-session liveness probing was limited to "
-                f"the {_MAX_RUNNING_SESSION_PROBES} newest running registrations; "
-                f"{unprobed} additional running registration"
-                f"{'s were' if unprobed != 1 else ' was'} not probed and "
-                "are shown as unknown."
+                (
+                    _ui_text(
+                        "external_measured.external_measured_named_session_liveness_probing_was_limited_to_t"
+                    )
+                    + f"{_MAX_RUNNING_SESSION_PROBES}"
+                    + _ui_text("external_measured.newest_running_registrations")
+                    + f"{unprobed}"
+                    + _ui_text("external_measured.additional_running_registration")
+                    + f"{('s were' if unprobed != 1 else ' was')}"
+                    + _ui_text("external_measured.not_probed_and_are_shown_as_unknown")
+                )
             )
     sorted_jobs = sorted(
         jobs,
@@ -922,7 +976,9 @@ def scan_external_measured_jobs(
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Create-only externally owned measured-job registration"
+        description=_ui_text(
+            "external_measured.create_only_externally_owned_measured_job_registration"
+        )
     )
     subparsers = parser.add_subparsers(dest="action", required=True)
     start = subparsers.add_parser("start")

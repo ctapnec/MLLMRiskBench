@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+
+from .i18n import text as _ui_text
+
 import re
 import json
 import sqlite3
@@ -38,20 +41,25 @@ class WorkspaceStoreMixin:
     def register_svm_study(self, directory: str, title: str, campaigns: list[str]) -> None:
         """Register a retained CLI study without inventing a console execution."""
         from pathlib import PurePosixPath
+
         path = PurePosixPath(directory)
-        if path.is_absolute() or '..' in path.parts or not path.parts or '\\' in directory:
-            raise ValueError('Use a study directory relative to the results root')
+        if path.is_absolute() or ".." in path.parts or not path.parts or "\\" in directory:
+            raise ValueError(
+                _ui_text("workspace_store.use_a_study_directory_relative_to_the_results_root")
+            )
         if not title.strip() or len(title) > 180:
-            raise ValueError('A short study title is required')
+            raise ValueError(_ui_text("workspace_store.a_short_study_title_is_required"))
         for owner in campaigns:
             self.require_workspace(owner)
         with self._lock:
             if self._conn is None:
-                raise ValueError('Study index unavailable')
+                raise ValueError(_ui_text("workspace_store.study_index_unavailable"))
             with self._conn:
-                self._conn.execute('INSERT INTO svm_studies VALUES(?,?,?) '
-                    'ON CONFLICT(directory) DO UPDATE SET title=excluded.title,campaigns=excluded.campaigns',
-                    (path.as_posix(), title.strip(), json.dumps(sorted(set(campaigns)))))
+                self._conn.execute(
+                    "INSERT INTO svm_studies VALUES(?,?,?) "
+                    "ON CONFLICT(directory) DO UPDATE SET title=excluded.title,campaigns=excluded.campaigns",
+                    (path.as_posix(), title.strip(), json.dumps(sorted(set(campaigns)))),
+                )
 
     def save_workspace_definition(self, campaign_id: str, params: dict[str, str]) -> None:
         """Save an editable definition; launched jobs keep their own snapshots."""
@@ -59,10 +67,10 @@ class WorkspaceStoreMixin:
         if params.get("campaign_id") != campaign_id or not all(
             isinstance(k, str) and isinstance(v, str) for k, v in params.items()
         ):
-            raise ValueError("Invalid campaign definition")
+            raise ValueError(_ui_text("workspace_store.invalid_campaign_definition"))
         with self._lock:
             if self._conn is None:
-                raise ValueError("Campaign database is unavailable")
+                raise ValueError(_ui_text("workspace_store.campaign_database_is_unavailable"))
             try:
                 with self._conn:
                     self._conn.execute(
@@ -73,7 +81,9 @@ class WorkspaceStoreMixin:
                     )
             except sqlite3.Error as exc:
                 self._fail(exc)
-                raise ValueError("Campaign definition could not be saved") from exc
+                raise ValueError(
+                    _ui_text("workspace_store.campaign_definition_could_not_be_saved")
+                ) from exc
 
     def workspace_definition(self, campaign_id: str) -> dict[str, str]:
         self.require_workspace(campaign_id)
@@ -81,27 +91,29 @@ class WorkspaceStoreMixin:
             "SELECT builder_params FROM campaign_definitions WHERE campaign_id=?", (campaign_id,)
         )
         if rows is None:
-            raise ValueError("Campaign definition index unavailable")
+            raise ValueError(_ui_text("workspace_store.campaign_definition_index_unavailable"))
         return json.loads(rows[0]["builder_params"]) if rows else {}
 
     def workspace_member_owners(self, members: list[tuple[str, str]]) -> dict[tuple[str, str], str]:
         owners = {}
         # Query only the displayed records, not every historical campaign row.
         for offset in range(0, len(members), 200):
-            chunk = members[offset:offset + 200]
+            chunk = members[offset : offset + 200]
             rows = self._query(
                 "SELECT member_kind,member_id,campaign_id FROM campaign_members WHERE "
                 + " OR ".join("(member_kind=? AND member_id=?)" for _ in chunk),
                 tuple(value for pair in chunk for value in pair),
             )
             if rows is None:
-                raise ValueError("Campaign ownership index unavailable")
-            owners.update({(row["member_kind"], row["member_id"]): row["campaign_id"] for row in rows})
+                raise ValueError(_ui_text("workspace_store.campaign_ownership_index_unavailable"))
+            owners.update(
+                {(row["member_kind"], row["member_id"]): row["campaign_id"] for row in rows}
+            )
         return owners
 
     def standalone_runs(self, *, offset: int = 0) -> list[sqlite3.Row] | None:
         if offset < 0:
-            raise ValueError("Invalid standalone results page")
+            raise ValueError(_ui_text("workspace_store.invalid_standalone_results_page"))
         return self._query(
             "SELECT r.* FROM (" + self._CAMPAIGN_ROWS + ") r WHERE NOT EXISTS ("
             "SELECT 1 FROM campaign_members m WHERE m.member_kind IN ('job','external') "
@@ -112,13 +124,15 @@ class WorkspaceStoreMixin:
     def create_workspace(self, name: str, kind: str) -> str:
         name = name.strip()
         if not name or len(name) > 120 or any(ord(c) < 32 for c in name):
-            raise ValueError("Campaign name must contain 1-120 printable characters")
+            raise ValueError(
+                _ui_text("workspace_store.campaign_name_must_contain_1_120_printable_characters")
+            )
         if kind not in {"local", "api", "mixed"}:
-            raise ValueError("Choose a local, API or mixed campaign")
+            raise ValueError(_ui_text("workspace_store.choose_a_local_api_or_mixed_campaign"))
         campaign_id = uuid.uuid4().hex
         with self._lock:
             if self._conn is None:
-                raise ValueError("Campaign database is unavailable")
+                raise ValueError(_ui_text("workspace_store.campaign_database_is_unavailable"))
             try:
                 with self._conn:
                     self._conn.execute(
@@ -127,7 +141,7 @@ class WorkspaceStoreMixin:
                     )
             except sqlite3.Error as exc:
                 self._fail(exc)
-                raise ValueError("Campaign could not be saved") from exc
+                raise ValueError(_ui_text("workspace_store.campaign_could_not_be_saved")) from exc
         return campaign_id
 
     def workspace(self, campaign_id: str) -> sqlite3.Row | None:
@@ -136,7 +150,9 @@ class WorkspaceStoreMixin:
 
     def require_workspace(self, campaign_id: str) -> None:
         if re.fullmatch(r"[0-9a-f]{32}", campaign_id) is None or not self.workspace(campaign_id):
-            raise ValueError("Campaign is unavailable; select it again in Build")
+            raise ValueError(
+                _ui_text("workspace_store.campaign_is_unavailable_select_it_again_in_build")
+            )
 
     def workspaces(self) -> list[sqlite3.Row] | None:
         return self._query("SELECT * FROM campaigns ORDER BY created_at DESC, campaign_id")
@@ -157,32 +173,40 @@ class WorkspaceStoreMixin:
                 "SELECT j.job_id,j.argv FROM jobs j WHERE j.command='live_attestation' "
                 "AND j.state='complete' AND j.exit_code=0 AND NOT EXISTS "
                 "(SELECT 1 FROM campaign_members m WHERE m.member_kind='job' AND m.member_id=j.job_id) "
-                "ORDER BY j.started_at DESC,j.job_id DESC LIMIT 100", ())
+                "ORDER BY j.started_at DESC,j.job_id DESC LIMIT 100",
+                (),
+            )
         return self._query(
             "SELECT j.job_id,j.argv FROM jobs j JOIN campaign_members m "
             "ON m.member_kind='job' AND m.member_id=j.job_id "
             "WHERE m.campaign_id=? AND j.command='live_attestation' "
             "AND j.state='complete' AND j.exit_code=0 "
-            "ORDER BY j.started_at DESC,j.job_id DESC LIMIT 100", (campaign_id,))
+            "ORDER BY j.started_at DESC,j.job_id DESC LIMIT 100",
+            (campaign_id,),
+        )
 
-    def completed_probe_jobs(self, campaign_id: str = ''):
+    def completed_probe_jobs(self, campaign_id: str = ""):
         where = " AND m.campaign_id=?" if campaign_id else ""
         return self._query(
             "SELECT j.job_id,j.builder_params,j.out_dir,m.campaign_id,c.name AS campaign_name "
             "FROM jobs j LEFT JOIN campaign_members m ON m.member_kind='job' AND m.member_id=j.job_id "
             "LEFT JOIN campaigns c ON c.campaign_id=m.campaign_id "
             "WHERE j.command='run_matrix' AND j.run_kind='attestation_probe' "
-            "AND j.state='complete' AND j.exit_code=0" + where +
-            " ORDER BY j.started_at DESC,j.job_id DESC LIMIT 100", (campaign_id,) if campaign_id else ())
+            "AND j.state='complete' AND j.exit_code=0"
+            + where
+            + " ORDER BY j.started_at DESC,j.job_id DESC LIMIT 100",
+            (campaign_id,) if campaign_id else (),
+        )
 
     def automatic_output_attempts(self, base: str):
         """Exact generated-directory family, excluding no-call preparation."""
-        prefix = base + '-attempt-'
+        prefix = base + "-attempt-"
         return self._query(
             "SELECT DISTINCT out_dir,state FROM jobs WHERE command='run_matrix' "
             "AND run_kind NOT IN ('acquisition_plan','preflight') "
             "AND (out_dir=? OR substr(out_dir,1,?)=?)",
-            (base, len(prefix), prefix))
+            (base, len(prefix), prefix),
+        )
 
     def attach_workspace_member(
         self, campaign_id: str, member_kind: str, member_id: str, role: str
@@ -194,33 +218,43 @@ class WorkspaceStoreMixin:
         """
         self.require_workspace(campaign_id)
         if member_kind not in {"job", "external", "controller", "analysis", "budget"}:
-            raise ValueError("Unsupported campaign member kind")
+            raise ValueError(_ui_text("workspace_store.unsupported_campaign_member_kind"))
         if not member_id or len(member_id) > 4096 or any(ord(c) < 32 for c in member_id):
-            raise ValueError("Invalid campaign member")
+            raise ValueError(_ui_text("workspace_store.invalid_campaign_member"))
         if role not in {"preparation", "collection", "judging", "analysis", "budget"}:
-            raise ValueError("Unsupported campaign activity role")
+            raise ValueError(_ui_text("workspace_store.unsupported_campaign_activity_role"))
         with self._lock:
             if self._conn is None:
-                raise ValueError("Campaign database is unavailable")
+                raise ValueError(_ui_text("workspace_store.campaign_database_is_unavailable"))
             try:
                 with self._conn:
                     existing = self._conn.execute(
                         "SELECT campaign_id,role FROM campaign_members "
-                        "WHERE member_kind=? AND member_id=?", (member_kind, member_id),
+                        "WHERE member_kind=? AND member_id=?",
+                        (member_kind, member_id),
                     ).fetchone()
-                    if existing and (existing["campaign_id"], existing["role"]) != (campaign_id, role):
-                        raise ValueError("This activity already belongs to another campaign or role")
+                    if existing and (existing["campaign_id"], existing["role"]) != (
+                        campaign_id,
+                        role,
+                    ):
+                        raise ValueError(
+                            _ui_text(
+                                "workspace_store.this_activity_already_belongs_to_another_campaign_or_role"
+                            )
+                        )
                     self._conn.execute(
                         "INSERT OR IGNORE INTO campaign_members VALUES(?,?,?,?,?)",
                         (member_kind, member_id, campaign_id, role, time.time()),
                     )
             except sqlite3.Error as exc:
                 self._fail(exc)
-                raise ValueError("Campaign ownership could not be saved") from exc
+                raise ValueError(
+                    _ui_text("workspace_store.campaign_ownership_could_not_be_saved")
+                ) from exc
 
     def workspace_activity(self, campaign_id: str, *, offset: int = 0) -> list[sqlite3.Row] | None:
         if offset < 0:
-            raise ValueError("Invalid activity page")
+            raise ValueError(_ui_text("workspace_store.invalid_activity_page"))
         return self._query(
             "SELECT m.*,j.command,j.state,j.started_at,j.ended_at,j.exit_code "
             "FROM campaign_members m LEFT JOIN jobs j "
@@ -233,8 +267,13 @@ class WorkspaceStoreMixin:
 def activity_role(command: str) -> str:
     if command in {"run_matrix", "hosted_retained_execute", "hosted_campaign_execute"}:
         return "collection"
-    if command in {"retained_response_judge_pair", "retained_response_judge_pair_execute", "retained_native_judge_execute",
-                   "retained_inventory_judging", "campaign_assess"}:
+    if command in {
+        "retained_response_judge_pair",
+        "retained_response_judge_pair_execute",
+        "retained_native_judge_execute",
+        "retained_inventory_judging",
+        "campaign_assess",
+    }:
         return "judging"
     if command in {"level1_evidence", "level2_report", "figures", "response_svm"}:
         return "analysis"

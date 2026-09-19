@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .i18n import text as _ui_text
+
 import sqlite3
 import time
 import csv
@@ -11,24 +13,50 @@ from pathlib import Path
 
 def cost_totals_csv(rows: list[dict], campaign_id: str) -> bytes:
     """Export the full displayed accounting vocabulary; blank means unknown."""
-    columns=('provider','model','role','attempts','http_attempts','local_evaluations',
-        'settled_attempts','unknown_attempts','unsettled_attempts','cost_microusd',
-        'exposure_microusd','unknown_exposure_count','input_tokens','input_unknown',
-        'output_tokens','output_unknown','reasoning_tokens','reasoning_unknown','updated_at')
-    stream=io.StringIO(newline='');writer=csv.writer(stream)
-    writer.writerow(('campaign_id','scope',*columns))
+    columns = (
+        "provider",
+        "model",
+        "role",
+        "attempts",
+        "http_attempts",
+        "local_evaluations",
+        "settled_attempts",
+        "unknown_attempts",
+        "unsettled_attempts",
+        "cost_microusd",
+        "exposure_microusd",
+        "unknown_exposure_count",
+        "input_tokens",
+        "input_unknown",
+        "output_tokens",
+        "output_unknown",
+        "reasoning_tokens",
+        "reasoning_unknown",
+        "updated_at",
+    )
+    stream = io.StringIO(newline="")
+    writer = csv.writer(stream)
+    writer.writerow(("campaign_id", "scope", *columns))
     for row in rows:
-        values=[]
+        values = []
         for name in columns:
-            value=row[name]
-            if isinstance(value,str) and value.startswith(('=','+','-','@','\t','\r')):
-                value="'"+value  # Literal identifiers, not spreadsheet formulas.
+            value = row[name]
+            if isinstance(value, str) and value.startswith(("=", "+", "-", "@", "\t", "\r")):
+                value = "'" + value  # Literal identifiers, not spreadsheet formulas.
             values.append(value)
-        writer.writerow((campaign_id,'all indexed evidence and historical executions',*values))
-    return stream.getvalue().encode('utf-8')
+        writer.writerow(
+            (
+                campaign_id,
+                _ui_text("workspace_costs.all_indexed_evidence_and_historical_executions"),
+                *values,
+            )
+        )
+    return stream.getvalue().encode("utf-8")
 
 
-def budget_attempt_rows(plan: dict, ledger: dict, *, bindings: dict[str, dict], source_ref: str) -> dict[str, list[dict]]:
+def budget_attempt_rows(
+    plan: dict, ledger: dict, *, bindings: dict[str, dict], source_ref: str
+) -> dict[str, list[dict]]:
     """Translate explicitly owned paid calls, without guessing model/output ownership.
 
     Bindings select the calls being imported, including their model and output
@@ -39,31 +67,57 @@ def budget_attempt_rows(plan: dict, ledger: dict, *, bindings: dict[str, dict], 
     """
     slots = {row["call_id"]: row for row in plan["planned_calls"]}
     if not set(bindings) <= slots.keys():
-        raise ValueError("Cost attribution names an unplanned call")
-    bounds = {row["call_id"]: row["bound_microusd"] for row in ledger.get("allowance_adjustments", [])}
+        raise ValueError(_ui_text("workspace_costs.cost_attribution_names_an_unplanned_call"))
+    bounds = {
+        row["call_id"]: row["bound_microusd"] for row in ledger.get("allowance_adjustments", [])
+    }
     result = {}
     for call_id, binding in bindings.items():
         slot = slots[call_id]
         owner = binding["campaign_id"]
         for number, retained in ledger["attempts"].get(call_id, {}).items():
             if not number.isdecimal() or int(number) < 1:
-                raise ValueError("Invalid retained physical-attempt ordinal")
+                raise ValueError(
+                    _ui_text("workspace_costs.invalid_retained_physical_attempt_ordinal")
+                )
             state = retained["state"]
             usage = binding.get("attempt_usage", {}).get(number, {})
             reported_bound = retained.get("usage_bound", {})
             # A configured token ceiling is never a reported token count.
-            tokens = {name: usage.get(name, reported_bound.get(name))
-                      for name in ("input_tokens", "output_tokens", "reasoning_tokens")}
-            if any(name in usage and name in reported_bound and usage[name] != reported_bound[name]
-                   for name in ("input_tokens", "output_tokens")):
-                raise ValueError("Cost usage differs from the physical attempt's retained report")
-            row = {"call_id": call_id, "attempt_number": int(number), "assignment_id": binding["assignment_id"],
-                "response_id": binding.get("attempt_response_ids", {}).get(number, binding.get("response_id")),
-                "provider": slot["provider"], "model": binding["model"],
-                "role": slot["pool"], "state": state, "cost_microusd": retained["actual_cost_microusd"],
-                "exposure_microusd": 0 if state == "settled" else reported_bound.get(
-                    "bound_microusd", bounds.get(call_id, slot["bound_microusd"])),
-                "source_ref": source_ref, "budget_ref": str(Path(source_ref).resolve()), **tokens}
+            tokens = {
+                name: usage.get(name, reported_bound.get(name))
+                for name in ("input_tokens", "output_tokens", "reasoning_tokens")
+            }
+            if any(
+                name in usage and name in reported_bound and usage[name] != reported_bound[name]
+                for name in ("input_tokens", "output_tokens")
+            ):
+                raise ValueError(
+                    _ui_text(
+                        "workspace_costs.cost_usage_differs_from_the_physical_attempt_s_retained_report"
+                    )
+                )
+            row = {
+                "call_id": call_id,
+                "attempt_number": int(number),
+                "assignment_id": binding["assignment_id"],
+                "response_id": binding.get("attempt_response_ids", {}).get(
+                    number, binding.get("response_id")
+                ),
+                "provider": slot["provider"],
+                "model": binding["model"],
+                "role": slot["pool"],
+                "state": state,
+                "cost_microusd": retained["actual_cost_microusd"],
+                "exposure_microusd": 0
+                if state == "settled"
+                else reported_bound.get(
+                    "bound_microusd", bounds.get(call_id, slot["bound_microusd"])
+                ),
+                "source_ref": source_ref,
+                "budget_ref": str(Path(source_ref).resolve()),
+                **tokens,
+            }
             result.setdefault(owner, []).append(row)
     return result
 
@@ -76,17 +130,23 @@ class WorkspaceCostsMixin:
         ledger or an already attributed answer is not another physical charge.
         Only the budget translator supplies an explicit budget reference.
         """
-        scoped = 'campaign:' + row[2] + ':' + row[0]
+        scoped = "campaign:" + row[2] + ":" + row[0]
         alternate = self._conn.execute(
-            'SELECT * FROM campaign_cost_attempts WHERE call_id=? AND attempt_number=?',
-            (scoped, row[1])).fetchone()
+            "SELECT * FROM campaign_cost_attempts WHERE call_id=? AND attempt_number=?",
+            (scoped, row[1]),
+        ).fetchone()
         if alternate is not None:
             return (scoped, *row[1:]), alternate
         old = self._conn.execute(
-            'SELECT * FROM campaign_cost_attempts WHERE call_id=? AND attempt_number=?', row[:2]).fetchone()
-        if (old is not None and old['campaign_id'] != row[2] and budget_ref is not None
-                and str(Path(old['source_ref']).resolve()) != budget_ref
-                and not (row[4] is not None and old['response_id'] == row[4])):
+            "SELECT * FROM campaign_cost_attempts WHERE call_id=? AND attempt_number=?", row[:2]
+        ).fetchone()
+        if (
+            old is not None
+            and old["campaign_id"] != row[2]
+            and budget_ref is not None
+            and str(Path(old["source_ref"]).resolve()) != budget_ref
+            and not (row[4] is not None and old["response_id"] == row[4])
+        ):
             return (scoped, *row[1:]), None
         return row, old
 
@@ -113,84 +173,176 @@ class WorkspaceCostsMixin:
         self.require_workspace(campaign_id)
         prepared = []
         for item in attempts:
+
             def text(key, *, optional=False):
                 value = item.get(key)
                 if value is None and optional:
                     return None
                 if not isinstance(value, str) or not value.strip() or len(value) > 4096:
-                    raise ValueError(f"Invalid campaign cost {key}")
+                    raise ValueError((_ui_text("workspace_costs.invalid_campaign_cost") + f"{key}"))
                 return value
 
             number = item.get("attempt_number")
             if type(number) is not int or number < 1:
-                raise ValueError("Physical attempt number must be positive")
+                raise ValueError(
+                    _ui_text("workspace_costs.physical_attempt_number_must_be_positive")
+                )
             provider, role, state = text("provider"), text("role"), text("state")
-            if role not in {"target", "judge"} or state not in {"reserved", "unknown", "bounded_unknown", "settled", "not_billed"}:
-                raise ValueError("Unknown cost role or settlement state")
-            counts = [item.get(key) for key in (
-                "cost_microusd", "exposure_microusd", "input_tokens", "output_tokens", "reasoning_tokens")]
+            if role not in {"target", "judge"} or state not in {
+                "reserved",
+                "unknown",
+                "bounded_unknown",
+                "settled",
+                "not_billed",
+            }:
+                raise ValueError(_ui_text("workspace_costs.unknown_cost_role_or_settlement_state"))
+            counts = [
+                item.get(key)
+                for key in (
+                    "cost_microusd",
+                    "exposure_microusd",
+                    "input_tokens",
+                    "output_tokens",
+                    "reasoning_tokens",
+                )
+            ]
             if any(value is not None and (type(value) is not int or value < 0) for value in counts):
-                raise ValueError("Cost and token values must be nonnegative integers or unknown")
+                raise ValueError(
+                    _ui_text(
+                        "workspace_costs.cost_and_token_values_must_be_nonnegative_integers_or_unknown"
+                    )
+                )
             cost, exposure, *_ = counts
             if state in {"settled", "not_billed"}:
                 if cost is None or exposure not in {None, 0}:
-                    raise ValueError("Known cost needs an amount without unresolved exposure")
+                    raise ValueError(
+                        _ui_text(
+                            "workspace_costs.known_cost_needs_an_amount_without_unresolved_exposure"
+                        )
+                    )
                 counts[1] = 0
             elif cost is not None:
-                raise ValueError("Unknown charge cannot carry a known cost")
+                raise ValueError(
+                    _ui_text("workspace_costs.unknown_charge_cannot_carry_a_known_cost")
+                )
             if state == "not_billed" and (provider != "local" or cost != 0):
-                raise ValueError("Only local computation can be marked not API billed")
+                raise ValueError(
+                    _ui_text("workspace_costs.only_local_computation_can_be_marked_not_api_billed")
+                )
             if provider == "local" and state != "not_billed":
-                raise ValueError("Local computation must not masquerade as a provider bill")
+                raise ValueError(
+                    _ui_text(
+                        "workspace_costs.local_computation_must_not_masquerade_as_a_provider_bill"
+                    )
+                )
             response_id = text("response_id", optional=True)
             if role == "judge" and response_id is None:
-                raise ValueError("Judging cost must identify the judged output")
+                raise ValueError(
+                    _ui_text("workspace_costs.judging_cost_must_identify_the_judged_output")
+                )
             source_ref = text("source_ref")
             budget_ref = text("budget_ref", optional=True)
             if budget_ref is not None and budget_ref != str(Path(source_ref).resolve()):
-                raise ValueError("Cost budget reference differs from its source ledger")
-            prepared.append(((text("call_id"), number, campaign_id, text("assignment_id"), response_id,
-                provider, text("model"), role, state, *counts, source_ref), budget_ref))
+                raise ValueError(
+                    _ui_text("workspace_costs.cost_budget_reference_differs_from_its_source_ledger")
+                )
+            prepared.append(
+                (
+                    (
+                        text("call_id"),
+                        number,
+                        campaign_id,
+                        text("assignment_id"),
+                        response_id,
+                        provider,
+                        text("model"),
+                        role,
+                        state,
+                        *counts,
+                        source_ref,
+                    ),
+                    budget_ref,
+                )
+            )
 
         with self._lock:
             if self._conn is None:
-                raise ValueError("Campaign database is unavailable")
+                raise ValueError(_ui_text("workspace_costs.campaign_database_is_unavailable"))
             try:
                 with self._conn:
                     for row, budget_ref in prepared:
                         if not self._conn.execute(
-                            "SELECT 1 FROM campaign_assignments WHERE campaign_id=? AND assignment_id=?", row[2:4]
+                            "SELECT 1 FROM campaign_assignments WHERE campaign_id=? AND assignment_id=?",
+                            row[2:4],
                         ).fetchone():
-                            raise ValueError("Cost has no campaign assignment")
-                        if row[4] is not None and not self._conn.execute(
-                            "SELECT 1 FROM campaign_responses WHERE campaign_id=? AND assignment_id=? AND response_id=?",
-                            row[2:5],
-                        ).fetchone():
-                            raise ValueError("Judged/generated output does not belong to this assignment")
+                            raise ValueError(
+                                _ui_text("workspace_costs.cost_has_no_campaign_assignment")
+                            )
+                        if (
+                            row[4] is not None
+                            and not self._conn.execute(
+                                "SELECT 1 FROM campaign_responses WHERE campaign_id=? AND assignment_id=? AND response_id=?",
+                                row[2:5],
+                            ).fetchone()
+                        ):
+                            raise ValueError(
+                                _ui_text(
+                                    "workspace_costs.judged_generated_output_does_not_belong_to_this_assignment"
+                                )
+                            )
                         row, old = self._cost_attempt_key(row, budget_ref)
                         if old:
                             # One physical bill cannot be attributed to two outputs
                             # or campaigns merely because it appears in two reports.
                             identity = ("campaign_id", "assignment_id", "provider", "model", "role")
-                            if tuple(old[key] for key in identity) != (row[2], row[3], row[5], row[6], row[7]):
-                                raise ValueError("Physical attempt already belongs to another campaign, output or role")
+                            if tuple(old[key] for key in identity) != (
+                                row[2],
+                                row[3],
+                                row[5],
+                                row[6],
+                                row[7],
+                            ):
+                                raise ValueError(
+                                    _ui_text(
+                                        "workspace_costs.physical_attempt_already_belongs_to_another_campaign_output_or_ro"
+                                    )
+                                )
                             if row[4] is None and old["response_id"] is not None:
                                 # A later ledger-only refresh may lack a previously
                                 # established link. Absence does not revoke evidence.
                                 row = (*row[:4], old["response_id"], *row[5:])
                             if old["response_id"] is not None and old["response_id"] != row[4]:
-                                raise ValueError("Physical attempt output attribution changed")
-                            transitions = {"reserved": {"reserved", "unknown", "bounded_unknown", "settled"},
+                                raise ValueError(
+                                    _ui_text(
+                                        "workspace_costs.physical_attempt_output_attribution_changed"
+                                    )
+                                )
+                            transitions = {
+                                "reserved": {"reserved", "unknown", "bounded_unknown", "settled"},
                                 "unknown": {"unknown", "bounded_unknown", "settled"},
                                 "bounded_unknown": {"bounded_unknown", "settled"},
-                                "settled": {"settled"}, "not_billed": {"not_billed"}}
+                                "settled": {"settled"},
+                                "not_billed": {"not_billed"},
+                            }
                             if row[8] not in transitions[old["state"]]:
-                                raise ValueError("Cost publication would regress a retained settlement")
+                                raise ValueError(
+                                    _ui_text(
+                                        "workspace_costs.cost_publication_would_regress_a_retained_settlement"
+                                    )
+                                )
                             if old["cost_microusd"] is not None and old["cost_microusd"] != row[9]:
-                                raise ValueError("Recorded settled cost changed")
-                            for index, field in enumerate(("input_tokens", "output_tokens", "reasoning_tokens"), 11):
+                                raise ValueError(
+                                    _ui_text("workspace_costs.recorded_settled_cost_changed")
+                                )
+                            for index, field in enumerate(
+                                ("input_tokens", "output_tokens", "reasoning_tokens"), 11
+                            ):
                                 if old[field] is not None and old[field] != row[index]:
-                                    raise ValueError("Reported physical-attempt token usage changed")
+                                    raise ValueError(
+                                        _ui_text(
+                                            "workspace_costs.reported_physical_attempt_token_usage_changed"
+                                        )
+                                    )
                             if tuple(old)[:14] == row[:14]:
                                 continue  # A copied locator does not duplicate a bill or change freshness.
                         self._conn.execute(
@@ -203,9 +355,13 @@ class WorkspaceCostsMixin:
                         )
             except sqlite3.Error as exc:
                 self._fail(exc)
-                raise ValueError("Campaign cost index could not be saved") from exc
+                raise ValueError(
+                    _ui_text("workspace_costs.campaign_cost_index_could_not_be_saved")
+                ) from exc
 
-    def workspace_cost_totals(self, campaign_id: str, *, offset: int = 0, all_rows: bool = False) -> list[sqlite3.Row] | None:
+    def workspace_cost_totals(
+        self, campaign_id: str, *, offset: int = 0, all_rows: bool = False
+    ) -> list[sqlite3.Row] | None:
         return self._query(
             "SELECT provider,model,role,COUNT(*) AS attempts,"
             "SUM(provider!='local') AS http_attempts,SUM(state='not_billed') AS local_evaluations,"

@@ -8,6 +8,8 @@ authority.
 
 from __future__ import annotations
 
+from .i18n import text as _ui_text
+
 import hashlib
 import json
 import os
@@ -86,7 +88,7 @@ class ExternalAnalysisRegistration:
 
 def _regular_bytes(path: Path, *, maximum: int) -> bytes:
     if path.is_symlink():
-        raise ValueError("symlinked external analysis file")
+        raise ValueError(_ui_text("external_analysis.symlinked_external_analysis_file"))
     flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
@@ -99,13 +101,13 @@ def _regular_bytes(path: Path, *, maximum: int) -> bytes:
             or before.st_size < 1
             or before.st_size > maximum
         ):
-            raise ValueError("invalid external analysis file")
+            raise ValueError(_ui_text("external_analysis.invalid_external_analysis_file"))
         chunks: list[bytes] = []
         remaining = before.st_size
         while remaining:
             block = os.read(fd, min(1024 * 1024, remaining))
             if not block:
-                raise ValueError("short external analysis file")
+                raise ValueError(_ui_text("external_analysis.short_external_analysis_file"))
             chunks.append(block)
             remaining -= len(block)
         after = os.fstat(fd)
@@ -124,7 +126,9 @@ def _regular_bytes(path: Path, *, maximum: int) -> bytes:
             after.st_size,
             after.st_mtime_ns,
         ):
-            raise ValueError("external analysis file changed during read")
+            raise ValueError(
+                _ui_text("external_analysis.external_analysis_file_changed_during_read")
+            )
         payload = b"".join(chunks)
     finally:
         os.close(fd)
@@ -145,7 +149,9 @@ def _regular_bytes(path: Path, *, maximum: int) -> bytes:
         named.st_size,
         named.st_mtime_ns,
     ):
-        raise ValueError("external analysis file name changed during read")
+        raise ValueError(
+            _ui_text("external_analysis.external_analysis_file_name_changed_during_read")
+        )
     return payload
 
 
@@ -180,7 +186,7 @@ def _resolved_relative(
     candidate = results_root / Path(*relative.parts)
     path = candidate.resolve(strict=True)
     if path != candidate or not _beneath(path, results_root):
-        raise ValueError(f"{label} escapes results root")
+        raise ValueError((f"{label}" + _ui_text("external_analysis.escapes_results_root")))
     return path, relative.as_posix()
 
 
@@ -191,23 +197,25 @@ def _label(value: object, *, field: str) -> str:
         or len(value) > _MAX_LABEL
         or any(ord(character) < 32 for character in value)
     ):
-        raise ValueError(f"invalid external analysis {field}")
+        raise ValueError((_ui_text("external_analysis.invalid_external_analysis") + f"{field}"))
     return value
 
 
 def _limitations(value: object, status: str) -> tuple[tuple[str, str], ...]:
     if not isinstance(value, Mapping) or len(value) > 128:
-        raise ValueError("invalid external analysis limitations")
+        raise ValueError(_ui_text("external_analysis.invalid_external_analysis_limitations"))
     rows = []
     for name, detail in value.items():
         rows.append(
             (
-                _label(name, field="limitation name"),
-                _label(detail, field="limitation detail"),
+                _label(name, field=_ui_text("external_analysis.limitation_name")),
+                _label(detail, field=_ui_text("external_analysis.limitation_detail")),
             )
         )
     if (status == "complete") != (not rows):
-        raise ValueError("external analysis status and limitations differ")
+        raise ValueError(
+            _ui_text("external_analysis.external_analysis_status_and_limitations_differ")
+        )
     return tuple(sorted(rows))
 
 
@@ -217,7 +225,7 @@ def _validated_report(
     raw: Mapping[str, object],
 ) -> ExternalAnalysisReport:
     if set(raw) != _REPORT_FIELDS:
-        raise ValueError("external analysis report fields differ")
+        raise ValueError(_ui_text("external_analysis.external_analysis_report_fields_differ"))
     kind = raw.get("kind")
     if kind not in {
         "level1",
@@ -226,20 +234,24 @@ def _validated_report(
         "terminal_inventory",
         "execution_accounting",
     }:
-        raise ValueError("unsupported external analysis report kind")
+        raise ValueError(_ui_text("external_analysis.unsupported_external_analysis_report_kind"))
     path, relative = _resolved_relative(
         results_root,
         raw.get("path"),
-        label="external analysis report path",
+        label=_ui_text("external_analysis.external_analysis_report_path"),
     )
     if not _beneath(path, analysis_root):
-        raise ValueError("external analysis report escapes its analysis root")
+        raise ValueError(
+            _ui_text("external_analysis.external_analysis_report_escapes_its_analysis_root")
+        )
     if type(raw.get("bytes")) is not int or _HEX64.fullmatch(str(raw.get("sha256"))) is None:
-        raise ValueError("external analysis report identity differs")
+        raise ValueError(_ui_text("external_analysis.external_analysis_report_identity_differs"))
     report = ExternalAnalysisReport(
         path=path,
         artifact_relative=relative,
-        display_name=_label(raw.get("display_name"), field="report display name"),
+        display_name=_label(
+            raw.get("display_name"), field=_ui_text("external_analysis.report_display_name")
+        ),
         kind=str(kind),
         sha256=str(raw["sha256"]),
         bytes=raw["bytes"],
@@ -262,14 +274,20 @@ def load_external_analysis_report(
 def _cached_report_document(report):
     def parse():
         payload = _regular_bytes(report.path, maximum=_MAX_REPORT_BYTES)
-        if (len(payload) != report.bytes
-                or (artifact_sha256_enabled() and hashlib.sha256(payload).hexdigest() != report.sha256)):
-            raise ValueError("external analysis report identity differs")
+        if len(payload) != report.bytes or (
+            artifact_sha256_enabled() and hashlib.sha256(payload).hexdigest() != report.sha256
+        ):
+            raise ValueError(
+                _ui_text("external_analysis.external_analysis_report_identity_differs")
+            )
         document = strict_json_loads(payload.decode("utf-8"))
         if not isinstance(document, dict):
-            raise ValueError("external analysis report is not an object")
+            raise ValueError(
+                _ui_text("external_analysis.external_analysis_report_is_not_an_object")
+            )
         _validate_report_document(report.kind, document)
         return document
+
     if artifact_sha256_enabled():
         return parse()
     key = (str(report.path), report.kind, report.bytes, report.sha256)
@@ -291,13 +309,13 @@ def _registry_root(results_root: Path, *, create: bool) -> Path:
         or resolved != candidate
         or resolved.parent != results_root
     ):
-        raise ValueError("invalid external analysis registry")
+        raise ValueError(_ui_text("external_analysis.invalid_external_analysis_registry"))
     return resolved
 
 
 def _job_directory(registry_root: Path, job_id: str, *, create: bool) -> Path:
     if _SAFE_JOB_ID.fullmatch(job_id) is None:
-        raise ValueError("invalid external analysis job id")
+        raise ValueError(_ui_text("external_analysis.invalid_external_analysis_job_id"))
     candidate = registry_root / job_id
     if create:
         candidate.mkdir(mode=0o700)
@@ -309,7 +327,7 @@ def _job_directory(registry_root: Path, job_id: str, *, create: bool) -> Path:
         or resolved != candidate
         or resolved.parent != registry_root
     ):
-        raise ValueError("invalid external analysis job directory")
+        raise ValueError(_ui_text("external_analysis.invalid_external_analysis_job_directory"))
     return resolved
 
 
@@ -338,7 +356,9 @@ def load_external_analysis_registration(
             or document.get("thesis_empirical_evidence") is not False
         ):
             return None
-        work_label = _label(document.get("work_label"), field="work label")
+        work_label = _label(
+            document.get("work_label"), field=_ui_text("external_analysis.work_label")
+        )
         status = document.get("completion_status")
         if status not in {"complete", "complete_with_explicit_limitations"}:
             return None
@@ -346,7 +366,7 @@ def load_external_analysis_registration(
         analysis_root, analysis_relative = _resolved_relative(
             results,
             document.get("analysis_root"),
-            label="external analysis root",
+            label=_ui_text("external_analysis.external_analysis_root"),
         )
         if not analysis_root.is_dir():
             return None
@@ -392,13 +412,15 @@ def publish_external_analysis_registration(
     results = Path(results_root).resolve(strict=True)
     analysis = Path(analysis_root).resolve(strict=True)
     if not analysis.is_dir() or not _beneath(analysis, results):
-        raise ValueError("external analysis root is outside results root")
+        raise ValueError(
+            _ui_text("external_analysis.external_analysis_root_is_outside_results_root")
+        )
     if completion_status not in {"complete", "complete_with_explicit_limitations"}:
-        raise ValueError("invalid external analysis completion status")
+        raise ValueError(_ui_text("external_analysis.invalid_external_analysis_completion_status"))
     normalized_limitations = _limitations(explicit_limitations, completion_status)
-    normalized_label = _label(work_label, field="work label")
+    normalized_label = _label(work_label, field=_ui_text("external_analysis.work_label"))
     if not 1 <= len(reports) <= _MAX_REPORTS:
-        raise ValueError("invalid external analysis report count")
+        raise ValueError(_ui_text("external_analysis.invalid_external_analysis_report_count"))
     rows = []
     seen: set[Path] = set()
     terminal_inventory_seen = False
@@ -408,17 +430,14 @@ def publish_external_analysis_registration(
         if (
             path in seen
             or (report.kind == "terminal_inventory" and terminal_inventory_seen)
-            or (
-                report.kind == "execution_accounting"
-                and execution_accounting_seen
-            )
+            or (report.kind == "execution_accounting" and execution_accounting_seen)
             or not _beneath(path, analysis)
         ):
-            raise ValueError("external analysis report ownership differs")
+            raise ValueError(
+                _ui_text("external_analysis.external_analysis_report_ownership_differs")
+            )
         seen.add(path)
-        terminal_inventory_seen = (
-            terminal_inventory_seen or report.kind == "terminal_inventory"
-        )
+        terminal_inventory_seen = terminal_inventory_seen or report.kind == "terminal_inventory"
         execution_accounting_seen = (
             execution_accounting_seen or report.kind == "execution_accounting"
         )
@@ -455,7 +474,7 @@ def publish_external_analysis_registration(
         + "\n"
     ).encode("utf-8")
     if len(payload) > _MAX_REGISTRATION_BYTES:
-        raise ValueError("external analysis registration is too large")
+        raise ValueError(_ui_text("external_analysis.external_analysis_registration_is_too_large"))
     registry = _registry_root(results, create=True)
     job_directory = _job_directory(registry, job_id, create=True)
     path = job_directory / _REGISTRATION_FILE

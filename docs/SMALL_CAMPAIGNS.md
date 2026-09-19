@@ -16,6 +16,10 @@ existing installation and configured provider routes. Do not reinstall working
 frameworks, download installed models, or restart a thesis campaign. Create a
 separate demonstration with a unique name.
 
+The header's **Theme** and **Language** controls affect presentation only.
+Language initially offers **English (flag + EN)**; it does not change selected
+inputs, model output language, saved answers or judgments.
+
 ## 1. Create your campaign and choose its model
 
 1. In **Build -> What are you building?**, select **Campaign**.

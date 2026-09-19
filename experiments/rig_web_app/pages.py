@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .i18n import template as _ui_template, text as _ui_text
+
 import csv
 import html
 import io
@@ -68,24 +70,25 @@ class PagesMixin:
     def _job_work_label(job: Job) -> str:
         kind = run_kind(job.command, job.argv)
         if kind == "acquisition_plan":
-            return "acquisition plan"
+            return _ui_text("pages.acquisition_plan")
         if kind == "preflight":
             return "preflight"
         if kind == "dry_run":
-            return "offline dry run"
+            return _ui_text("pages.offline_dry_run")
         if kind == "attestation_probe":
-            return "model probe"
+            return _ui_text("pages.model_probe")
         if kind == "diagnostic_canary":
-            return "diagnostic model run"
+            return _ui_text("pages.diagnostic_model_run")
         if kind == "measured":
-            return "model campaign"
+            return _ui_text("pages.model_campaign")
         if job.command == "model_acquire":
-            return "model acquisition"
+            return _ui_text("pages.model_acquisition")
         if job.command == "capture_t3mp3st":
-            return "model capture"
+            return _ui_text("pages.model_capture")
         if job.command == "harmbench_capture":
             return "preparation"
         from .job_presentation import work_label
+
         if label := work_label(job.command, job.argv):
             return label
         return "tool / validation"
@@ -94,9 +97,9 @@ class PagesMixin:
     def _job_execution_label(job: Job) -> str:
         kind = run_kind(job.command, job.argv)
         if kind in {"acquisition_plan", "preflight", "dry_run"}:
-            return "no model call"
+            return _ui_text("pages.no_model_call")
         if job.command == "model_acquire":
-            return "no model call"
+            return _ui_text("pages.no_model_call")
         if job.command == "harmbench_capture":
             methods = [
                 job.argv[index + 1]
@@ -104,29 +107,29 @@ class PagesMixin:
                 if value == "--method"
             ]
             if methods and all(method.casefold() == "directrequest" for method in methods):
-                return "no model call"
-            return "verify capture artifact"
+                return _ui_text("pages.no_model_call")
+            return _ui_text("pages.verify_capture_artifact")
         if kind in {"attestation_probe", "diagnostic_canary", "measured"}:
-            return "verify artifacts"
+            return _ui_text("pages.verify_artifacts")
         if job.command == "capture_t3mp3st":
-            return "verify capture artifact"
-        return "not applicable"
+            return _ui_text("pages.verify_capture_artifact")
+        return _ui_text("pages.not_applicable")
 
     @staticmethod
     def _playbook_card() -> str:
         steps = (
             (
                 "1",
-                "Author revision receipt",
+                _ui_text("pages.author_revision_receipt"),
                 "project_revision",
                 {
-                    "--expected-revision": "&lt;40-hex pin&gt;",
+                    "--expected-revision": _ui_text("pages.lt_40_hex_pin_gt"),
                     "--out": "runs/thesis/project-revision",
                 },
             ),
             (
                 "2",
-                "Preflight (no calls)",
+                _ui_text("pages.preflight_no_calls"),
                 "rig_check",
                 {
                     "--dry-run": "on",
@@ -141,21 +144,24 @@ class PagesMixin:
             # run_matrix is Build-only (the generic Run form rejects it), so
             # the paid steps open the validated Build workflow instead of a
             # Run-page prefill; the operator composes the lane there.
-            ("3", "Attestation probe (paid)", "run_matrix", {}),
-            ("4", "Diagnostic canary (paid)", "run_matrix", {}),
-            ("5", "Measured lane (paid)", "run_matrix", {}),
+            ("3", _ui_text("pages.attestation_probe_paid"), "run_matrix", {}),
+            ("4", _ui_text("pages.diagnostic_canary_paid"), "run_matrix", {}),
+            ("5", _ui_text("pages.measured_lane_paid"), "run_matrix", {}),
         )
         rows = []
         for num, title, command, values in steps:
             if command == "run_matrix":
-                link = "<a href='/build'>open Build &rarr;</a>"
+                link = _ui_template("<a href='/build'>[[text:pages.open_build]]</a>")
             else:
                 params = "&".join(
                     f"{quote(flag)}={quote(str(val))}" for flag, val in values.items()
                 )
                 link = (
-                    f"<a href='/commands?cmd={quote(command)}&{params}'>"
-                    "prefill &rarr;</a>"
+                    "<a href='/commands?cmd="
+                    + f"{quote(command)}"
+                    + "&"
+                    + f"{params}"
+                    + _ui_template("'>[[text:pages.prefill]]</a>")
                 )
             rows.append(
                 "<li><span class='step-n'>" + num + "</span>"
@@ -163,13 +169,13 @@ class PagesMixin:
                 f"<code>{html.escape(command)}</code> " + link + "</li>"
             )
         return (
-            "<div class='card'><h2>" + _icon("book") + "Campaign playbook</h2>"
-            "<p class='note'>The runbook sequence in order. 'Prefill' opens the "
-            "Run page with that command's form filled; 'open Build' opens the "
-            "validated Build workflow, the only console surface that launches "
-            "run_matrix - review every value before starting. Steps 3+ spend "
-            "real money.</p>"
-            "<ol class='playbook'>" + "".join(rows) + "</ol></div>"
+            "<div class='card'><h2>"
+            + _icon("book")
+            + _ui_template(
+                "[[text:pages.campaign_playbook]]</h2><p class='note'>[[text:pages.the_runbook_sequence_in_order_prefill_opens_the_run_page_with_tha]]</p><ol class='playbook'>"
+            )
+            + "".join(rows)
+            + "</ol></div>"
         )
 
     def _db_card(self, reindexed: str) -> str:
@@ -185,7 +191,7 @@ class PagesMixin:
                 for name, value in counts.items()
             )
             if counts
-            else "counts unknown"
+            else _ui_text("pages.counts_unknown")
         )
         note = ""
         if reindexed:
@@ -210,37 +216,43 @@ class PagesMixin:
                 note = (
                     "<div class='notice "
                     + ("blue" if summary.get("ok") else "red")
-                    + "'><strong>Reindex "
+                    + _ui_template("'><strong>[[text:pages.reindex]] ")
                     + ("completed" if summary.get("ok") else "FAILED")
-                    + ".</strong><p class='note'>Derived usage, cost, and "
-                    "report indexes were rebuilt from retained artifacts "
-                    "with full digest verification ("
+                    + _ui_template(
+                        ".</strong><p class='note'>[[text:pages.derived_usage_cost_and_report_indexes_were_rebuilt_from_retained]]"
+                    )
                     + ", ".join(stat_bits)
-                    + "). Skip counts are reported, never silent.</p></div>"
+                    + _ui_template("[[text:pages.skip_counts_are_reported_never_silent]]</p></div>")
                 )
         error = (
-            f"<p class='note'>Last error: <code>{html.escape(health['last_error'])}</code></p>"
+            (
+                _ui_template("<p class='note'>[[text:pages.last_error]] <code>")
+                + f"{html.escape(health['last_error'])}"
+                + "</code></p>"
+            )
             if health["last_error"]
             else ""
         )
         return (
             "<div class='card'><h2>"
             + _icon("disk")
-            + "Console database</h2>"
+            + _ui_template("[[text:pages.console_database]]</h2>")
             + note
-            + f"<p><span class='badge {tone}'>{state}</span> "
-            f"schema v{health['schema_version']} - {html.escape(count_text)}"
-            "</p>" + error + "<form method='post' action='/db/reindex' "
-            "data-busy='Rebuilding the index from retained artifacts...'>"
-            "<label class='checkrow'><input type='checkbox' name='verify_artifact_sha256'>"
-            "<span>Also verify file checksums (slow; off by default)</span></label> "
-            "<button type='submit' class='small'>Reindex from artifacts"
-            "</button></form>"
-            "<p class='note'>Operational state only (jobs, runs, recorded "
-            "usage, report index) under the console state directory; the "
-            "validated artifacts remain the scientific authority. Reindex "
-            "rebuilds every derived row from the retained artifacts.</p>"
-            "</div>"
+            + (
+                "<p><span class='badge "
+                + f"{tone}"
+                + "'>"
+                + f"{state}"
+                + _ui_template("</span> [[text:pages.schema_v]]")
+                + f"{health['schema_version']}"
+                + " - "
+                + f"{html.escape(count_text)}"
+                + "</p>"
+            )
+            + error
+            + _ui_template(
+                "<form method='post' action='/db/reindex' data-busy='[[attr:pages.rebuilding_the_index_from_retained_artifacts]]'><label class='checkrow'><input type='checkbox' name='verify_artifact_sha256'><span>[[text:pages.also_verify_file_checksums_slow_off_by_default]]</span></label> <button type='submit' class='small'>[[text:pages.reindex_from_artifacts]]</button></form><p class='note'>[[text:pages.operational_state_only_jobs_runs_recorded_usage_report_index_unde]]</p></div>"
+            )
         )
 
     def _overview(self, reindexed: str = "") -> bytes:
@@ -251,27 +263,17 @@ class PagesMixin:
         running_jobs = [job for job, state in job_states if state == "running"]
         failed_jobs = [job for job, state in job_states if state == "failed"]
         indeterminate_jobs = [
-            (job, state)
-            for job, state in job_states
-            if state in {"orphaned", "unknown"}
+            (job, state) for job, state in job_states if state in {"orphaned", "unknown"}
         ]
         running_campaigns = [campaign for campaign in campaigns if campaign.state == "running"]
-        failed_campaigns = [
-            campaign for campaign in campaigns if campaign.status_tag == "failed"
-        ]
+        failed_campaigns = [campaign for campaign in campaigns if campaign.status_tag == "failed"]
         blocked_stopped_campaigns = [
-            campaign
-            for campaign in campaigns
-            if campaign.status_tag in {"blocked", "stopped"}
+            campaign for campaign in campaigns if campaign.status_tag in {"blocked", "stopped"}
         ]
         indeterminate_campaigns = [
-            campaign
-            for campaign in campaigns
-            if campaign.status_tag in {"orphaned", "unknown"}
+            campaign for campaign in campaigns if campaign.status_tag in {"orphaned", "unknown"}
         ]
-        partial_campaigns = [
-            campaign for campaign in campaigns if campaign.status_tag == "partial"
-        ]
+        partial_campaigns = [campaign for campaign in campaigns if campaign.status_tag == "partial"]
         counts, truncated = artifact_inventory(self.results_root)
         source_receipt_value = os.environ.get("URA_SOURCE_CONFORMANCE_MANIFEST", "")
         if source_receipt_value:
@@ -279,7 +281,7 @@ class PagesMixin:
                 results_root = self.results_root.resolve()
                 source_receipt = Path(source_receipt_value).resolve(strict=True)
                 if not source_receipt.is_file():
-                    raise ValueError("configured source receipt is not a file")
+                    raise ValueError(_ui_text("pages.configured_source_receipt_is_not_a_file"))
                 source_relative = source_receipt.relative_to(results_root).as_posix()
             except (OSError, ValueError):
                 pass
@@ -296,7 +298,7 @@ class PagesMixin:
                 if source_relative not in source_stage.paths:
                     source_stage.paths.insert(0, source_relative)
                     del source_stage.paths[_STAGE_PATHS_SHOWN:]
-        disk_html = "<p class='note'>disk usage unavailable</p>"
+        disk_html = _ui_template("<p class='note'>[[text:pages.disk_usage_unavailable]]</p>")
         try:
             usage = shutil.disk_usage(self.results_root)
         except OSError:
@@ -304,105 +306,102 @@ class PagesMixin:
         if usage is not None and usage.total > 0:
             used_pct = 100.0 * (usage.total - usage.free) / usage.total
             disk_html = (
-                f"<div class='stat'><span class='value'>"
-                f"{_human_size(usage.free)}</span>"
-                "<span class='label'>free on results volume</span></div>"
-                f"<div class='meter'><div style='width:{used_pct:.1f}%'>"
-                "</div></div>"
-                f"<p class='note'>{used_pct:.0f}% used of "
-                f"{_human_size(usage.total)}</p>"
+                "<div class='stat'><span class='value'>"
+                + f"{_human_size(usage.free)}"
+                + _ui_template(
+                    "</span><span class='label'>[[text:pages.free_on_results_volume]]</span></div><div class='meter'><div style='width:"
+                )
+                + f"{used_pct:.1f}"
+                + "%'></div></div><p class='note'>"
+                + f"{used_pct:.0f}"
+                + _ui_text("pages.used_of")
+                + f"{_human_size(usage.total)}"
+                + "</p>"
             )
         pin = os.environ.get("REF_URA", "")
         cost_rows, _cost_unavailable = self._usage_cost_rows()
         if cost_rows is None:
-            spend_value, spend_label = "unknown", "calculated spend (db unavailable)"
+            spend_value, spend_label = "unknown", _ui_text("pages.calculated_spend_db_unavailable")
         else:
             billable = [r for r in cost_rows if r["billable"]]
             if not billable:
                 spend_value = "N/A"
-                spend_label = "calculated spend (no recorded billable usage)"
+                spend_label = _ui_text("pages.calculated_spend_no_recorded_billable_usage")
             elif any(r["cost"] is None for r in billable):
                 spend_value = "N/A"
-                spend_label = "calculated spend (price/tokens missing)"
+                spend_label = _ui_text("pages.calculated_spend_price_tokens_missing")
             else:
                 by_currency: dict[str, float] = {}
                 for row in billable:
                     subtotals = row.get("by_currency")
                     if isinstance(subtotals, Mapping) and subtotals:
                         for currency, amount in subtotals.items():
-                            if isinstance(amount, (int, float)) and not isinstance(
-                                amount, bool
-                            ):
+                            if isinstance(amount, (int, float)) and not isinstance(amount, bool):
                                 code = str(currency).upper()
-                                by_currency[code] = by_currency.get(code, 0.0) + float(
-                                    amount
-                                )
-                    elif row.get("currency") and isinstance(
-                        row.get("cost"), (int, float)
-                    ):
+                                by_currency[code] = by_currency.get(code, 0.0) + float(amount)
+                    elif row.get("currency") and isinstance(row.get("cost"), (int, float)):
                         code = str(row["currency"]).upper()
-                        by_currency[code] = by_currency.get(code, 0.0) + float(
-                            row["cost"]
-                        )
+                        by_currency[code] = by_currency.get(code, 0.0) + float(row["cost"])
                 if len(by_currency) == 1:
                     currency, amount = next(iter(by_currency.items()))
                     spend_value = self._fmt_money(amount, currency)
-                    spend_label = "calculated spend (recorded usage x pricing)"
+                    spend_label = _ui_text("pages.calculated_spend_recorded_usage_x_pricing")
                 elif len(by_currency) > 1:
                     spend_value = " / ".join(
                         self._fmt_money(amount, currency)
                         for currency, amount in sorted(by_currency.items())
                     )
-                    spend_label = (
-                        "calculated spend (mixed currencies; not summed)"
-                    )
+                    spend_label = _ui_text("pages.calculated_spend_mixed_currencies_not_summed")
                 else:
                     spend_value = "N/A"
-                    spend_label = "calculated spend (currency unavailable)"
+                    spend_label = _ui_text("pages.calculated_spend_currency_unavailable")
         stats = (
-            "<div class='cols'>"
-            "<div class='card'><div class='stat'>"
-            f"<span class='value'>{len(jobs) + len(campaigns)}</span>"
-            "<span class='label'>jobs (console + external)</span></div></div>"
-            "<div class='card'><div class='stat'>"
-            f"<span class='value'><span class='dot blue'></span>"
-            f"{len(running_jobs)}</span>"
-            "<span class='label'>running (console-owned)</span></div></div>"
-            "<div class='card'><div class='stat'>"
-            f"<span class='value'><span class='dot blue'></span>"
-            f"{len(running_campaigns)}</span>"
-            "<span class='label'>running (external task-log report)</span></div></div>"
-            "<div class='card'><div class='stat'>"
-            f"<span class='value'><span class='dot red'></span>"
-            f"{len(failed_jobs) + len(failed_campaigns)}</span>"
-            "<span class='label'>failed</span></div></div>"
-            "<div class='card'><div class='stat'>"
-            f"<span class='value'><span class='dot red'></span>"
-            f"{len(blocked_stopped_campaigns)}</span>"
-            "<span class='label'>blocked / stopped</span></div></div>"
-            "<div class='card'><div class='stat'>"
-            f"<span class='value'><span class='dot amber'></span>"
-            f"{len(indeterminate_jobs) + len(indeterminate_campaigns)}</span>"
-            "<span class='label'>orphaned / unknown</span></div></div>"
-            "<div class='card'><div class='stat'>"
-            f"<span class='value'><span class='dot amber'></span>"
-            f"{len(partial_campaigns)}</span>"
-            "<span class='label'>partial</span></div></div>"
-            "<div class='card'><div class='stat'>"
-            f"<span class='value'><code>{html.escape(pin[:10] or 'unpinned')}"
-            "</code></span>"
-            "<span class='label'>project revision (REF_URA)</span></div></div>"
-            "<div class='card'><div class='stat'>"
-            f"<span class='value'>{spend_value}</span>"
-            f"<span class='label'>{html.escape(spend_label)}</span></div></div>"
-            f"<div class='card'>{disk_html}</div>"
-            "</div>"
+            "<div class='cols'><div class='card'><div class='stat'><span class='value'>"
+            + f"{len(jobs) + len(campaigns)}"
+            + _ui_template(
+                "</span><span class='label'>[[text:pages.jobs_console_external]]</span></div></div><div class='card'><div class='stat'><span class='value'><span class='dot blue'></span>"
+            )
+            + f"{len(running_jobs)}"
+            + _ui_template(
+                "</span><span class='label'>[[text:pages.running_console_owned]]</span></div></div><div class='card'><div class='stat'><span class='value'><span class='dot blue'></span>"
+            )
+            + f"{len(running_campaigns)}"
+            + _ui_template(
+                "</span><span class='label'>[[text:pages.running_external_task_log_report]]</span></div></div><div class='card'><div class='stat'><span class='value'><span class='dot red'></span>"
+            )
+            + f"{len(failed_jobs) + len(failed_campaigns)}"
+            + _ui_template(
+                "</span><span class='label'>[[text:pages.failed]]</span></div></div><div class='card'><div class='stat'><span class='value'><span class='dot red'></span>"
+            )
+            + f"{len(blocked_stopped_campaigns)}"
+            + _ui_template(
+                "</span><span class='label'>[[text:pages.blocked_stopped]]</span></div></div><div class='card'><div class='stat'><span class='value'><span class='dot amber'></span>"
+            )
+            + f"{len(indeterminate_jobs) + len(indeterminate_campaigns)}"
+            + _ui_template(
+                "</span><span class='label'>[[text:pages.orphaned_unknown]]</span></div></div><div class='card'><div class='stat'><span class='value'><span class='dot amber'></span>"
+            )
+            + f"{len(partial_campaigns)}"
+            + _ui_template(
+                "</span><span class='label'>[[text:pages.partial]]</span></div></div><div class='card'><div class='stat'><span class='value'><code>"
+            )
+            + f"{html.escape(pin[:10] or 'unpinned')}"
+            + _ui_template(
+                "</code></span><span class='label'>[[text:pages.project_revision_ref_ura]]</span></div></div><div class='card'><div class='stat'><span class='value'>"
+            )
+            + f"{spend_value}"
+            + "</span><span class='label'>"
+            + f"{html.escape(spend_label)}"
+            + "</span></div></div><div class='card'>"
+            + f"{disk_html}"
+            + "</div></div>"
         )
         running_rows = []
         for job in running_jobs:
             activity = (
-                " <span class='badge blue' title='Explicit job activity metadata'>"
-                "downloading</span>"
+                _ui_template(
+                    " <span class='badge blue' title='[[attr:pages.explicit_job_activity_metadata]]'>[[text:pages.downloading]]</span>"
+                )
                 if getattr(job, "activity", None) == "model_download"
                 else ""
             )
@@ -418,31 +417,41 @@ class PagesMixin:
         for campaign in running_campaigns:
             route_id = quote(campaign.route_id)
             activity = (
-                " <span class='badge blue' title='Explicit task_kind model_download "
-                "in the retained task log'>downloading</span>"
+                _ui_template(
+                    " <span class='badge blue' title='[[attr:pages.explicit_task_kind_model_download_in_the_retained_task_log]]'>[[text:pages.downloading]]</span>"
+                )
                 if campaign.download_tasks
                 else ""
             )
             running_rows.append(
                 (
                     campaign.started_at,
-                    f"<tr><td><a href='/jobs/campaign/{route_id}'>"
-                    f"{html.escape(campaign.campaign_id)}</a></td>"
-                    "<td>engineering campaign "
-                    "<span class='badge gray'>external</span> "
-                    "<span class='badge blue'>running</span>"
-                    f"{activity}</td>"
-                    f"<td>{_human_duration(campaign.runtime_seconds())}</td></tr>",
+                    (
+                        "<tr><td><a href='/jobs/campaign/"
+                        + f"{route_id}"
+                        + "'>"
+                        + f"{html.escape(campaign.campaign_id)}"
+                        + _ui_template(
+                            "</a></td><td>[[text:pages.engineering_campaign]] <span class='badge gray'>[[text:pages.external]]</span> <span class='badge blue'>[[text:pages.running]]</span>"
+                        )
+                        + f"{activity}"
+                        + "</td><td>"
+                        + f"{_human_duration(campaign.runtime_seconds())}"
+                        + "</td></tr>"
+                    ),
                 )
             )
         running_rows_html = "".join(row for _started, row in sorted(running_rows))
         running_html = (
-            "<div class='card'><h2>" + _icon("pulse") + "Running</h2>"
-            "<div class='scroll'><table><tr><th>Job</th><th>Command</th>"
-            "<th>Runtime</th></tr>" + running_rows_html + "</table></div>"
-            "<p class='note'>External running state is a task-log report. Framework "
-            "installer campaigns also verify their exact owned named session; this "
-            "console does not own or stop the process.</p></div>"
+            "<div class='card'><h2>"
+            + _icon("pulse")
+            + _ui_template(
+                "[[text:pages.running_2]]</h2><div class='scroll'><table><tr><th>[[text:pages.job]]</th><th>[[text:pages.command]]</th><th>[[text:pages.runtime]]</th></tr>"
+            )
+            + running_rows_html
+            + _ui_template(
+                "</table></div><p class='note'>[[text:pages.external_running_state_is_a_task_log_report_framework_installer_c]]</p></div>"
+            )
             if running_rows_html
             else ""
         )
@@ -451,11 +460,19 @@ class PagesMixin:
             attention_rows.append(
                 (
                     job.started_at,
-                    f"<tr><td><a href='/jobs/{html.escape(job.job_id)}'>"
-                    f"{html.escape(job.job_id)}</a></td>"
-                    f"<td>{html.escape(job.command)} "
-                    "<span class='badge red'>failed</span></td>"
-                    f"<td>{_human_duration(job.runtime_seconds())}</td></tr>",
+                    (
+                        "<tr><td><a href='/jobs/"
+                        + f"{html.escape(job.job_id)}"
+                        + "'>"
+                        + f"{html.escape(job.job_id)}"
+                        + "</a></td><td>"
+                        + f"{html.escape(job.command)}"
+                        + _ui_template(
+                            " <span class='badge red'>[[text:pages.failed]]</span></td><td>"
+                        )
+                        + f"{_human_duration(job.runtime_seconds())}"
+                        + "</td></tr>"
+                    ),
                 )
             )
         for job, state in indeterminate_jobs:
@@ -490,59 +507,84 @@ class PagesMixin:
             attention_rows.append(
                 (
                     campaign.started_at,
-                    f"<tr><td><a href='/jobs/campaign/{route_id}'>"
-                    f"{html.escape(campaign.campaign_id)}</a></td>"
-                    "<td>engineering campaign "
-                    f"<span class='badge {tag_tone}'>external, "
-                    f"{html.escape(campaign.status_tag)}</span>{detail}</td>"
-                    f"<td>{_human_duration(campaign.runtime_seconds())}</td></tr>",
+                    (
+                        "<tr><td><a href='/jobs/campaign/"
+                        + f"{route_id}"
+                        + "'>"
+                        + f"{html.escape(campaign.campaign_id)}"
+                        + _ui_template(
+                            "</a></td><td>[[text:pages.engineering_campaign]] <span class='badge "
+                        )
+                        + f"{tag_tone}"
+                        + _ui_template("'>[[text:pages.external_2]] ")
+                        + f"{html.escape(campaign.status_tag)}"
+                        + "</span>"
+                        + f"{detail}"
+                        + "</td><td>"
+                        + f"{_human_duration(campaign.runtime_seconds())}"
+                        + "</td></tr>"
+                    ),
                 )
             )
         recent_attention_rows = sorted(attention_rows, reverse=True)[
             :_DASHBOARD_RECENT_FAILURE_LIMIT
         ]
         attention_html = (
-            "<div class='card'><h2>" + _icon("pulse") + "Needs attention</h2>"
-            "<div class='scroll'><table><tr><th>Job</th><th>Command</th>"
-            "<th>Runtime</th></tr>"
+            "<div class='card'><h2>"
+            + _icon("pulse")
+            + _ui_template(
+                "[[text:pages.needs_attention]]</h2><div class='scroll'><table><tr><th>[[text:pages.job]]</th><th>[[text:pages.command]]</th><th>[[text:pages.runtime]]</th></tr>"
+            )
             + "".join(row for _started, row in recent_attention_rows)
-            + "</table></div><p class='note'>Showing up to "
-            f"{_DASHBOARD_RECENT_FAILURE_LIMIT} most recently started failed, "
-            "blocked, stopped, orphaned, or unknown jobs. "
-            "External engineering campaign state is filesystem-backed and "
-            "read-only; open the job for its retained logs.</p></div>"
+            + (
+                _ui_template("</table></div><p class='note'>[[text:pages.showing_up_to]] ")
+                + f"{_DASHBOARD_RECENT_FAILURE_LIMIT}"
+                + _ui_template(
+                    " [[text:pages.most_recently_started_failed_blocked_stopped_orphaned_or_unknown]]</p></div>"
+                )
+            )
             if recent_attention_rows
             else ""
         )
         partial_rows = []
         for campaign in partial_campaigns:
             route_id = quote(campaign.route_id)
-            pending = (
-                "unknown" if campaign.pending_tasks is None else str(campaign.pending_tasks)
-            )
+            pending = "unknown" if campaign.pending_tasks is None else str(campaign.pending_tasks)
             partial_rows.append(
                 (
                     campaign.started_at,
-                    f"<tr><td><a href='/jobs/campaign/{route_id}'>"
-                    f"{html.escape(campaign.campaign_id)}</a></td>"
-                    "<td><span class='badge amber'>partial</span> "
-                    f"{campaign.succeeded_tasks} succeeded; "
-                    f"{campaign.failed_tasks} failed; "
-                    f"{campaign.skipped_tasks} skipped; {pending} pending</td>"
-                    f"<td>{_human_duration(campaign.runtime_seconds())}</td></tr>",
+                    (
+                        "<tr><td><a href='/jobs/campaign/"
+                        + f"{route_id}"
+                        + "'>"
+                        + f"{html.escape(campaign.campaign_id)}"
+                        + _ui_template(
+                            "</a></td><td><span class='badge amber'>[[text:pages.partial]]</span> "
+                        )
+                        + f"{campaign.succeeded_tasks}"
+                        + " succeeded; "
+                        + f"{campaign.failed_tasks}"
+                        + " failed; "
+                        + f"{campaign.skipped_tasks}"
+                        + " skipped; "
+                        + f"{pending}"
+                        + _ui_template(" [[text:pages.pending]]</td><td>")
+                        + f"{_human_duration(campaign.runtime_seconds())}"
+                        + "</td></tr>"
+                    ),
                 )
             )
-        recent_partial_rows = sorted(partial_rows, reverse=True)[
-            :_DASHBOARD_RECENT_PARTIAL_LIMIT
-        ]
+        recent_partial_rows = sorted(partial_rows, reverse=True)[:_DASHBOARD_RECENT_PARTIAL_LIMIT]
         partial_html = (
-            "<div class='card'><h2>" + _icon("pulse") + "Partial campaigns</h2>"
-            "<div class='scroll'><table><tr><th>Job</th><th>Task results</th>"
-            "<th>Runtime</th></tr>"
+            "<div class='card'><h2>"
+            + _icon("pulse")
+            + _ui_template(
+                "[[text:pages.partial_campaigns]]</h2><div class='scroll'><table><tr><th>[[text:pages.job]]</th><th>[[text:pages.task_results]]</th><th>[[text:pages.runtime]]</th></tr>"
+            )
             + "".join(row for _started, row in recent_partial_rows)
-            + "</table></div><p class='note'>A successful campaign terminal does "
-            "not hide failed, skipped, or pending tasks. Open the campaign for "
-            "its model-work declaration and execution report.</p></div>"
+            + _ui_template(
+                "</table></div><p class='note'>[[text:pages.a_successful_campaign_terminal_does_not_hide_failed_skipped_or_pe]]</p></div>"
+            )
             if recent_partial_rows
             else ""
         )
@@ -557,7 +599,13 @@ class PagesMixin:
             )
             total = stage.count + stage.superseded
             if total > len(stage.paths):
-                items += f"<li class='note'>first {len(stage.paths)} of {total} shown</li>"
+                items += (
+                    _ui_template("<li class='note'>[[text:pages.first]] ")
+                    + f"{len(stage.paths)}"
+                    + " of "
+                    + f"{total}"
+                    + _ui_template(" [[text:pages.shown]]</li>")
+                )
             summary = f"{html.escape(label)}: {stage.count} non-archived"
             if stage.superseded:
                 summary += f", {stage.superseded} archived"
@@ -591,19 +639,13 @@ class PagesMixin:
         campaign_panel = (
             "<div class='card'><h2>"
             + _icon("chart")
-            + "Campaign pipeline"
-            "</h2>"
+            + _ui_template("[[text:pages.campaign_pipeline]]</h2>")
             + _pipeline_svg(counts)
-            + "<p class='note'>Click a stage to browse its files. Counts are "
-            "retained-file presence under the results root only; presence "
-            "never asserts validity, authorization, or measurement status. "
-            "“non-archived” describes filesystem placement only and does not "
-            "identify the active binding, which is shown separately below. "
-            "“archived” counts files under a "
-            "<code>superseded/</code> directory (kept as history, not "
-            "active - for example an earlier pin's revision receipt)."
+            + _ui_template(
+                "<p class='note'>[[text:pages.click_a_stage_to_browse_its_files_counts_are_retained_file_presen]] <code>superseded/</code> [[text:pages.directory_kept_as_history_not_active_for_example_an_earlier_pin_s]]"
+            )
             + (
-                " Inventory scan truncated at its entry cap; counts are a lower bound."
+                _ui_text("pages.inventory_scan_truncated_at_its_entry_cap_counts_are_a_lower_boun")
                 if truncated
                 else ""
             )
@@ -614,7 +656,7 @@ class PagesMixin:
             + self._playbook_card()
             + "<div class='card'><h2>"
             + _icon("file")
-            + "Campaign bindings</h2>"
+            + _ui_template("[[text:pages.campaign_bindings]]</h2>")
             + self._campaign_context()
             + "</div>"
         )
@@ -622,41 +664,49 @@ class PagesMixin:
             self._budget_card()
             + "<div class='card'><h2>"
             + _icon("logo")
-            + "Boundaries</h2>"
-            "<p class='note'>Allowlisted commands only; no arbitrary shell. "
-            "Dry-run/canary/probe artifacts stay diagnostic; measured "
-            "claims come only from validated artifacts and the maintained "
-            "analysis CLIs.</p></div>"
+            + _ui_template(
+                "[[text:pages.boundaries]]</h2><p class='note'>[[text:pages.allowlisted_commands_only_no_arbitrary_shell_dry_run_canary_probe]]</p></div>"
+            )
         )
         dashboard_tabs = (
-            ("dashboard-system", "System"),
-            ("dashboard-campaigns", "Campaigns"),
-            ("dashboard-governance", "Governance"),
+            ("dashboard-system", _ui_text("pages.system")),
+            ("dashboard-campaigns", _ui_text("pages.campaigns")),
+            ("dashboard-governance", _ui_text("pages.governance")),
         )
         body = (
             "<h1>"
             + _icon("grid", size=22)
-            + "Dashboard</h1>"
+            + _ui_template("[[text:pages.dashboard]]</h1>")
             + global_notices
             + "<div class='page-tabs' data-page-tabs data-tab-key='dashboard' "
             "data-default-tab='dashboard-system'>"
-            + _page_tablist("Dashboard sections", dashboard_tabs, default="dashboard-system")
+            + _page_tablist(
+                _ui_text("pages.dashboard_sections"), dashboard_tabs, default="dashboard-system"
+            )
             + _page_tabpanel("dashboard-system", system_panel)
             + _page_tabpanel("dashboard-campaigns", campaign_panel)
             + _page_tabpanel("dashboard-governance", governance_panel)
             + "</div>"
             + refresh
         )
-        return _page("URA rig console", body, active="Dashboard")
+        return _page(_ui_text("pages.ura_rig_console"), body, active=_ui_text("pages.dashboard"))
 
     def _param_input(self, param: CommandParam) -> str:
         flag = html.escape(param.flag)
         if param.repeat:
             field = self._param_input(replace(param, repeat=False))
-            field = field.replace("name='" + flag + "'", "name='" + flag + "' aria-label='" + flag + " 1'")
-            return ("<div class='repeat-fields' data-repeat-flag='" + flag + "'><div class='repeat-row'>"
-                + field + "<button type='button' class='ghost' data-repeat-remove disabled>Remove</button></div>"
-                "<button type='button' class='ghost' data-repeat-add>Add another value</button></div>")
+            field = field.replace(
+                "name='" + flag + "'", "name='" + flag + "' aria-label='" + flag + " 1'"
+            )
+            return (
+                "<div class='repeat-fields' data-repeat-flag='"
+                + flag
+                + "'><div class='repeat-row'>"
+                + field
+                + _ui_template(
+                    "<button type='button' class='ghost' data-repeat-remove disabled>[[text:pages.remove]]</button></div><button type='button' class='ghost' data-repeat-add>[[text:pages.add_another_value]]</button></div>"
+                )
+            )
         if param.kind == "flag":
             return f"<input type='checkbox' name='{flag}'>"
         if param.choices:
@@ -669,13 +719,24 @@ class PagesMixin:
                 # rejects a blank submission; the blank entry is only a
                 # non-selectable prompt so the form agrees with that contract.
                 return (
-                    f"<select name='{flag}' required>"
-                    "<option value='' disabled selected>(select)</option>"
+                    (
+                        "<select name='"
+                        + f"{flag}"
+                        + _ui_template(
+                            "' required><option value='' disabled selected>[[text:pages.select]]</option>"
+                        )
+                    )
                     + options
                     + "</select>"
                 )
             return (
-                f"<select name='{flag}'><option value=''>(default)</option>" + options + "</select>"
+                (
+                    "<select name='"
+                    + f"{flag}"
+                    + _ui_template("'><option value=''>[[text:pages.default]]</option>")
+                )
+                + options
+                + "</select>"
             )
         if param.kind == "int":
             return f"<input type='number' step='1' name='{flag}'>"
@@ -685,14 +746,23 @@ class PagesMixin:
         return f"<input type='text' name='{flag}'{listattr}>"
 
     def _command_card(self, name: str, campaign_id: str = "", *, manual: bool = False) -> str:
-        if name == 'live_attestation' and not manual:
-            return (self._transport_check_form(campaign_id)
-                    + "<details><summary>Advanced transport-check overrides</summary>"
-                    + self._command_card(name, campaign_id, manual=True) + "</details>")
+        if name == "live_attestation" and not manual:
+            return (
+                self._transport_check_form(campaign_id)
+                + _ui_template(
+                    "<details><summary>[[text:pages.advanced_transport_check_overrides]]</summary>"
+                )
+                + self._command_card(name, campaign_id, manual=True)
+                + "</details>"
+            )
         entry = self.commands[name]
         fields = []
         for param in entry.params:
-            required = "<span class='req' title='required'>*</span>" if param.required else ""
+            required = (
+                _ui_template("<span class='req' title='[[attr:pages.required]]'>*</span>")
+                if param.required
+                else ""
+            )
             help_text = param.help or _PARAM_HELP.get(param.flag, "")
             title = f" title='{html.escape(help_text)}'" if help_text else ""
             hint = f"<span class='fieldhint'>{html.escape(help_text)}</span>" if help_text else ""
@@ -730,8 +800,7 @@ class PagesMixin:
             + "".join(fields)
             + "<span></span><button type='submit'>"
             + _icon("play", size=15)
-            + "Start job</button>"
-            "</form></div></details>"
+            + _ui_template("[[text:pages.start_job]]</button></form></div></details>")
         )
 
     def _registry_keys(self, name: str, example: str) -> list[str]:
@@ -776,22 +845,35 @@ class PagesMixin:
             if name == "run_matrix":
                 return ""
             if name == "response_svm":
-                target='/analysis?campaign_id='+campaign_id if campaign_id else '/campaigns'
-                return ('<section class="card"><h2>Response classifier analysis</h2><p>Choose saved campaigns and '
-                    'a teacher condition. Dataset export, evaluation and fitted-model saving run automatically.</p>'
-                    '<a class="button" href="'+target+'">Open SVM analysis</a></section>'
-                    '<details class="card"><summary>Advanced SVM CLI form and imports</summary>'
-                    +self._command_card(name,campaign_id)+'</details>')
+                target = "/analysis?campaign_id=" + campaign_id if campaign_id else "/campaigns"
+                return (
+                    _ui_template(
+                        '<section class="card"><h2>[[text:pages.response_classifier_analysis]]</h2><p>[[text:pages.choose_saved_campaigns_and_a_teacher_condition_dataset_export_eva]]</p><a class="button" href="'
+                    )
+                    + target
+                    + _ui_template(
+                        '">[[text:pages.open_svm_analysis]]</a></section><details class="card"><summary>[[text:pages.advanced_svm_cli_form_and_imports]]</summary>'
+                    )
+                    + self._command_card(name, campaign_id)
+                    + "</details>"
+                )
             if name not in {"capture_t3mp3st", "harmbench_capture"}:
                 return self._command_card(name, campaign_id)
-            label = "T3MP3ST Capture" if name == "capture_t3mp3st" else "HarmBench Prepare"
+            label = (
+                _ui_text("pages.t3mp3st_capture")
+                if name == "capture_t3mp3st"
+                else _ui_text("pages.harmbench_prepare")
+            )
             return (
-                f"<details class='cmd' data-name='{html.escape(name)}'><summary>"
-                f"{_icon('flask')}<strong>{html.escape(label)}</strong>"
-                "<span class='desc'>Validated capture-first workflow</span></summary>"
-                "<p class='note'>Open the Build workflow for field validation and "
-                "an exact-command review before any process starts.</p>"
-                "<p><a href='/build#prepared-workflows'>Open in Build</a></p></details>"
+                "<details class='cmd' data-name='"
+                + f"{html.escape(name)}"
+                + "'><summary>"
+                + f"{_icon('flask')}"
+                + "<strong>"
+                + f"{html.escape(label)}"
+                + _ui_template(
+                    "</strong><span class='desc'>[[text:pages.validated_capture_first_workflow]]</span></summary><p class='note'>[[text:pages.open_the_build_workflow_for_field_validation_and_an_exact_command]]</p><p><a href='/build#prepared-workflows'>[[text:pages.open_in_build]]</a></p></details>"
+                )
             )
 
         for title, icon, ref, names in COMMAND_GROUPS:
@@ -808,31 +890,38 @@ class PagesMixin:
         # exposing their raw generic form would bypass that controller contract.
         internal_ui_commands = {"model_acquire", "ollama_pull", "run_matrix", "campaign_assess"}
         leftovers = "".join(
-            card(name)
-            for name in sorted(set(self.commands) - grouped - internal_ui_commands)
+            card(name) for name in sorted(set(self.commands) - grouped - internal_ui_commands)
         )
         if leftovers:
             sections.append(
-                f"<div class='group-head'>{_icon('file', size=20)}<h2>Other</h2></div>" + leftovers
+                (
+                    "<div class='group-head'>"
+                    + f"{_icon('file', size=20)}"
+                    + _ui_template("<h2>[[text:pages.other]]</h2></div>")
+                )
+                + leftovers
             )
         body = (
-            "<h1>" + _icon("terminal", size=22) + "Tools</h1>"
-            "<section class='card'><h2>Choose what you want to do</h2>"
-            "<p>Build handles experiment preparation automatically. Human evaluation and classifier analysis "
-            "use saved answers directly. You do not need to run intermediate CLI commands.</p><div class='action-row'>"
-            + "<a class='button' href='/build" + ("?campaign_id="+campaign_id if campaign_id else "") + "'>Configure an experiment</a>"
-            + "<a class='button ghost' href='/human-evaluation" + ("?campaign_id="+campaign_id if campaign_id else "") + "'>Review saved answers</a>"
-            + "<a class='button ghost' href='" + ('/analysis?campaign_id='+campaign_id if campaign_id else '/campaigns') + "'>SVM analysis</a>"
-            + "</div></section><details class='card' id='advanced-cli-tools'><summary>Advanced CLI tools and troubleshooting</summary>"
-            "<p class='note'>Typed forms over the allowlisted experiment "
-            "CLIs; the argument vector shown on each job page is exactly "
-            "what runs. Fields map one-to-one to documented CLI flags; "
-            "<span class='req'>*</span> marks a required field.</p>"
-            "<p><input id='cmdfilter' type='text' "
-            "placeholder='Type to filter commands...' "
-            "aria-label='filter commands'></p>"
+            "<h1>"
+            + _icon("terminal", size=22)
+            + _ui_template(
+                "[[text:pages.tools]]</h1><section class='card'><h2>[[text:pages.choose_what_you_want_to_do]]</h2><p>[[text:pages.build_handles_experiment_preparation_automatically_human_evaluati]]</p><div class='action-row'>"
+            )
+            + "<a class='button' href='/build"
+            + ("?campaign_id=" + campaign_id if campaign_id else "")
+            + _ui_template("'>[[text:pages.configure_an_experiment]]</a>")
+            + "<a class='button ghost' href='/human-evaluation"
+            + ("?campaign_id=" + campaign_id if campaign_id else "")
+            + _ui_template("'>[[text:pages.review_saved_answers]]</a>")
+            + "<a class='button ghost' href='"
+            + ("/analysis?campaign_id=" + campaign_id if campaign_id else "/campaigns")
+            + _ui_template("'>[[text:pages.svm_analysis]]</a>")
+            + _ui_template(
+                "</div></section><details class='card' id='advanced-cli-tools'><summary>[[text:pages.advanced_cli_tools_and_troubleshooting]]</summary><p class='note'>[[text:pages.typed_forms_over_the_allowlisted_experiment_clis_the_argument_vec]] <span class='req'>*</span> [[text:pages.marks_a_required_field]]</p><p><input id='cmdfilter' type='text' placeholder='[[attr:pages.type_to_filter_commands]]' aria-label='[[attr:pages.filter_commands]]'></p>"
+            )
             + self._datalists()
-            + "".join(sections) + "</details>"
+            + "".join(sections)
+            + "</details>"
             + "<script>(function(){"
             "var box=document.getElementById('cmdfilter');"
             "if(box){box.addEventListener('input',function(){"
@@ -843,8 +932,7 @@ class PagesMixin:
             # Playbook prefill: ?cmd=<name>&--flag=value opens and fills the
             # matching command form. Values still go through the typed form and
             # build_argv validation on submit; nothing is auto-run.
-            + REPEAT_FIELDS_SCRIPT
-            + "var params=new URLSearchParams(window.location.search);"
+             + REPEAT_FIELDS_SCRIPT + "var params=new URLSearchParams(window.location.search);"
             "var cmd=params.get('cmd');"
             "if(cmd){var card=document.querySelector("
             '"details.cmd input[name=command][value=\'"+cmd+"\']");'
@@ -873,8 +961,13 @@ class PagesMixin:
             "form.addEventListener('change',function(){syncHumanAudit(form);});});"
             "})();</script>"
         )
-        body = "<p><a class='button ghost' href='/human-evaluation'>Human evaluation studies</a></p>" + body
-        return _page("Run a command", body, active="Tools")
+        body = (
+            _ui_template(
+                "<p><a class='button ghost' href='/human-evaluation'>[[text:pages.human_evaluation_studies]]</a></p>"
+            )
+            + body
+        )
+        return _page(_ui_text("pages.run_a_command"), body, active=_ui_text("pages.tools"))
 
     @staticmethod
     def _jobs_history_bound(
@@ -922,7 +1015,7 @@ class PagesMixin:
         valid_window = started_from <= started_to
         if started_from > started_to:
             history_jobs = []
-            history_note = "From must not be after To."
+            history_note = _ui_text("pages.from_must_not_be_after_to")
         else:
             history_jobs, history_truncated = self._jobs_for_history_window(
                 started_from,
@@ -931,8 +1024,11 @@ class PagesMixin:
             )
             if history_truncated:
                 history_note = (
-                    f"Showing the newest {_JOBS_HISTORY_DISPLAY_LIMIT} console jobs "
-                    "in this date range. Narrow From/To to retrieve older rows."
+                    _ui_text("pages.showing_the_newest")
+                    + f"{_JOBS_HISTORY_DISPLAY_LIMIT}"
+                    + _ui_text(
+                        "pages.console_jobs_in_this_date_range_narrow_from_to_to_retrieve_older"
+                    )
                 )
 
         def in_window(started_at: float) -> bool:
@@ -977,11 +1073,7 @@ class PagesMixin:
         else:
             campaigns = []
         recent_campaigns, recent_campaign_note = self._engineering_campaign_scan()
-        if (
-            not valid_window
-            and recent_campaign_note
-            and recent_campaign_note not in campaign_notes
-        ):
+        if not valid_window and recent_campaign_note and recent_campaign_note not in campaign_notes:
             campaign_notes.append(recent_campaign_note)
         pinned_campaign_ids: set[str] = set()
         campaign_by_route = {campaign.route_id: campaign for campaign in campaigns}
@@ -1017,62 +1109,87 @@ class PagesMixin:
                 + [("external", j.job_id) for j in external_jobs]
                 + [("controller", c.route_id) for c in campaigns]
             )
+
             def selected(kind, key):
                 owner = owners.get((kind, key), "")
                 return owner == campaign_id if campaign_id else not owner
-            history_jobs = [j for j in history_jobs if selected("job", j.job_id)
-                and (campaign_id or j.command in {"run_matrix", "hosted_retained_execute"})]
+
+            history_jobs = [
+                j
+                for j in history_jobs
+                if selected("job", j.job_id)
+                and (campaign_id or j.command in {"run_matrix", "hosted_retained_execute"})
+            ]
             external_jobs = [j for j in external_jobs if selected("external", j.job_id)]
             campaigns = [c for c in campaigns if campaign_id and selected("controller", c.route_id)]
             pinned_console_ids.intersection_update(j.job_id for j in history_jobs)
             pinned_campaign_ids.intersection_update(c.route_id for c in campaigns)
-        technical_note = ''
-        if scope == 'work':
+        technical_note = ""
+        if scope == "work":
             from .job_presentation import substantive
+
             hidden = [j for j in history_jobs if not substantive(j.command, j.argv)]
             history_jobs = [j for j in history_jobs if substantive(j.command, j.argv)]
-            indexed_work = self.db._query("SELECT member_id FROM campaign_members WHERE member_kind='controller' "
-                "AND role IN ('collection','judging','analysis')")
+            indexed_work = self.db._query(
+                "SELECT member_id FROM campaign_members WHERE member_kind='controller' "
+                "AND role IN ('collection','judging','analysis')"
+            )
             if indexed_work is None:
-                raise ValueError('Campaign work index unavailable')
-            work_ids = {r['member_id'] for r in indexed_work}
-            hidden_controllers = [c for c in campaigns if not c.model_tasks and c.route_id not in work_ids]
+                raise ValueError(_ui_text("pages.campaign_work_index_unavailable"))
+            work_ids = {r["member_id"] for r in indexed_work}
+            hidden_controllers = [
+                c for c in campaigns if not c.model_tasks and c.route_id not in work_ids
+            ]
             campaigns = [c for c in campaigns if c.model_tasks or c.route_id in work_ids]
             pinned_console_ids.intersection_update(j.job_id for j in history_jobs)
             pinned_campaign_ids.intersection_update(c.route_id for c in campaigns)
-            attention = sum(j.state() in {'failed','interrupted','orphaned','running'} for j in hidden)
-            attention += sum(c.state in {'failed','interrupted','orphaned','running'} for c in hidden_controllers)
-            technical_query = dict(filters, view='all')
-            technical_note = ("<p class='notice blue'>Collection, judging and analysis are shown here. "
-                f"{len(hidden)+len(hidden_controllers)} technical stages in this window are listed separately; "
-                f"{attention} are active or need attention. <a href='/jobs?"
-                + html.escape(urlencode(technical_query),quote=True) + "'>Open technical jobs</a>.</p>"
+            attention = sum(
+                j.state() in {"failed", "interrupted", "orphaned", "running"} for j in hidden
+            )
+            attention += sum(
+                c.state in {"failed", "interrupted", "orphaned", "running"}
+                for c in hidden_controllers
+            )
+            technical_query = dict(filters, view="all")
+            technical_note = (
+                (
+                    _ui_template(
+                        "<p class='notice blue'>[[text:pages.collection_judging_and_analysis_are_shown_here]] "
+                    )
+                    + f"{len(hidden) + len(hidden_controllers)}"
+                    + _ui_text("pages.technical_stages_in_this_window_are_listed_separately")
+                    + f"{attention}"
+                    + _ui_template(" [[text:pages.are_active_or_need_attention]] <a href='/jobs?")
+                )
+                + html.escape(urlencode(technical_query), quote=True)
+                + "'>Open technical jobs</a>.</p>"
                 "<style>#jobstable th:nth-child(2),#jobstable td:nth-child(2),"
                 "#jobstable th:nth-child(4),#jobstable td:nth-child(4),"
-                "#jobstable th:nth-child(9),#jobstable td:nth-child(9){display:none}</style>")
+                "#jobstable th:nth-child(9),#jobstable td:nth-child(9){display:none}</style>"
+            )
         pinned_external_ids = {
             job.job_id
             for job in external_jobs
             if job.state == "running" and not in_window(job.started_at)
         }
         pinned_live_count = (
-            len(pinned_console_ids)
-            + len(pinned_campaign_ids)
-            + len(pinned_external_ids)
+            len(pinned_console_ids) + len(pinned_campaign_ids) + len(pinned_external_ids)
         )
         live_window_note = ""
         if pinned_live_count:
             live_window_note = (
-                f"{pinned_live_count} currently live row"
-                f"{' remains' if pinned_live_count == 1 else 's remain'} visible although "
-                "its start time is outside From/To. Terminal history still obeys the "
-                "selected dates; this live override remains bounded by each source's "
-                "existing scan/display cap."
+                f"{pinned_live_count}"
+                + _ui_text("pages.currently_live_row")
+                + f"{(' remains' if pinned_live_count == 1 else 's remain')}"
+                + _ui_text(
+                    "pages.visible_although_its_start_time_is_outside_from_to_terminal_histo"
+                )
             )
         if console_live_truncated:
             live_window_note += (
-                f" Only the newest {_JOBS_HISTORY_DISPLAY_LIMIT} out-of-window live "
-                "console jobs are shown."
+                _ui_text("pages.only_the_newest")
+                + f"{_JOBS_HISTORY_DISPLAY_LIMIT}"
+                + _ui_text("pages.out_of_window_live_console_jobs_are_shown")
             )
         rows = []
         row_started_at: list[float] = []
@@ -1091,28 +1208,28 @@ class PagesMixin:
             started = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(job.started_at))
             started_ms = int(job.started_at * 1000)
             stop = (
-                "<form class='inline' method='post' "
-                f"action='/jobs/{html.escape(job_id)}/stop'>"
-                "<button class='danger small' type='submit'>Stop</button>"
-                "</form>"
+                (
+                    "<form class='inline' method='post' action='/jobs/"
+                    + f"{html.escape(job_id)}"
+                    + _ui_template(
+                        "/stop'><button class='danger small' type='submit'>[[text:pages.stop]]</button></form>"
+                    )
+                )
                 if state == "running" and job.process is not None
                 else ""
             )
             hay = html.escape(f"{job_id} {job.command}".lower())
             activity = (
-                "<span class='badge blue' title='Explicit job activity metadata'>"
-                "downloading</span>"
+                _ui_template(
+                    "<span class='badge blue' title='[[attr:pages.explicit_job_activity_metadata]]'>[[text:pages.downloading]]</span>"
+                )
                 if state == "running" and getattr(job, "activity", None) == "model_download"
                 else "-"
             )
             rows.append(
                 f"<tr data-state='{html.escape(state_tag)}' "
                 f"data-started='{started_ms}' data-hay='{hay}'"
-                + (
-                    " data-live-window-pin='true'"
-                    if job_id in pinned_console_ids
-                    else ""
-                )
+                + (" data-live-window-pin='true'" if job_id in pinned_console_ids else "")
                 + ">"
                 f"<td><a href='/jobs/{html.escape(job_id)}'>"
                 f"{html.escape(job_id)}</a></td>"
@@ -1138,37 +1255,53 @@ class PagesMixin:
                 "failed": "red",
                 "orphaned": "amber",
             }.get(state_tag, "gray")
-            started = time.strftime(
-                "%Y-%m-%d %H:%M:%S UTC", time.gmtime(job.started_at)
-            )
+            started = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(job.started_at))
             started_ms = int(job.started_at * 1000)
             hay = html.escape(
-                f"{job.job_id} {job.command} external measured {' '.join(job.argv)}".lower()
+                (
+                    f"{job.job_id}"
+                    + " "
+                    + f"{job.command}"
+                    + _ui_text("pages.external_measured")
+                    + f"{' '.join(job.argv)}"
+                ).lower()
             )
             output_link = (
-                f"<a href='/artifacts?path={quote(job.artifact_relative)}'>"
-                "exact output</a>"
+                "<a href='/artifacts?path="
+                + f"{quote(job.artifact_relative)}"
+                + _ui_template("'>[[text:pages.exact_output]]</a>")
             )
             rows.append(
                 f"<tr data-state='{html.escape(state_tag)}' "
                 f"data-started='{started_ms}' data-hay='{hay}'"
+                + (" data-live-window-pin='true'" if job.job_id in pinned_external_ids else "")
                 + (
-                    " data-live-window-pin='true'"
-                    if job.job_id in pinned_external_ids
-                    else ""
+                    "><td><a href='/jobs/external/"
+                    + f"{quote(job.job_id)}"
+                    + "'>"
+                    + f"{html.escape(job.job_id)}"
+                    + _ui_template(
+                        "</a></td><td>run_matrix <span class='badge blue'>[[text:pages.external_read_only]]</span></td><td>[[text:pages.model_campaign]]</td><td>[[text:pages.verify_artifacts]]</td><td><span class='dot "
+                    )
+                    + f"{tone}"
+                    + "'></span><span class='badge "
+                    + f"{tone}"
+                    + "'>"
+                    + f"{html.escape(state_tag)}"
+                    + "</span></td><td><time class='job-started' data-epoch-ms='"
+                    + f"{started_ms}"
+                    + "'>"
+                    + f"{started}"
+                    + "</time></td><td>"
+                    + f"{_human_duration(job.runtime_seconds())}"
+                    + "</td><td>"
+                    + f"{output_link}"
+                    + _ui_template("[[text:pages.tmux]] <code>")
+                    + f"{html.escape(job.tmux_session)}"
+                    + "</code></td><td>"
+                    + f"{('' if job.exit_code is None else job.exit_code)}"
+                    + "</td><td></td></tr>"
                 )
-                + ">"
-                f"<td><a href='/jobs/external/{quote(job.job_id)}'>"
-                f"{html.escape(job.job_id)}</a></td>"
-                "<td>run_matrix <span class='badge blue'>external / read-only</span></td>"
-                "<td>model campaign</td><td>verify artifacts</td>"
-                f"<td><span class='dot {tone}'></span>"
-                f"<span class='badge {tone}'>{html.escape(state_tag)}</span></td>"
-                f"<td><time class='job-started' data-epoch-ms='{started_ms}'>"
-                f"{started}</time></td>"
-                f"<td>{_human_duration(job.runtime_seconds())}</td>"
-                f"<td>{output_link}; tmux <code>{html.escape(job.tmux_session)}</code></td>"
-                f"<td>{'' if job.exit_code is None else job.exit_code}</td><td></td></tr>"
             )
             row_started_at.append(job.started_at)
         for campaign in campaigns:
@@ -1183,45 +1316,55 @@ class PagesMixin:
                 "failed": "red",
                 "orphaned": "amber",
             }.get(state_tag, "gray")
-            started = time.strftime(
-                "%Y-%m-%d %H:%M:%S UTC", time.gmtime(campaign.started_at)
-            )
+            started = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(campaign.started_at))
             started_ms = int(campaign.started_at * 1000)
             route_id = quote(campaign.route_id)
             hay = html.escape(
-                f"{campaign.campaign_id} engineering campaign external "
-                f"{campaign.status_tag} {campaign.progress}".lower()
+                (
+                    f"{campaign.campaign_id}"
+                    + _ui_text("pages.engineering_campaign_external")
+                    + f"{campaign.status_tag}"
+                    + " "
+                    + f"{campaign.progress}"
+                ).lower()
             )
-            work = "model work undeclared"
+            work = _ui_text("pages.model_work_undeclared")
             if campaign.model_tasks is not None:
                 roles = {role for _task, _status, role in campaign.task_outcomes}
                 if campaign.model_execution_scope == "target_only_mixed_controller":
-                    work = "target-capable mixed controller"
+                    work = _ui_text("pages.target_capable_mixed_controller")
                 elif campaign.model_tasks:
-                    work = "model + support" if "support" in roles else "model only"
+                    work = "model + support" if "support" in roles else _ui_text("pages.model_only")
                 else:
-                    work = "support only"
+                    work = _ui_text("pages.support_only")
                 if "unplanned" in roles:
                     work += " + unplanned"
             if campaign.model_execution_error:
-                execution = "report invalid"
+                execution = _ui_text("pages.report_invalid")
             elif campaign.model_tasks == ():
-                execution = "not applicable - support only"
+                execution = _ui_text("pages.not_applicable_support_only")
             elif campaign.model_attempted_calls is None:
-                execution = "not reported"
+                execution = _ui_text("pages.not_reported")
             else:
                 if campaign.model_execution_scope == "target_only_mixed_controller":
                     execution = (
-                        f"{campaign.model_successful_generations}/"
-                        f"{campaign.model_attempted_calls} target calls returned "
-                        "successfully; 1/1 target-execution controller"
+                        f"{campaign.model_successful_generations}"
+                        + "/"
+                        + f"{campaign.model_attempted_calls}"
+                        + _ui_text(
+                            "pages.target_calls_returned_successfully_1_1_target_execution_controlle"
+                        )
                     )
                 else:
                     execution = (
-                        f"{campaign.model_successful_generations}/"
-                        f"{campaign.model_attempted_calls} reported successful; "
-                        f"{campaign.model_execution_covered_tasks}/"
-                        f"{len(campaign.model_tasks or ())} model tasks"
+                        f"{campaign.model_successful_generations}"
+                        + "/"
+                        + f"{campaign.model_attempted_calls}"
+                        + _ui_text("pages.reported_successful")
+                        + f"{campaign.model_execution_covered_tasks}"
+                        + "/"
+                        + f"{len(campaign.model_tasks or ())}"
+                        + _ui_text("pages.model_tasks")
                     )
             rows.append(
                 f"<tr data-state='{html.escape(state_tag)}' "
@@ -1231,27 +1374,44 @@ class PagesMixin:
                     if campaign.route_id in pinned_campaign_ids
                     else ""
                 )
-                + ">"
-                f"<td><a href='/jobs/campaign/{route_id}'>"
-                f"{html.escape(campaign.campaign_id)}</a></td>"
-                "<td>engineering campaign <span class='badge gray'>external</span></td>"
-                f"<td>{html.escape(work)}</td>"
-                f"<td>{html.escape(execution)}</td>"
-                f"<td><span class='dot {tone}'></span>"
-                f"<span class='badge {tone}'>{html.escape(state_tag)}</span></td>"
-                f"<td><time class='job-started' data-epoch-ms='{started_ms}'>"
-                f"{started}</time></td>"
-                f"<td>{_human_duration(campaign.runtime_seconds())}</td>"
-                f"<td>"
                 + (
-                    "<span class='badge blue' title='Explicit task_kind "
-                    "model_download in retained task log'>downloading</span> "
+                    "><td><a href='/jobs/campaign/"
+                    + f"{route_id}"
+                    + "'>"
+                    + f"{html.escape(campaign.campaign_id)}"
+                    + _ui_template(
+                        "</a></td><td>[[text:pages.engineering_campaign]] <span class='badge gray'>[[text:pages.external]]</span></td><td>"
+                    )
+                    + f"{html.escape(work)}"
+                    + "</td><td>"
+                    + f"{html.escape(execution)}"
+                    + "</td><td><span class='dot "
+                    + f"{tone}"
+                    + "'></span><span class='badge "
+                    + f"{tone}"
+                    + "'>"
+                    + f"{html.escape(state_tag)}"
+                    + "</span></td><td><time class='job-started' data-epoch-ms='"
+                    + f"{started_ms}"
+                    + "'>"
+                    + f"{started}"
+                    + "</time></td><td>"
+                    + f"{_human_duration(campaign.runtime_seconds())}"
+                    + "</td><td>"
+                )
+                + (
+                    _ui_template(
+                        "<span class='badge blue' title='[[attr:pages.explicit_task_kind_model_download_in_retained_task_log]]'>[[text:pages.downloading]]</span> "
+                    )
                     if campaign.download_tasks
                     else ""
                 )
-                + f"{html.escape(campaign.progress)} "
-                f"<a href='/jobs/campaign/{route_id}'>logs</a></td>"
-                "<td>-</td><td></td></tr>"
+                + (
+                    f"{html.escape(campaign.progress)}"
+                    + " <a href='/jobs/campaign/"
+                    + f"{route_id}"
+                    + _ui_template("'>[[text:pages.logs]]</a></td><td>-</td><td></td></tr>")
+                )
             )
             row_started_at.append(campaign.started_at)
         rows = [
@@ -1263,10 +1423,13 @@ class PagesMixin:
             )
         ]
         chips = (
-            "<div class='chips'>"
-            f"<button type='button' class='chip on' data-state=''>All "
-            "(<span class='chip-count'>"
-            f"{len(history_jobs) + len(external_jobs) + len(campaigns)}</span>)</button>"
+            (
+                _ui_template(
+                    "<div class='chips'><button type='button' class='chip on' data-state=''>[[text:pages.all]]<span class='chip-count'>"
+                )
+                + f"{len(history_jobs) + len(external_jobs) + len(campaigns)}"
+                + "</span>)</button>"
+            )
             + "".join(
                 f"<button type='button' class='chip' data-state='{state}'>"
                 f"{state.capitalize()} (<span class='chip-count'>{count}</span>)</button>"
@@ -1274,26 +1437,19 @@ class PagesMixin:
             )
             + "</div>"
         )
-        controls = (
-            chips + "<div class='targetfilters job-date-filters'><div class='fieldcell'>"
-            "<label class='fieldlabel' for='job-from'>From</label>"
-            "<input id='job-from' type='datetime-local' step='1'>"
-            "</div><div class='fieldcell'>"
-            "<label class='fieldlabel' for='job-to'>To</label>"
-            "<input id='job-to' type='datetime-local' step='1'>"
-            "</div></div><p><input id='jobfilter' type='text' "
-            "placeholder='Type to filter jobs...' "
-            "aria-label='filter jobs'></p>"
+        controls = chips + _ui_template(
+            "<div class='targetfilters job-date-filters'><div class='fieldcell'><label class='fieldlabel' for='job-from'>[[text:pages.from]]</label><input id='job-from' type='datetime-local' step='1'></div><div class='fieldcell'><label class='fieldlabel' for='job-to'>[[text:pages.to]]</label><input id='job-to' type='datetime-local' step='1'></div></div><p><input id='jobfilter' type='text' placeholder='[[attr:pages.type_to_filter_jobs]]' aria-label='[[attr:pages.filter_jobs]]'></p>"
         )
         table = (
-            "<div class='card scroll'><table id='jobstable'>"
-            "<tr><th>Job</th><th>Command</th>"
-            "<th>Work</th><th>Execution</th><th>State</th><th>Started</th><th>Runtime</th>"
-            "<th>Progress</th><th>Exit</th>"
-            "<th></th></tr>" + "".join(rows) + "</table></div>"
+            _ui_template(
+                "<div class='card scroll'><table id='jobstable'><tr><th>[[text:pages.job]]</th><th>[[text:pages.command]]</th><th>[[text:pages.work]]</th><th>[[text:pages.execution]]</th><th>[[text:pages.state]]</th><th>[[text:pages.started]]</th><th>[[text:pages.runtime]]</th><th>[[text:pages.progress]]</th><th>[[text:pages.exit]]</th><th></th></tr>"
+            )
+            + "".join(rows)
+            + "</table></div>"
             if rows
-            else "<div class='card'><p class='note'>No jobs are retained in this "
-            "window. Start one from the <a href='/commands'>Run</a> page.</p></div>"
+            else _ui_template(
+                "<div class='card'><p class='note'>No jobs are retained in this window. Start one from the <a href='/commands'>[[text:pages.run]]</a> page.</p></div>"
+            )
         )
         script = (
             "<script>(function(){"
@@ -1395,16 +1551,18 @@ class PagesMixin:
         )
         overview_items = (
             (
-                "Window + verified live" if pinned_live_count else "All in current window",
+                _ui_text("pages.window_verified_live")
+                if pinned_live_count
+                else _ui_text("pages.all_in_current_window"),
                 len(history_jobs) + len(external_jobs) + len(campaigns),
                 "",
             ),
-            ("Console jobs", len(history_jobs), None),
-            ("External measured jobs", len(external_jobs), None),
-            ("External campaigns", len(campaigns), None),
-            ("Running", tallies.get("running", 0), "running"),
-            ("Needs attention", attention_count, None),
-            ("Passed", tallies.get("passed", 0), "passed"),
+            (_ui_text("pages.console_jobs"), len(history_jobs), None),
+            (_ui_text("pages.external_measured_jobs"), len(external_jobs), None),
+            (_ui_text("pages.external_campaigns"), len(campaigns), None),
+            (_ui_text("pages.running_2"), tallies.get("running", 0), "running"),
+            (_ui_text("pages.needs_attention"), attention_count, None),
+            (_ui_text("pages.passed"), tallies.get("passed", 0), "passed"),
         )
         overview_cards_parts = []
         for label, count, state in overview_items:
@@ -1416,12 +1574,16 @@ class PagesMixin:
             if state is None:
                 overview_cards_parts.append("<div class='card'>" + content + "</div>")
             else:
-                card_query = {k:v for k,v in filters.items() if k in {'view','campaign_id','from','to','from_ms','to_ms','q'}}
+                card_query = {
+                    k: v
+                    for k, v in filters.items()
+                    if k in {"view", "campaign_id", "from", "to", "from_ms", "to_ms", "q"}
+                }
                 if state:
-                    card_query['state'] = state
+                    card_query["state"] = state
                 overview_cards_parts.append(
                     "<a class='card' href='/jobs"
-                    + ('?' + html.escape(urlencode(card_query),quote=True) if card_query else '')
+                    + ("?" + html.escape(urlencode(card_query), quote=True) if card_query else "")
                     + "#jobs-history'>"
                     + content
                     + "</a>"
@@ -1430,39 +1592,43 @@ class PagesMixin:
         overview_panel = (
             "<div class='cols tab-summary'>"
             + overview_cards
-            + "</div><div class='card'><h2>Job sources</h2>"
-            "<p class='note'>Console jobs are owned by this process. Registered "
-            "external measured jobs and engineering campaigns are read-only. "
-            "Open History for the "
-            "full table, date window, state chips, text search, logs, and "
-            "available stop controls.</p></div>"
+            + _ui_template(
+                "</div><div class='card'><h2>[[text:pages.job_sources]]</h2><p class='note'>[[text:pages.console_jobs_are_owned_by_this_process_registered_external_measur]]</p></div>"
+            )
         )
         history_panel = (
             controls
             + table
-            + "<p id='jobs-filter-empty' class='notice amber' hidden>"
-            "No jobs match the selected dates, state, and text.</p>"
+            + _ui_template(
+                "<p id='jobs-filter-empty' class='notice amber' hidden>[[text:pages.no_jobs_match_the_selected_dates_state_and_text]]</p>"
+            )
             + script
         )
         jobs_tabs = (
-            ("jobs-overview", "Overview"),
-            ("jobs-history", "History"),
+            ("jobs-overview", _ui_text("pages.overview")),
+            ("jobs-history", _ui_text("pages.history")),
         )
         explicit_filter = any(
             str(filters.get(name, "")).strip()
             for name in ("from", "to", "from_ms", "to_ms", "state", "q")
         )
-        jobs_default = "jobs-history" if explicit_filter or scope == 'work' else "jobs-overview"
+        jobs_default = "jobs-history" if explicit_filter or scope == "work" else "jobs-overview"
         force_default = " data-force-default='true'" if explicit_filter else ""
         return _page(
-            "Jobs",
+            _ui_text("pages.jobs"),
             "<h1>"
             + _icon("pulse", size=22)
-            + "Jobs</h1>"
+            + _ui_template("[[text:pages.jobs]]</h1>")
             + self._work_view_tabs("jobs", "campaigns" if campaign_id else scope)
             + (self._campaign_banner(campaign_id) if campaign_id else "")
             + technical_note
-            + ("<p>Standalone runs exclude campaign-owned jobs and administrative tools.</p>" if scope == "standalone" else "")
+            + (
+                _ui_template(
+                    "<p>[[text:pages.standalone_runs_exclude_campaign_owned_jobs_and_administrative_to]]</p>"
+                )
+                if scope == "standalone"
+                else ""
+            )
             + self._health_banner()
             + (
                 "<div class='notice amber'>" + html.escape(campaign_scan_note) + "</div>"
@@ -1486,12 +1652,12 @@ class PagesMixin:
             )
             + "<div class='page-tabs' data-page-tabs data-tab-key='jobs' "
             f"data-default-tab='{jobs_default}'{force_default}>"
-            + _page_tablist("Job sections", jobs_tabs, default=jobs_default)
+            + _page_tablist(_ui_text("pages.job_sections"), jobs_tabs, default=jobs_default)
             + _page_tabpanel("jobs-overview", overview_panel)
             + _page_tabpanel("jobs-history", history_panel)
             + "</div>"
             + refresh,
-            active="Jobs",
+            active=_ui_text("pages.jobs"),
         )
 
     def _campaign_page(self, campaign: EngineeringCampaign) -> bytes:
@@ -1511,63 +1677,90 @@ class PagesMixin:
             "-" if campaign.hard_stop_hours is None else f"{campaign.hard_stop_hours:g} hours"
         )
         declaration_label = (
-            "Target-capable mixed controller"
+            _ui_text("pages.target_capable_mixed_controller_2")
             if campaign.model_execution_scope == "target_only_mixed_controller"
-            else "Declared model tasks"
+            else _ui_text("pages.declared_model_tasks")
         )
         details = (
-            "<div class='card scroll'><table>"
-            f"<tr><td>Release commit</td><td><code>{html.escape(campaign.release_commit)}</code></td></tr>"
-            f"<tr><td>Evidence class</td><td>{html.escape(campaign.evidence_class)}</td></tr>"
-            "<tr><td>Thesis empirical evidence</td><td>no</td></tr>"
-            f"<tr><td>Hosted calls allowed</td><td>{'yes' if campaign.hosted_calls_allowed else 'no'}</td></tr>"
-            f"<tr><td>Reserved call budget (not execution)</td>"
-            f"<td>{campaign.reserved_calls}/{call_cap}</td></tr>"
-            f"<tr><td>{declaration_label}</td><td>"
+            (
+                _ui_template(
+                    "<div class='card scroll'><table><tr><td>[[text:pages.release_commit]]</td><td><code>"
+                )
+                + f"{html.escape(campaign.release_commit)}"
+                + _ui_template("</code></td></tr><tr><td>[[text:pages.evidence_class]]</td><td>")
+                + f"{html.escape(campaign.evidence_class)}"
+                + _ui_template(
+                    "</td></tr><tr><td>[[text:pages.thesis_empirical_evidence]]</td><td>[[text:pages.no]]</td></tr><tr><td>[[text:pages.hosted_calls_allowed]]</td><td>"
+                )
+                + f"{('yes' if campaign.hosted_calls_allowed else 'no')}"
+                + _ui_template(
+                    "</td></tr><tr><td>[[text:pages.reserved_call_budget_not_execution]]</td><td>"
+                )
+                + f"{campaign.reserved_calls}"
+                + "/"
+                + f"{call_cap}"
+                + "</td></tr><tr><td>"
+                + f"{declaration_label}"
+                + "</td><td>"
+            )
             + (
                 "invalid: " + html.escape(campaign.model_declaration_error)
                 if campaign.model_declaration_error
-                else "not declared"
+                else _ui_text("pages.not_declared")
                 if campaign.model_tasks is None
-                else "support only"
+                else _ui_text("pages.support_only")
                 if campaign.model_tasks == ()
                 else str(len(campaign.model_tasks))
             )
             + "</td></tr>"
             + (
-                "<tr><td>Reported target execution</td><td>"
+                _ui_template("<tr><td>[[text:pages.reported_target_execution]]</td><td>")
                 if campaign.model_execution_scope == "target_only_mixed_controller"
-                else "<tr><td>Reported model execution</td><td>"
+                else _ui_template("<tr><td>[[text:pages.reported_model_execution]]</td><td>")
             )
             + (
-                "report invalid: " + html.escape(campaign.model_execution_error)
+                _ui_text("pages.report_invalid_2") + html.escape(campaign.model_execution_error)
                 if campaign.model_execution_error
-                else "not applicable - support only"
+                else _ui_text("pages.not_applicable_support_only")
                 if campaign.model_tasks == ()
-                else "not reported"
+                else _ui_text("pages.not_reported")
                 if campaign.model_attempted_calls is None
                 else (
-                    f"{campaign.model_successful_generations} successful target "
-                    f"generation(s) / {campaign.model_attempted_calls} target attempt(s); "
-                    "1/1 target-execution controller reported"
+                    (
+                        f"{campaign.model_successful_generations}"
+                        + _ui_text("pages.successful_target_generation_s")
+                        + f"{campaign.model_attempted_calls}"
+                        + _ui_text(
+                            "pages.target_attempt_s_1_1_target_execution_controller_reported"
+                        )
+                    )
                     if campaign.model_execution_scope == "target_only_mixed_controller"
-                    else f"{campaign.model_successful_generations} successful generation(s) / "
-                    f"{campaign.model_attempted_calls} attempt(s); "
-                    f"{campaign.model_execution_covered_tasks}/"
-                    f"{len(campaign.model_tasks or ())} model tasks reported"
+                    else (
+                        f"{campaign.model_successful_generations}"
+                        + _ui_text("pages.successful_generation_s")
+                        + f"{campaign.model_attempted_calls}"
+                        + " attempt(s); "
+                        + f"{campaign.model_execution_covered_tasks}"
+                        + "/"
+                        + f"{len(campaign.model_tasks or ())}"
+                        + _ui_text("pages.model_tasks_reported")
+                    )
                 )
             )
-            + "</td></tr>"
-            f"<tr><td>Hard stop</td><td>{hard_stop}</td></tr>"
-            "</table></div>"
+            + (
+                _ui_template("</td></tr><tr><td>[[text:pages.hard_stop]]</td><td>")
+                + f"{hard_stop}"
+                + "</td></tr></table></div>"
+            )
         )
         task_rows = "".join(
             "<tr><td><code>"
             + html.escape(task)
             + "</code>"
             + (
-                " <span class='badge blue' title='Explicit task_kind "
-                "model_download in retained task log'>downloading</span>"
+                _ui_template(
+                    " <span class='badge blue' title='[[attr:pages.explicit_task_kind_model_download_in_retained_task_log]]'>[[text:pages.downloading]]</span>"
+                )
                 if task in campaign.download_tasks
                 else ""
             )
@@ -1579,21 +1772,18 @@ class PagesMixin:
             for task, status, role in campaign.task_outcomes
         )
         accounting_note = (
-            "Reported target-call counts omit guard, defense, attacker, and "
-            "framework-model roles. All reported counts remain operational "
-            "self-reports; validated response artifacts are authoritative."
+            _ui_text("pages.reported_target_call_counts_omit_guard_defense_attacker_and_frame")
             if campaign.model_execution_scope == "target_only_mixed_controller"
-            else "Reported call counts remain operational self-reports; "
-            "validated response artifacts are authoritative."
+            else _ui_text("pages.reported_call_counts_remain_operational_self_reports_validated_re")
         )
         task_table = (
-            "<div class='card'><h2>Task outcomes</h2>"
-            "<p class='note'>A passed support task proves only that its command "
-            "exited successfully. It is not model-execution evidence. "
+            _ui_template(
+                "<div class='card'><h2>[[text:pages.task_outcomes]]</h2><p class='note'>[[text:pages.a_passed_support_task_proves_only_that_its_command_exited_success]] "
+            )
             + accounting_note
-            + "</p>"
-            "<div class='scroll'><table><tr><th>Task</th><th>Work</th>"
-            "<th>Result</th></tr>"
+            + _ui_template(
+                "</p><div class='scroll'><table><tr><th>[[text:pages.task]]</th><th>[[text:pages.work]]</th><th>[[text:pages.result]]</th></tr>"
+            )
             + task_rows
             + "</table></div></div>"
             if task_rows
@@ -1608,10 +1798,17 @@ class PagesMixin:
         logs = (
             "<div class='card'><h2>"
             + _icon("pulse")
-            + "Task logs</h2>"
-            + (f"<ul>{log_links}</ul>" if log_links else "<p class='note'>No task logs yet.</p>")
-            + f"<p><a href='/artifacts?path={quote(relative)}'>"
-            "Browse all retained campaign files</a></p></div>"
+            + _ui_template("[[text:pages.task_logs]]</h2>")
+            + (
+                f"<ul>{log_links}</ul>"
+                if log_links
+                else _ui_template("<p class='note'>[[text:pages.no_task_logs_yet]]</p>")
+            )
+            + (
+                "<p><a href='/artifacts?path="
+                + f"{quote(relative)}"
+                + _ui_template("'>[[text:pages.browse_all_retained_campaign_files]]</a></p></div>")
+            )
         )
         artifact_links = "".join(
             "<li><a href='/artifacts?path="
@@ -1622,7 +1819,7 @@ class PagesMixin:
             for label, relative in campaign.artifact_links
         )
         related_artifacts = (
-            "<div class='card'><h2>Related retained artifacts</h2>"
+            _ui_template("<div class='card'><h2>[[text:pages.related_retained_artifacts]]</h2>")
             + (
                 f"<div class='notice red'>{html.escape(campaign.artifact_link_error)}</div>"
                 if campaign.artifact_link_error
@@ -1633,8 +1830,13 @@ class PagesMixin:
             else ""
         )
         last_detail = (
-            "<div class='card'><h2>" + _icon("terminal") + "Latest activity</h2>"
-            f"<pre>{html.escape(campaign.last_detail)}</pre></div>"
+            "<div class='card'><h2>"
+            + _icon("terminal")
+            + (
+                _ui_template("[[text:pages.latest_activity]]</h2><pre>")
+                + f"{html.escape(campaign.last_detail)}"
+                + "</pre></div>"
+            )
             if campaign.last_detail
             else ""
         )
@@ -1644,29 +1846,35 @@ class PagesMixin:
             else ""
         )
         body = (
-            "<h1>" + _icon("pulse", size=22) + "Campaign "
-            f"{html.escape(campaign.campaign_id)}</h1>"
-            "<div class='notice amber'><strong>Externally managed engineering work.</strong> "
-            "This console observes its retained files read-only; process ownership remains "
-            "with the campaign launcher. Status normally comes from retained task logs; "
-            "framework installer campaigns also verify their exact owned named session. "
-            "It is not thesis empirical evidence.</div>"
-            "<div class='cols'>"
-            "<div class='card'><div class='stat'>"
-            f"<span class='value'><span class='dot {tone}'></span>"
-            f"{html.escape(campaign.status_tag)}</span>"
-            "<span class='label'>campaign status</span>"
-            "</div></div>"
-            "<div class='card'><div class='stat'>"
-            f"<span class='value'>{_human_duration(campaign.runtime_seconds())}</span>"
-            "<span class='label'>runtime</span></div></div>"
-            "<div class='card'><div class='stat'>"
-            f"<span class='value'>{started}</span><span class='label'>started</span></div></div>"
-            "</div>"
-            "<div class='card'><h2>" + _icon("chart") + "Progress</h2>"
+            "<h1>"
+            + _icon("pulse", size=22)
             + (
-                "<p><span class='badge blue' title='Explicit task_kind "
-                "model_download in retained task log'>downloading</span></p>"
+                _ui_text("pages.campaign")
+                + f"{html.escape(campaign.campaign_id)}"
+                + _ui_template(
+                    "</h1><div class='notice amber'><strong>[[text:pages.externally_managed_engineering_work]]</strong> [[text:pages.this_console_observes_its_retained_files_read_only_process_owners]]</div><div class='cols'><div class='card'><div class='stat'><span class='value'><span class='dot "
+                )
+                + f"{tone}"
+                + "'></span>"
+                + f"{html.escape(campaign.status_tag)}"
+                + _ui_template(
+                    "</span><span class='label'>[[text:pages.campaign_status]]</span></div></div><div class='card'><div class='stat'><span class='value'>"
+                )
+                + f"{_human_duration(campaign.runtime_seconds())}"
+                + _ui_template(
+                    "</span><span class='label'>[[text:pages.runtime_2]]</span></div></div><div class='card'><div class='stat'><span class='value'>"
+                )
+                + f"{started}"
+                + _ui_template(
+                    "</span><span class='label'>[[text:pages.started_2]]</span></div></div></div><div class='card'><h2>"
+                )
+            )
+            + _icon("chart")
+            + _ui_template("[[text:pages.progress]]</h2>")
+            + (
+                _ui_template(
+                    "<p><span class='badge blue' title='[[attr:pages.explicit_task_kind_model_download_in_retained_task_log]]'>[[text:pages.downloading]]</span></p>"
+                )
                 if campaign.download_tasks
                 else ""
             )
@@ -1684,7 +1892,11 @@ class PagesMixin:
             + logs
             + refresh
         )
-        return _page(f"Campaign {campaign.campaign_id}", body, active="Jobs")
+        return _page(
+            (_ui_text("pages.campaign") + f"{campaign.campaign_id}"),
+            body,
+            active=_ui_text("pages.jobs"),
+        )
 
     def _external_measured_job_page(self, job: ExternalMeasuredJob) -> bytes:
         state_tag = self._job_status_tag(job.state)
@@ -1698,7 +1910,7 @@ class PagesMixin:
         ended = (
             time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(job.ended_at))
             if job.ended_at is not None
-            else "not recorded"
+            else _ui_text("pages.not_recorded")
         )
         argv_chips = (
             "<div class='argv'>"
@@ -1707,98 +1919,139 @@ class PagesMixin:
         )
         attach = f"tmux -L {job.tmux_socket} attach -t {job.tmux_session}"
         body = (
-            f"<h1>{_icon('terminal', size=22)}Job {html.escape(job.job_id)}</h1>"
-            "<div class='notice blue'><strong>Externally owned, read-only measured job."
-            "</strong><p class='note'>The campaign controller owns this tmux process. "
-            "Rig Web reads its create-only registration and exact Runner output root; "
-            "it neither inserts a console database row nor offers Stop.</p></div>"
-            "<div class='cols'><div class='card'><div class='stat'>"
-            f"<span class='value'><span class='dot {tone}'></span>{html.escape(state_tag)}"
-            "</span><span class='label'>state</span></div></div>"
-            "<div class='card'><div class='stat'>"
-            f"<span class='value'>{_human_duration(job.runtime_seconds())}</span>"
-            "<span class='label'>runtime</span></div></div>"
-            "<div class='card'><div class='stat'>"
-            f"<span class='value'>{html.escape(started)}</span>"
-            "<span class='label'>started</span></div></div>"
-            "<div class='card'><div class='stat'>"
-            f"<span class='value'>{html.escape(ended)}</span>"
-            "<span class='label'>ended</span></div></div></div>"
-            "<div class='card'><h2>Operational identity</h2><div class='scroll'>"
-            "<table>"
-            f"<tr><td>Command / kind</td><td><code>{html.escape(job.command)}</code> / "
-            f"{html.escape(job.run_kind)}</td></tr>"
-            f"<tr><td>Expected commit</td><td><code>{html.escape(job.expected_commit)}</code></td></tr>"
-            f"<tr><td>Framework lock</td><td><code>{html.escape(job.framework_lock_id)}</code></td></tr>"
-            f"<tr><td>Admission digest</td><td><code>{html.escape(job.admission_sha256)}</code></td></tr>"
-            f"<tr><td>Argument digest</td><td><code>{html.escape(job.argv_sha256)}</code></td></tr>"
-            f"<tr><td>tmux</td><td><code>{html.escape(attach)}</code></td></tr>"
-            "</table></div></div>"
-            "<div class='card'><h2>Sanitized exact argument vector</h2>"
+            (
+                "<h1>"
+                + f"{_icon('terminal', size=22)}"
+                + _ui_text("pages.job_2")
+                + f"{html.escape(job.job_id)}"
+                + _ui_template(
+                    "</h1><div class='notice blue'><strong>[[text:pages.externally_owned_read_only_measured_job]]</strong><p class='note'>[[text:pages.the_campaign_controller_owns_this_tmux_process_rig_web_reads_its]]</p></div><div class='cols'><div class='card'><div class='stat'><span class='value'><span class='dot "
+                )
+                + f"{tone}"
+                + "'></span>"
+                + f"{html.escape(state_tag)}"
+                + _ui_template(
+                    "</span><span class='label'>[[text:pages.state_2]]</span></div></div><div class='card'><div class='stat'><span class='value'>"
+                )
+                + f"{_human_duration(job.runtime_seconds())}"
+                + _ui_template(
+                    "</span><span class='label'>[[text:pages.runtime_2]]</span></div></div><div class='card'><div class='stat'><span class='value'>"
+                )
+                + f"{html.escape(started)}"
+                + _ui_template(
+                    "</span><span class='label'>[[text:pages.started_2]]</span></div></div><div class='card'><div class='stat'><span class='value'>"
+                )
+                + f"{html.escape(ended)}"
+                + _ui_template(
+                    "</span><span class='label'>[[text:pages.ended]]</span></div></div></div><div class='card'><h2>[[text:pages.operational_identity]]</h2><div class='scroll'><table><tr><td>[[text:pages.command_kind]]</td><td><code>"
+                )
+                + f"{html.escape(job.command)}"
+                + "</code> / "
+                + f"{html.escape(job.run_kind)}"
+                + _ui_template("</td></tr><tr><td>[[text:pages.expected_commit]]</td><td><code>")
+                + f"{html.escape(job.expected_commit)}"
+                + _ui_template(
+                    "</code></td></tr><tr><td>[[text:pages.framework_lock]]</td><td><code>"
+                )
+                + f"{html.escape(job.framework_lock_id)}"
+                + _ui_template(
+                    "</code></td></tr><tr><td>[[text:pages.admission_digest]]</td><td><code>"
+                )
+                + f"{html.escape(job.admission_sha256)}"
+                + _ui_template(
+                    "</code></td></tr><tr><td>[[text:pages.argument_digest]]</td><td><code>"
+                )
+                + f"{html.escape(job.argv_sha256)}"
+                + _ui_template("</code></td></tr><tr><td>[[text:pages.tmux_2]]</td><td><code>")
+                + f"{html.escape(attach)}"
+                + _ui_template(
+                    "</code></td></tr></table></div></div><div class='card'><h2>[[text:pages.sanitized_exact_argument_vector]]</h2>"
+                )
+            )
             + argv_chips
             + "<p><a href='/artifacts?path="
             + quote(job.artifact_relative)
-            + "'>Browse exact output artifacts</a></p></div>"
+            + _ui_template("'>[[text:pages.browse_exact_output_artifacts]]</a></p></div>")
             + (
                 "<script>setTimeout(function(){window.uraBusy.reload();}, 5000);</script>"
                 if job.state == "running"
                 else ""
             )
         )
-        return _page(f"Job {job.job_id}", body, active="Jobs")
+        return _page(
+            (_ui_text("pages.job_2") + f"{job.job_id}"), body, active=_ui_text("pages.jobs")
+        )
 
     def _collection_continuation_action(self, job: Job) -> str:
-        if job.command != 'hosted_campaign_execute' or job.state() not in {'complete', 'failed', 'interrupted', 'stopped'}:
-            return ''
+        if job.command != "hosted_campaign_execute" or job.state() not in {
+            "complete",
+            "failed",
+            "interrupted",
+            "stopped",
+        }:
+            return ""
         command = self.commands[job.command]
         try:
-            argv = job.argv[job.argv.index(command.module) + 1:]
+            argv = job.argv[job.argv.index(command.module) + 1 :]
         except ValueError:
-            return ''
+            return ""
         allowed = {param.flag: param for param in command.params}
         values, counts, index = {}, {}, 0
         while index < len(argv):
             flag = argv[index]
             param = allowed.get(flag)
-            if param is None or (param.kind != 'flag' and index + 1 == len(argv)):
-                return ''
+            if param is None or (param.kind != "flag" and index + 1 == len(argv)):
+                return ""
             ordinal = counts.get(flag, 0)
             if ordinal and not param.repeat:
-                return ''
-            key = flag + ('#' + str(ordinal) if ordinal else '')
-            values[key] = 'on' if param.kind == 'flag' else argv[index + 1]
+                return ""
+            key = flag + ("#" + str(ordinal) if ordinal else "")
+            values[key] = "on" if param.kind == "flag" else argv[index + 1]
             counts[flag] = ordinal + 1
-            index += 1 if param.kind == 'flag' else 2
-        if not values.get('--out'):
-            return ''
-        values['--resume-from'] = values['--out']
-        values['--out'] = str(Path(values['--out']).parent/uuid4().hex)
+            index += 1 if param.kind == "flag" else 2
+        if not values.get("--out"):
+            return ""
+        values["--resume-from"] = values["--out"]
+        values["--out"] = str(Path(values["--out"]).parent / uuid4().hex)
         values.update(cmd=job.command, campaign_id=self.db.workspace_for_job(job.job_id))
-        href = '/commands?' + urlencode(values)
-        return ("<section class='card'><h2>Continue collection</h2>"
-            "<p>Keep the saved model programs, inputs, budget and campaign. Completed jobs are restored; "
-            "partial jobs use their response checkpoints. After a console update, continuation automatically uses "
-            "the original execution revision in a separate source-only checkout. Do not change the saved revision. "
-            "Continuation starts a fresh time window for remaining work without resetting consumed calls or spending. "
-            "Spending stops and HTTP retry limits remain active.</p>"
-            "<p><a class='button' href='" + html.escape(href, quote=True) + "'>Review continuation</a></p>"
-            "<p class='note'>A fresh output directory is filled in for the continuation record. "
-            "Opening this form makes no calls and does not regenerate answers.</p></section>")
+        href = "/commands?" + urlencode(values)
+        return (
+            _ui_template(
+                "<section class='card'><h2>[[text:pages.continue_collection]]</h2><p>[[text:pages.keep_the_saved_model_programs_inputs_budget_and_campaign_complete]]</p><p><a class='button' href='"
+            )
+            + html.escape(href, quote=True)
+            + _ui_template(
+                "'>[[text:pages.review_continuation]]</a></p><p class='note'>[[text:pages.a_fresh_output_directory_is_filled_in_for_the_continuation_record]]</p></section>"
+            )
+        )
 
     def _job_page(self, job: Job) -> bytes:
         state = job.state()
-        tone = {"running": "blue", "complete": "green", "failed": "red", "interrupted": "amber", "stopped": "amber"}.get(state, "gray")
+        tone = {
+            "running": "blue",
+            "complete": "green",
+            "failed": "red",
+            "interrupted": "amber",
+            "stopped": "amber",
+        }.get(state, "gray")
         state_tag = self._job_status_tag(state)
         stdout_tail = self._log_tail(job, "stdout") or "(empty)"
         stderr_tail = self._log_tail(job, "stderr") or "(empty)"
-        nested_failure = ''
-        if state == 'failed' and job.command == 'hosted_campaign_execute' and '--out' in job.argv:
+        nested_failure = ""
+        if state == "failed" and job.command == "hosted_campaign_execute" and "--out" in job.argv:
             from experiments.hosted_program_runtime import retained_planning_failure
+
             nested_failure = retained_planning_failure(
-                Path(job.argv[job.argv.index('--out')+1]), self.results_root)
+                Path(job.argv[job.argv.index("--out") + 1]), self.results_root
+            )
         stop_form = (
-            f"<form class='action-row' method='post' action='/jobs/{html.escape(job.job_id)}/stop'>"
-            "<button class='danger' type='submit'>Stop job</button></form>"
+            (
+                "<form class='action-row' method='post' action='/jobs/"
+                + f"{html.escape(job.job_id)}"
+                + _ui_template(
+                    "/stop'><button class='danger' type='submit'>[[text:pages.stop_job]]</button></form>"
+                )
+            )
             if state == "running" and job.process is not None
             else ""
         )
@@ -1808,32 +2061,67 @@ class PagesMixin:
             else ""
         )
         failure = (
-            "<div class='card'><h2>" + _icon("pulse") + "Failure</h2>"
-            "<p>The command exited with "
-            f"code {job.exit_code()}. Retained error details are shown below.</p>"
+            "<div class='card'><h2>"
+            + _icon("pulse")
+            + (
+                _ui_template(
+                    "[[text:pages.failure]]</h2><p>[[text:pages.the_command_exited_with_code]] "
+                )
+                + f"{job.exit_code()}"
+                + _ui_template("[[text:pages.retained_error_details_are_shown_below]]</p>")
+            )
             + (f"<pre>{html.escape(job.failure)}</pre>" if job.failure else "")
-            + ("<h3>Runtime preparation error</h3><pre>"+html.escape(nested_failure)+"</pre>"
-               if nested_failure else "")
-            + (f"<pre>{html.escape(stderr_tail)}</pre>" if not nested_failure and stderr_tail != '(empty)' else '')
+            + (
+                _ui_template("<h3>[[text:pages.runtime_preparation_error]]</h3><pre>")
+                + html.escape(nested_failure)
+                + "</pre>"
+                if nested_failure
+                else ""
+            )
+            + (
+                f"<pre>{html.escape(stderr_tail)}</pre>"
+                if not nested_failure and stderr_tail != "(empty)"
+                else ""
+            )
             + "</div>"
             if state == "failed"
             else ""
         )
         if state in {"interrupted", "stopped"}:
-            failure = ("<div class='notice amber'><strong>Execution " + state + ".</strong><p>"
-                       + html.escape(job.failure or "No terminal process record is available. Saved outputs remain available; review them before continuing.")
-                       + "</p></div>")
+            failure = (
+                _ui_template("<div class='notice amber'><strong>[[text:pages.execution]] ")
+                + state
+                + ".</strong><p>"
+                + html.escape(
+                    job.failure
+                    or _ui_text(
+                        "pages.no_terminal_process_record_is_available_saved_outputs_remain_avai"
+                    )
+                )
+                + "</p></div>"
+            )
         try:
-            publication=json.loads((job.directory/'campaign-publication.json').read_text())
-            if publication.get('status')=='publication_pending':
-                failure += ('<div class="notice amber"><strong>Campaign results publication needs attention.</strong><p>'
-                    + html.escape(publication.get('reason','Saved records are not yet indexed.'))
-                    + ' Saved generation artifacts remain available. Do not regenerate answers to repair the index.</p></div>')
-        except (OSError,ValueError):pass
+            publication = json.loads((job.directory / "campaign-publication.json").read_text())
+            if publication.get("status") == "publication_pending":
+                failure += (
+                    _ui_template(
+                        '<div class="notice amber"><strong>[[text:pages.campaign_results_publication_needs_attention]]</strong><p>'
+                    )
+                    + html.escape(
+                        publication.get(
+                            "reason", _ui_text("pages.saved_records_are_not_yet_indexed")
+                        )
+                    )
+                    + _ui_template(
+                        " [[text:pages.saved_generation_artifacts_remain_available_do_not_regenerate_ans]]</p></div>"
+                    )
+                )
+        except (OSError, ValueError):
+            pass
         activity = (
-            "<div class='notice blue'><strong>Model download in progress.</strong> "
-            "This indicator comes from explicit job activity metadata and is "
-            "shown only while the process is running.</div>"
+            _ui_template(
+                "<div class='notice blue'><strong>[[text:pages.model_download_in_progress]]</strong> [[text:pages.this_indicator_comes_from_explicit_job_activity_metadata_and_is_s]]</div>"
+            )
             if state == "running" and getattr(job, "activity", None) == "model_download"
             else ""
         )
@@ -1851,15 +2139,15 @@ class PagesMixin:
             builder = (
                 "<div class='card'><h2>"
                 + _icon("flask")
-                + "Builder parameters</h2><div class='scroll'><table>"
+                + _ui_template("[[text:pages.builder_parameters]]</h2><div class='scroll'><table>")
                 + rows
-                + "</table></div><p class='note'>The durable campaign-builder "
-                "selections retained with this job. Explicit workstation "
-                "checkpoint locators appear only as declared SHA-256 content "
-                "identities.</p><form method='post' action='/build'>"
+                + _ui_template(
+                    "</table></div><p class='note'>[[text:pages.the_durable_campaign_builder_selections_retained_with_this_job_ex]]</p><form method='post' action='/build'>"
+                )
                 + reopen
-                + "<button type='submit' class='ghost'>Review this exact "
-                "lane in the builder</button></form></div>"
+                + _ui_template(
+                    "<button type='submit' class='ghost'>[[text:pages.review_this_exact_lane_in_the_builder]]</button></form></div>"
+                )
             )
         argv_chips = (
             "<div class='argv'>"
@@ -1867,8 +2155,15 @@ class PagesMixin:
             + "</div>"
         )
         retained_links: list[str] = []
-        for flag in ("--out", "--output", "--out-json", "--out-csv", "--out-md",
-                     "--artifact-out", "--attacker-config-out"):
+        for flag in (
+            "--out",
+            "--output",
+            "--out-json",
+            "--out-csv",
+            "--out-md",
+            "--artifact-out",
+            "--attacker-config-out",
+        ):
             if flag not in job.argv:
                 continue
             index = job.argv.index(flag)
@@ -1887,41 +2182,54 @@ class PagesMixin:
                 f"{html.escape(flag)}: {html.escape(relative)}</a>"
             )
         retained = (
-            "<p class='note'>Retained output: " + " &middot; ".join(retained_links) + "</p>"
+            _ui_template("<p class='note'>[[text:pages.retained_output]] ")
+            + " &middot; ".join(retained_links)
+            + "</p>"
             if retained_links
             else ""
         )
         started = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(job.started_at))
         exit_code = job.exit_code()
         meta = (
-            "<div class='cols'>"
-            "<div class='card'><div class='stat'>"
-            f"<span class='value'><span class='dot {tone}'></span>"
-            f"{html.escape(state_tag)}</span>"
-            "<span class='label'>state</span></div></div>"
-            "<div class='card'><div class='stat'>"
-            f"<span class='value'>{job.runtime_seconds():,.0f}s</span>"
-            "<span class='label'>runtime</span></div></div>"
-            "<div class='card'><div class='stat'>"
-            f"<span class='value'>{started}</span>"
-            "<span class='label'>started</span></div></div>"
-            "<div class='card'><div class='stat'>"
-            f"<span class='value'>{'-' if exit_code is None else exit_code}"
-            "</span><span class='label'>exit code</span></div></div>"
-            "</div>"
+            "<div class='cols'><div class='card'><div class='stat'><span class='value'><span class='dot "
+            + f"{tone}"
+            + "'></span>"
+            + f"{html.escape(state_tag)}"
+            + _ui_template(
+                "</span><span class='label'>[[text:pages.state_2]]</span></div></div><div class='card'><div class='stat'><span class='value'>"
+            )
+            + f"{job.runtime_seconds():,.0f}"
+            + _ui_template(
+                "[[text:pages.s]]</span><span class='label'>[[text:pages.runtime_2]]</span></div></div><div class='card'><div class='stat'><span class='value'>"
+            )
+            + f"{started}"
+            + _ui_template(
+                "</span><span class='label'>[[text:pages.started_2]]</span></div></div><div class='card'><div class='stat'><span class='value'>"
+            )
+            + f"{('-' if exit_code is None else exit_code)}"
+            + _ui_template(
+                "</span><span class='label'>[[text:pages.exit_code]]</span></div></div></div>"
+            )
         )
         stop_failure = (
-            "<div class='notice red'><strong>Stop could not be confirmed."
-            "</strong><p class='note'>"
+            _ui_template(
+                "<div class='notice red'><strong>[[text:pages.stop_could_not_be_confirmed]]</strong><p class='note'>"
+            )
             + html.escape(job.stop_error)
-            + " Check the rig for a surviving process and terminate it "
-            "manually; this run's usage/cost may be incomplete.</p></div>"
+            + _ui_template(
+                " [[text:pages.check_the_rig_for_a_surviving_process_and_terminate_it_manually_t]]</p></div>"
+            )
             if job.stop_error
             else ""
         )
         body = (
-            f"<h1>{_icon('terminal', size=22)}Job {html.escape(job.job_id)}"
-            "</h1>"
+            (
+                "<h1>"
+                + f"{_icon('terminal', size=22)}"
+                + _ui_text("pages.job_2")
+                + f"{html.escape(job.job_id)}"
+                + "</h1>"
+            )
             + self._campaign_banner(self.db.workspace_for_job(job.job_id))
             + meta
             + activity
@@ -1930,7 +2238,7 @@ class PagesMixin:
             + stop_failure
             + "<div class='card'><h2>"
             + _icon("file")
-            + "Durable command identity</h2>"
+            + _ui_template("[[text:pages.durable_command_identity]]</h2>")
             + argv_chips
             + retained
             + stop_form
@@ -1939,12 +2247,22 @@ class PagesMixin:
             + failure
             + "<div class='card'><h2>"
             + _icon("chart")
-            + "stdout</h2>"
-            f"<pre>{html.escape(stdout_tail)}</pre></div>"
-            "<div class='card'><h2>" + _icon("pulse") + "stderr</h2>"
-            f"<pre>{html.escape(stderr_tail)}</pre></div>" + refresh
+            + (
+                _ui_template("[[text:pages.stdout]]</h2><pre>")
+                + f"{html.escape(stdout_tail)}"
+                + "</pre></div><div class='card'><h2>"
+            )
+            + _icon("pulse")
+            + (
+                _ui_template("[[text:pages.stderr]]</h2><pre>")
+                + f"{html.escape(stderr_tail)}"
+                + "</pre></div>"
+            )
+            + refresh
         )
-        return _page(f"Job {job.job_id}", body, active="Jobs")
+        return _page(
+            (_ui_text("pages.job_2") + f"{job.job_id}"), body, active=_ui_text("pages.jobs")
+        )
 
     # -- artifact browsing -------------------------------------------------
 
@@ -1970,13 +2288,24 @@ class PagesMixin:
                 f"<td>{size}</td></tr>"
             )
         listing = (
-            "<div class='card scroll'><table class='filelist'>"
-            "<tr><th>Name</th><th>Size</th></tr>" + "".join(rows) + "</table></div>"
+            _ui_template(
+                "<div class='card scroll'><table class='filelist'><tr><th>[[text:pages.name]]</th><th>[[text:pages.size]]</th></tr>"
+            )
+            + "".join(rows)
+            + "</table></div>"
             if rows
-            else "<div class='card'><p class='note'>Empty directory.</p></div>"
+            else _ui_template(
+                "<div class='card'><p class='note'>[[text:pages.empty_directory]]</p></div>"
+            )
         )
-        body = "<h1>" + _icon("folder", size=22) + "Artifacts</h1>" + _crumbs(relative) + listing
-        return _page("Artifacts", body, active="Artifacts")
+        body = (
+            "<h1>"
+            + _icon("folder", size=22)
+            + _ui_template("[[text:pages.artifacts]]</h1>")
+            + _crumbs(relative)
+            + listing
+        )
+        return _page(_ui_text("pages.artifacts"), body, active=_ui_text("pages.artifacts"))
 
     def _file_page(self, target: Path, relative: str) -> tuple[int, str, bytes]:
         suffix = target.suffix.lower()
@@ -1987,14 +2316,14 @@ class PagesMixin:
                 200,
                 "text/html; charset=utf-8",
                 _page(
-                    "Artifact",
+                    _ui_text("pages.artifact"),
                     "<h1>"
                     + _icon("file", size=22)
                     + f"{html.escape(relative)}</h1>"
                     + _crumbs(relative)
-                    + "<div class='card'><p>"
-                    "File exceeds the inline render limit; inspect it on "
-                    "disk.</p></div>",
+                    + _ui_template(
+                        "<div class='card'><p>[[text:pages.file_exceeds_the_inline_render_limit_inspect_it_on_disk]]</p></div>"
+                    ),
                 ),
             )
         text = target.read_text(encoding="utf-8", errors="replace")
@@ -2012,7 +2341,11 @@ class PagesMixin:
             rows = []
             for index, row in enumerate(reader):
                 if index > _CSV_PREVIEW_ROWS:
-                    rows.append("<tr><td colspan='99'>(truncated preview)</td></tr>")
+                    rows.append(
+                        _ui_template(
+                            "<tr><td colspan='99'>[[text:pages.truncated_preview]]</td></tr>"
+                        )
+                    )
                     break
                 tag = "th" if index == 0 else "td"
                 rows.append(
@@ -2034,5 +2367,5 @@ class PagesMixin:
         return (
             200,
             "text/html; charset=utf-8",
-            _page(relative, body, active="Artifacts"),
+            _page(relative, body, active=_ui_text("pages.artifacts")),
         )

@@ -1560,7 +1560,8 @@ def test_preview_limit_zero_only_for_local_only_measured_lanes() -> None:
     # show no fallback, and the summary line prints the same value.
     assert "var localOnlyMeasured=mode==='measured'&&!api.length&&!hostedJudge;" in _BUILDER_SCRIPT
     assert "else if(localOnlyMeasured){parts.push('--limit 0');}" in _BUILDER_SCRIPT
-    assert "localOnlyMeasured?'0 (complete release)':'not set'" in _BUILDER_SCRIPT
+    # Catalog messages are safely JSON-quoted; the conditional is unchanged.
+    assert 'localOnlyMeasured?"0 (complete release)":"not set"' in _BUILDER_SCRIPT
     assert "mode!=='dry_run'&&!(mode==='diagnostic_canary'" not in _BUILDER_SCRIPT
     # The synchronized sampling control computes the same predicate earlier;
     # inspect the later command-preview instance exercised by this contract.

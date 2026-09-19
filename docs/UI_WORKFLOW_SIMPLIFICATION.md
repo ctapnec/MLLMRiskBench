@@ -8,6 +8,11 @@ the wider design scope. SVM studies now combine extraction, export, evaluation
 and supported classifier packaging. Attack capture derives installed runtime
 settings and output locations, then attaches completed material automatically.
 
+Display preferences are grouped in the shared header: Theme and Language, with
+English as the initial language. UI-authored copy is maintained in the
+[English catalog](UI_LANGUAGE.md); campaign values and retained research text
+are not translated. This adds no operator preparation or backend request.
+
 Operators choose experimental inputs, models, sampling, evaluation and resource
 limits. They must not coordinate internal planning, acquisition, conversion,
 receipt creation or publication jobs. Those jobs remain inspectable as technical

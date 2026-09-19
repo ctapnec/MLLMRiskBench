@@ -13,6 +13,11 @@ handoffs. Single-run and historical continuation controls remain available.
 See [the combined local/API guide](../docs/SMALL_CAMPAIGNS.md), including its
 reference outcomes and optional comparison, human-review and SVM procedures.
 
+The console header also offers Theme and Language. The initial language choice
+is English only; neither control changes campaign configuration or recorded
+research data. See the [UI language catalog](../docs/UI_LANGUAGE.md) for the
+server/client text convention and required browser regressions.
+
 Direct hosted collection uses the existing Runner through the campaign spending
 controller. Its per-attempt admission covers retries, bridge callback threads
 and recycled Runner subprocesses. Counted request allowances and frozen prices

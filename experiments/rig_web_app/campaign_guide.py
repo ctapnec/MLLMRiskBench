@@ -1,5 +1,8 @@
 """Optional campaign help. Reads saved UI state; never prepares or starts work."""
+
 from __future__ import annotations
+
+from .i18n import template as _ui_template, text as _ui_text
 
 import html
 from urllib.parse import quote
@@ -41,289 +44,570 @@ STYLE = """
 
 def _guidance(app, params):
     """Bounded index reads only, not filesystem scans or inference checks."""
-    owner = params.get('campaign_id', '')
-    base = '/build?campaign_id=' + quote(owner, safe='') if owner else '/build?work_kind=campaign'
-    campaign = '/campaigns/' + quote(owner, safe='') if owner else base
-    def link(tab, target=''):
-        if target == 'retained-inputs' and params.get('campaign_inputs') != 'saved':
-            target = 'campaign-workflow'
-        return base + '#' + (target or 'build-' + tab)
-    tool = lambda command: '/commands?cmd=' + command + ('&campaign_id=' + owner if owner else '')
-    matched = params.get('campaign_inputs') == 'saved' or (
-        not params.get('campaign_flow') and bool(params.get('retained_source_campaign')))
-    local = bool(params.get('local'))
-    hosted = bool(params.get('api'))
-    route = 'matched' if matched else 'mixed' if local and hosted else 'local' if local else 'hosted' if hosted else 'choose'
-    prepare_target = 'automatic-comparison' if matched else 'pipeline-review'
-    judging_links = ([('Open local saved-output judging', link('general', 'retained-local-judging'))]
-        if params.get('retained_programs_job') else [('Complete collection preparation', link('general', prepare_target))]) if matched else [
-            ('Choose judges', link('evaluation', 'evaluation-judges'))]
-    if matched and params.get('retained_programs_job'):
-        judging_links += [('Open Haiku saved-output judging', link('general', 'retained-haiku-judging')),
-            ('Review same-input output coverage', link('general', 'retained-haiku-judging'))]
+    owner = params.get("campaign_id", "")
+    base = "/build?campaign_id=" + quote(owner, safe="") if owner else "/build?work_kind=campaign"
+    campaign = "/campaigns/" + quote(owner, safe="") if owner else base
+
+    def link(tab, target=""):
+        if target == "retained-inputs" and params.get("campaign_inputs") != "saved":
+            target = "campaign-workflow"
+        return base + "#" + (target or "build-" + tab)
+
+    tool = lambda command: "/commands?cmd=" + command + ("&campaign_id=" + owner if owner else "")
+    matched = params.get("campaign_inputs") == "saved" or (
+        not params.get("campaign_flow") and bool(params.get("retained_source_campaign"))
+    )
+    local = bool(params.get("local"))
+    hosted = bool(params.get("api"))
+    route = (
+        "matched"
+        if matched
+        else "mixed"
+        if local and hosted
+        else "local"
+        if local
+        else "hosted"
+        if hosted
+        else "choose"
+    )
+    prepare_target = "automatic-comparison" if matched else "pipeline-review"
+    judging_links = (
+        (
+            [
+                (
+                    _ui_text("campaign_guide.open_local_saved_output_judging"),
+                    link("general", "retained-local-judging"),
+                )
+            ]
+            if params.get("retained_programs_job")
+            else [
+                (
+                    _ui_text("campaign_guide.complete_collection_preparation"),
+                    link("general", prepare_target),
+                )
+            ]
+        )
+        if matched
+        else [(_ui_text("campaign_guide.choose_judges"), link("evaluation", "evaluation-judges"))]
+    )
+    if matched and params.get("retained_programs_job"):
+        judging_links += [
+            (
+                _ui_text("campaign_guide.open_haiku_saved_output_judging"),
+                link("general", "retained-haiku-judging"),
+            ),
+            (
+                _ui_text("campaign_guide.review_same_input_output_coverage"),
+                link("general", "retained-haiku-judging"),
+            ),
+        ]
     if owner:
-        judging_links.insert(0,('Evaluate saved campaign answers','/assessment?campaign_id='+owner))
+        judging_links.insert(
+            0,
+            (
+                _ui_text("campaign_guide.evaluate_saved_campaign_answers"),
+                "/assessment?campaign_id=" + owner,
+            ),
+        )
     steps = [
-        ('Choose a route', 'Choose what you want to compare',
-         'Use local models, hosted APIs, or both in one campaign. For a fresh workload, choose arms, '
-         'corpora and frameworks in Pipeline. To compare hosted answers against saved local answers, '
-         'use Reuse local inputs for an API comparison in General. Sharing a seed alone does not prove matched inputs.',
-         [('Choose target models', link('pipeline', 'target-models')),
-          ('Choose a fresh workload', link('pipeline', 'input-corpora')),
-          ('Reuse saved local inputs', link('general', 'retained-inputs'))]),
-        ('Runtimes', 'Check model and framework readiness',
-         'For local work, inspect the available GPUs, local services and installed framework environments in '
-         'Runtimes. Reuse working installations and assessed model profiles. A newly downloaded or changed local '
-         'model needs its text/image responsiveness assessment before security testing; an existing valid profile '
-         'does not need repeated assessment. For hosted work, check the configured target and provider credentials '
-         'in Config. Opening these pages does not install models or call a provider.',
-         [('Inspect local hardware', link('runtimes', 'local-hardware')),
-          ('Inspect framework runtimes', link('runtimes', 'framework-runtimes')),
-          ('Open local-model assessment', tool('local_model_readiness')), ('Inspect provider credentials', '/config/secrets')]),
-        ('Inputs', 'Choose a small, interpretable input selection',
-         'For fresh inputs, select your corpora and attacks in Pipeline, then set the per-arm limit, '
-         'sampling policy and seeds in Execution. Keep text and image counts explicit. For reused inputs, '
-         'choose saved inputs in General -> Campaign workflow, select the source campaign and runs, then set request caps. Review campaign '
-         'handles input extraction and the following preparation stages automatically. It makes no generation calls. '
-         'HarmBench, T3MP3ST, NanoGCG and IDEATOR have additional preparation controls when selected. '
-         'Follow the chosen attacker panel before measured execution; corpus selection alone does not prepare an attack.',
-         [('Select arms and corpora', link('pipeline', 'input-corpora')),
-          ('Select attack frameworks and preparation', link('pipeline', 'attack-frameworks')),
-          ('Set limits and sampling', link('execution', 'sample-size-control')),
-          ('Select saved source runs', link('general', 'retained-inputs'))]),
-        ('Settings', 'Choose evaluation and realistic bounds',
-         'Select your judges in Evaluation. Local models use their assessed serving profiles; scoring revision '
-         'and placement are automatic. Hosted output allowances come from API target configuration and, for '
-         'matched work, the model forecast. Keep Calculate call limits automatically enabled in Execution; '
-         'target, judge and HTTP limits come from the workload projection. Manual overrides and technical recovery settings are collapsed. '
-         'The call-start window is not an individual response timeout. Full model checksum scans are optional.',
-         [('Choose judges', link('evaluation', 'evaluation-judges')), ('Set execution bounds', link('execution', 'execution-budgets')),
-          ('Inspect local serving', link('execution', 'local-serving')), ('Configure hosted targets', '/config?file=api-targets#cfg-editor')]),
-        ('Prepare', 'Prepare and review before making target calls',
-         ('Click Prepare comparison and review in General. One progress page follows input extraction, forecasting, '
-          'replay and execution preparation. Do not open or start the child jobs. The completed page shows the '
-          'workload and cost bound, then offers the explicit collection start. Token counting can contact '
-          'the provider but does not generate answers. Prepared and active work reopens this progress or review.') if matched else
-         ('Use Compose & review. Automatic preparation starts directly. The console handles model planning, installed-model reuse, '
-          'the no-call preflight and final execution preparation on one page. Existing exact preparation is reused. '
-          'When ready, review the workload and click Start run, or Start experiment including connection checks. '
-          'Keep Admission on Automatic: output locations, execution scope, software/source records and saved '
-          'transport checks are supplied for campaigns and single runs. Technical text fields are optional '
-          'Advanced overrides. Diagnostic probes started here save their connection checks automatically; '
-          'the same progress page follows both. For older probes, Tools can select the completed probe by name. No receipt rows or hashes '
-          'need copying. No separate plan/acquire/preflight buttons are required. Measured work '
-          'needs valid transport evidence for each selected route/modality. Missing checks are derived and included '
-          'in the reviewed start before measured collection. Your experiment settings stay intact. No separate '
-          'probe setup or return to measured mode is required. Hosted review shows clearly labelled cost scenarios; '
-          'these are not the matched-input route\'s counted monetary bounds.'),
-         [('Open the next preparation controls', link('general', prepare_target)),
-          ('Check transport evidence', link('admission', 'transport-evidence'))]),
-        ('Run', 'Start once and follow the existing job',
-         'Use the explicit start on the reviewed job or prepared collection. Hosted generation spends credits. '
-         'Watch Campaign jobs or Activity; an active or retry-waiting job is not a reason to start a duplicate. '
-         'If interrupted, inspect the original error and its offered continuation. Keep saved answers and '
-         'recover only the unfinished stage. This guide never starts or resumes jobs for you.',
-         [('Open review controls', link('general', 'prepared-collection' if params.get('retained_programs_job') else 'pipeline-review')),
-          ('Open campaign jobs', '/jobs?campaign_id=' + owner if owner else link('general'))]),
-        ('Judge', 'Judge each saved answer, not just its input',
-         ('In General, click Review local judging. Preparation is automatic; the completed page offers Start or resume '
-          'local judging. For Haiku choose the judge and input limit, then Review all-output Haiku judging. Its '
-          'inventory, matching, counting and cost calculation run automatically before the final paid start. '
-          'Missing answers and funding shortfalls remain explicit. Optional sampled paired comparison has its own '
-          'limit and USD fields; these do not change all-output judging. Image assessments use the retained text proxy.') if matched else
-         ('For direct Runner work, the selected judging cascade evaluates collected answers. A cascade may '
-          'decide before reaching its model-backed judge; it is not two independent verdicts. Missing text, '
-          'abstentions and invalid assessments must remain visible. Open Evaluate saved answers for any campaign, '
-          'including finished or CLI-collected work. Choose the original local evaluator or Haiku, an answer limit '
-          'and, for Haiku, a USD ceiling. Prepare assessment and review resolves saved outputs automatically, then '
-          'Start or resume assessment evaluates them. Valid verdicts are skipped; missing answers and unsupported '
-          'source contexts remain visible. A verdict for one model cannot be copied to another answer.'),
-         judging_links + [('Inspect saved verdicts', campaign + '?section=judging' if owner else link('evaluation', 'evaluation-judges'))]),
-        ('Results', 'Inspect coverage before comparing rates',
-         'Results shows answers, effective generation settings, usage and truncation. Judging shows '
-         'answer-specific decisions and coverage. Costs reports recorded attempts and charges, not the balance '
-         'in your provider account. In Compare, the left campaign is fixed to the page you opened. Choose '
-         'the right campaign, models, generation conditions and judging conditions; dependent choices load '
-         'automatically. The generation scope names the campaign and model; options show modality, context and '
-         'output allowance. Expand the selected condition for frameworks and corpora. Changing conditions '
-         'does not merge judges: local choices distinguish rules-only from model-backed judging and show '
-         'the recorded approximate-metrics mode. Read Selected judging settings below the selector; '
-         'unindexed historical settings are not guessed. Changing conditions '
-         'preserves the exact selected judge only when it is still available. Fields explain missing prerequisites or unavailable indexed records. Keep diagnostic '
-         'probes separate. All models on either side compares model and generation-setting pairs separately, '
-         'within each selected campaign, twelve pairs per page; expand a pair to inspect outcomes. All does not '
-         'pool scores, choose the latest/best response or start jobs. For one model, All generation conditions '
-         'includes its settings separately. Both single-model and All-model scopes offer highest/lowest output '
-         'allowance, largest/smallest context and highest usable-response rate, applied per model within source '
-         'filters. Ties remain separate. Rate-based selection is post-hoc, not attack success or a safety score; '
-         'inspect its denominator and coverage. Missing judgments are not substituted. Keep '
-         'missing responses and historical replacements explicit. Export figures and their counts '
-         'from Overview and Judging, and the exact paired counts from Compare. Definition is the editable '
-         'draft, not a replacement for each job\'s recorded execution settings. Stats -> Compare campaigns '
-         'also links to individual measured-job comparisons: select two indexed jobs with separate output '
-         'directories to inspect input overlap, outcomes, truncation and token usage. Shared recovery '
-         'histories require campaign comparison; saved-output counts are not all scheduled inputs.',
-         [(label, campaign + '?section=' + section if owner else link('general'))
-          for label, section in [('Inspect results', 'results'), ('Compare matched inputs', 'compare'),
-              ('Inspect costs', 'costs'), ('Coverage figures and exports', 'overview'), ('Inspect the saved draft', 'definition')]]
-          + [('Compare individual measured jobs', '/stats?view=compare&scope=jobs')]),
-        ('Human review', 'Evaluate saved answers or arrange independent review',
-         'For active or finished campaigns, open Human evaluation and use Review saved answers for your own evaluation: choose Saved results, '
-         'name the review, choose its rubric and source-cluster count, acknowledge sensitive content and click '
-         'Prepare answers for review. The evaluation form opens automatically after preparation. Read the prompt, '
-         'images and answer, use Next through the rating dimensions, then Save evaluation. Review progress and '
-         'export reopens your saved work and downloads personal evaluations, including unfinished items. '
-         'This path has no study-arrangement or enrollment fields; personal ratings are not independent evidence. '
-         'For the separate Independent two-rater study option, choose Saved results, '
-         'name the study, select the rubric and sample, record the actual participation and ethics arrangements, '
-         'then review and prepare the sample. Inspect prompts, images and workload before creating the study. '
-         'Assign qualified independent raters and an adjudicator, and share their individual review links. '
-         'After ratings and adjudication, export and analyze the completed sample. Setup does not create human '
-         'verdicts; automated judging and SVM predictions cannot replace actual raters.',
-         [('Open human-evaluation wizard', '/human-evaluation?campaign_id=' + owner if owner else link('general')),
-          ('Inspect campaign judging coverage', campaign + '?section=judging' if owner else link('evaluation'))]),
-        ('SVM analysis', 'Optional: analyze retained responses with SVMs',
-         'Open the campaign SVM analysis tab. Choose the saved local input source, the campaign whose inputs '
-         'define the matched population and a recorded Haiku condition. Include matching local answers if desired, '
-         'then click Start classifier study. Input extraction, dataset export, grouped evaluation and reusable '
-         'classifier packaging happen automatically as one job. No database, output directory or intermediate '
-         'file needs entering. Saved analyses shows answer/group counts, task status, held-out macro-F1 and named '
-         'links to complete reports. Stats -> SVM results shows saved-study scores, baselines, class/group support, '
-         'recorded confidence intervals and filtered CSV/SVG exports without retraining. Resume unfinished analysis reuses completed '
-         'stages. The three tasks are harmful compliance, over-refusal and local/Haiku disagreement. '
-         'A few demonstration answers are too small for meaningful training and held-out evaluation. '
-         'The current study supports static text, not arbitrary image or live-attack data. '
-         'Prediction scores are uncalibrated margins, not human verdicts or safety probabilities. No target or judge call is made.',
-         [('Open SVM analysis', '/analysis?campaign_id='+owner if owner else '/campaigns'),
-          ('Inspect SVM results', '/stats?view=svm&campaign_id='+owner if owner else '/stats?view=svm'),
-          ('Inspect existing analysis jobs', '/jobs?campaign_id=' + owner if owner else '/jobs')]),
-        ('Recovery', 'Recover the unfinished stage without duplicating work',
-         'Open the original job and read its error and saved outputs. Continue an interrupted prepared collection '
-         'from its offered continuation; do not create a second campaign. For saved-output judging, reuse the '
-         'same preparation and Start or resume action. A transport retry wait is not a model refusal. Keep '
-         'missing, truncated and invalid outcomes visible rather than silently relabelling them. After recovery, '
-         'check the replacement and its own judgments in Results. Refresh only transport evidence actually '
-         'affected by expiration or changed execution conditions, not every runtime or successful probe.',
-         [('Inspect campaign jobs', '/jobs?campaign_id=' + owner if owner else '/jobs'),
-          ('Inspect campaign activity', campaign + '?section=activity' if owner else link('general'))])
+        (
+            _ui_text("campaign_guide.choose_a_route"),
+            _ui_text("campaign_guide.choose_what_you_want_to_compare"),
+            _ui_text(
+                "campaign_guide.use_local_models_hosted_apis_or_both_in_one_campaign_for_a_fresh"
+            ),
+            [
+                (
+                    _ui_text("campaign_guide.choose_target_models"),
+                    link("pipeline", "target-models"),
+                ),
+                (
+                    _ui_text("campaign_guide.choose_a_fresh_workload"),
+                    link("pipeline", "input-corpora"),
+                ),
+                (
+                    _ui_text("campaign_guide.reuse_saved_local_inputs"),
+                    link("general", "retained-inputs"),
+                ),
+            ],
+        ),
+        (
+            _ui_text("campaign_guide.runtimes"),
+            _ui_text("campaign_guide.check_model_and_framework_readiness"),
+            _ui_text(
+                "campaign_guide.for_local_work_inspect_the_available_gpus_local_services_and_inst"
+            ),
+            [
+                (
+                    _ui_text("campaign_guide.inspect_local_hardware"),
+                    link("runtimes", "local-hardware"),
+                ),
+                (
+                    _ui_text("campaign_guide.inspect_framework_runtimes"),
+                    link("runtimes", "framework-runtimes"),
+                ),
+                (
+                    _ui_text("campaign_guide.open_local_model_assessment"),
+                    tool("local_model_readiness"),
+                ),
+                (_ui_text("campaign_guide.inspect_provider_credentials"), "/config/secrets"),
+            ],
+        ),
+        (
+            _ui_text("campaign_guide.inputs"),
+            _ui_text("campaign_guide.choose_a_small_interpretable_input_selection"),
+            _ui_text(
+                "campaign_guide.for_fresh_inputs_select_your_corpora_and_attacks_in_pipeline_then"
+            ),
+            [
+                (
+                    _ui_text("campaign_guide.select_arms_and_corpora"),
+                    link("pipeline", "input-corpora"),
+                ),
+                (
+                    _ui_text("campaign_guide.select_attack_frameworks_and_preparation"),
+                    link("pipeline", "attack-frameworks"),
+                ),
+                (
+                    _ui_text("campaign_guide.set_limits_and_sampling"),
+                    link("execution", "sample-size-control"),
+                ),
+                (
+                    _ui_text("campaign_guide.select_saved_source_runs"),
+                    link("general", "retained-inputs"),
+                ),
+            ],
+        ),
+        (
+            _ui_text("campaign_guide.settings"),
+            _ui_text("campaign_guide.choose_evaluation_and_realistic_bounds"),
+            _ui_text(
+                "campaign_guide.select_your_judges_in_evaluation_local_models_use_their_assessed"
+            ),
+            [
+                (_ui_text("campaign_guide.choose_judges"), link("evaluation", "evaluation-judges")),
+                (
+                    _ui_text("campaign_guide.set_execution_bounds"),
+                    link("execution", "execution-budgets"),
+                ),
+                (
+                    _ui_text("campaign_guide.inspect_local_serving"),
+                    link("execution", "local-serving"),
+                ),
+                (
+                    _ui_text("campaign_guide.configure_hosted_targets"),
+                    "/config?file=api-targets#cfg-editor",
+                ),
+            ],
+        ),
+        (
+            _ui_text("campaign_guide.prepare"),
+            _ui_text("campaign_guide.prepare_and_review_before_making_target_calls"),
+            (
+                _ui_text(
+                    "campaign_guide.click_prepare_comparison_and_review_in_general_one_progress_page"
+                )
+            )
+            if matched
+            else (
+                _ui_text(
+                    "campaign_guide.use_compose_review_automatic_preparation_starts_directly_the_cons"
+                )
+            ),
+            [
+                (
+                    _ui_text("campaign_guide.open_the_next_preparation_controls"),
+                    link("general", prepare_target),
+                ),
+                (
+                    _ui_text("campaign_guide.check_transport_evidence"),
+                    link("admission", "transport-evidence"),
+                ),
+            ],
+        ),
+        (
+            _ui_text("campaign_guide.run"),
+            _ui_text("campaign_guide.start_once_and_follow_the_existing_job"),
+            _ui_text(
+                "campaign_guide.use_the_explicit_start_on_the_reviewed_job_or_prepared_collection"
+            ),
+            [
+                (
+                    _ui_text("campaign_guide.open_review_controls"),
+                    link(
+                        "general",
+                        "prepared-collection"
+                        if params.get("retained_programs_job")
+                        else "pipeline-review",
+                    ),
+                ),
+                (
+                    _ui_text("campaign_guide.open_campaign_jobs"),
+                    "/jobs?campaign_id=" + owner if owner else link("general"),
+                ),
+            ],
+        ),
+        (
+            _ui_text("campaign_guide.judge"),
+            _ui_text("campaign_guide.judge_each_saved_answer_not_just_its_input"),
+            (
+                _ui_text(
+                    "campaign_guide.in_general_click_review_local_judging_preparation_is_automatic_th"
+                )
+            )
+            if matched
+            else (
+                _ui_text(
+                    "campaign_guide.for_direct_runner_work_the_selected_judging_cascade_evaluates_col"
+                )
+            ),
+            judging_links
+            + [
+                (
+                    _ui_text("campaign_guide.inspect_saved_verdicts"),
+                    campaign + "?section=judging"
+                    if owner
+                    else link("evaluation", "evaluation-judges"),
+                )
+            ],
+        ),
+        (
+            _ui_text("campaign_guide.results"),
+            _ui_text("campaign_guide.inspect_coverage_before_comparing_rates"),
+            _ui_text(
+                "campaign_guide.results_shows_answers_effective_generation_settings_usage_and_tru"
+            ),
+            [
+                (label, campaign + "?section=" + section if owner else link("general"))
+                for label, section in [
+                    (_ui_text("campaign_guide.inspect_results"), "results"),
+                    (_ui_text("campaign_guide.compare_matched_inputs"), "compare"),
+                    (_ui_text("campaign_guide.inspect_costs"), "costs"),
+                    (_ui_text("campaign_guide.coverage_figures_and_exports"), "overview"),
+                    (_ui_text("campaign_guide.inspect_the_saved_draft"), "definition"),
+                ]
+            ]
+            + [
+                (
+                    _ui_text("campaign_guide.compare_individual_measured_jobs"),
+                    "/stats?view=compare&scope=jobs",
+                )
+            ],
+        ),
+        (
+            _ui_text("campaign_guide.human_review"),
+            _ui_text("campaign_guide.evaluate_saved_answers_or_arrange_independent_review"),
+            _ui_text(
+                "campaign_guide.for_active_or_finished_campaigns_open_human_evaluation_and_use_re"
+            ),
+            [
+                (
+                    _ui_text("campaign_guide.open_human_evaluation_wizard"),
+                    "/human-evaluation?campaign_id=" + owner if owner else link("general"),
+                ),
+                (
+                    _ui_text("campaign_guide.inspect_campaign_judging_coverage"),
+                    campaign + "?section=judging" if owner else link("evaluation"),
+                ),
+            ],
+        ),
+        (
+            _ui_text("campaign_guide.svm_analysis"),
+            _ui_text("campaign_guide.optional_analyze_retained_responses_with_svms"),
+            _ui_text(
+                "campaign_guide.open_the_campaign_svm_analysis_tab_choose_the_saved_local_input_s"
+            ),
+            [
+                (
+                    _ui_text("campaign_guide.open_svm_analysis"),
+                    "/analysis?campaign_id=" + owner if owner else "/campaigns",
+                ),
+                (
+                    _ui_text("campaign_guide.inspect_svm_results"),
+                    "/stats?view=svm&campaign_id=" + owner if owner else "/stats?view=svm",
+                ),
+                (
+                    _ui_text("campaign_guide.inspect_existing_analysis_jobs"),
+                    "/jobs?campaign_id=" + owner if owner else "/jobs",
+                ),
+            ],
+        ),
+        (
+            _ui_text("campaign_guide.recovery"),
+            _ui_text("campaign_guide.recover_the_unfinished_stage_without_duplicating_work"),
+            _ui_text(
+                "campaign_guide.open_the_original_job_and_read_its_error_and_saved_outputs_contin"
+            ),
+            [
+                (
+                    _ui_text("campaign_guide.inspect_campaign_jobs"),
+                    "/jobs?campaign_id=" + owner if owner else "/jobs",
+                ),
+                (
+                    _ui_text("campaign_guide.inspect_campaign_activity"),
+                    campaign + "?section=activity" if owner else link("general"),
+                ),
+            ],
+        ),
     ]
-    if params.get('work_kind') == 'campaign' or owner:
+    if params.get("work_kind") == "campaign" or owner:
         replacements = {
-            'Prepare': ('Review the complete campaign',
-                'In General, choose Campaign workflow inputs and assessment, then click Review campaign. '
-                'The same action handles installed corpora/frameworks and saved local inputs. Preparation runs '
-                'automatically without target or judge generation. Token counting may contact the selected provider. '
-                'No target or judge call is made during preparation. '
-                'Review required diagnostics, measured requests, output allowances and collection/Haiku spending limits. '
-                'Keep Admission on Automatic; no receipt rows or preparation jobs need coordinating.',
-                [('Open campaign choices',link('general','campaign-workflow')),('Review the campaign',link('general','pipeline-review')),
-                 ('Inspect automatic connection settings',link('admission','transport-evidence'))]),
-            'Run': ('Start once and follow campaign progress',
-                'Click Start campaign on the completed review. Required checks, collection and selected saved-answer '
-                'assessment proceed on one progress page. Stop campaign prevents later stages and stops active work. '
-                'Resume campaign retains completed answers and judgments. Prepared and active work reopens the page. '
-                'Technical jobs are for inspection, not required handoffs. The Guide itself never starts work.',
-                [('Open prepared and active work',link('general','pipeline-review')),('Open campaign',campaign)]),
-            'Judge': ('Choose assessment before collection',
-                'Choose local assessment and optional independent Haiku assessment in General -> Campaign workflow. '
-                'They run after collection without another preparation/start action. Haiku has a separate spending '
-                'ceiling and evaluates each model answer independently; images use their saved text proxy. Existing '
-                'valid verdicts are reused. Missing outputs, exclusions and invalid verdicts remain visible. '
-                'Evaluate saved answers remains available for older campaigns or a deliberately changed assessment.',
-                [('Choose automatic assessment',link('general','campaign-workflow')),
-                 ('Inspect saved verdicts',campaign+'?section=judging'),
-                 ('Assess existing saved answers','/assessment?campaign_id='+owner if owner else link('general'))]),
+            "Prepare": (
+                _ui_text("campaign_guide.review_the_complete_campaign"),
+                _ui_text(
+                    "campaign_guide.in_general_choose_campaign_workflow_inputs_and_assessment_then_cl"
+                ),
+                [
+                    (
+                        _ui_text("campaign_guide.open_campaign_choices"),
+                        link("general", "campaign-workflow"),
+                    ),
+                    (
+                        _ui_text("campaign_guide.review_the_campaign"),
+                        link("general", "pipeline-review"),
+                    ),
+                    (
+                        _ui_text("campaign_guide.inspect_automatic_connection_settings"),
+                        link("admission", "transport-evidence"),
+                    ),
+                ],
+            ),
+            "Run": (
+                _ui_text("campaign_guide.start_once_and_follow_campaign_progress"),
+                _ui_text(
+                    "campaign_guide.click_start_campaign_on_the_completed_review_required_checks_coll"
+                ),
+                [
+                    (
+                        _ui_text("campaign_guide.open_prepared_and_active_work"),
+                        link("general", "pipeline-review"),
+                    ),
+                    (_ui_text("campaign_guide.open_campaign"), campaign),
+                ],
+            ),
+            "Judge": (
+                _ui_text("campaign_guide.choose_assessment_before_collection"),
+                _ui_text(
+                    "campaign_guide.choose_local_assessment_and_optional_independent_haiku_assessment"
+                ),
+                [
+                    (
+                        _ui_text("campaign_guide.choose_automatic_assessment"),
+                        link("general", "campaign-workflow"),
+                    ),
+                    (
+                        _ui_text("campaign_guide.inspect_saved_verdicts"),
+                        campaign + "?section=judging",
+                    ),
+                    (
+                        _ui_text("campaign_guide.assess_existing_saved_answers"),
+                        "/assessment?campaign_id=" + owner if owner else link("general"),
+                    ),
+                ],
+            ),
         }
-        steps = [(short,*replacements[short]) if short in replacements else (short,title,text,links)
-                 for short,title,text,links in steps]
+        steps = [
+            (short, *replacements[short]) if short in replacements else (short, title, text, links)
+            for short, title, text, links in steps
+        ]
     positions = {step[0]: index for index, step in enumerate(steps)}
-    stage = 'Choose a route' if not (local or hosted) else 'Inputs' if not (params.get('corpora') or matched) else 'Settings'
-    notice = 'Suggested next step from your saved settings.'
+    stage = (
+        _ui_text("campaign_guide.choose_a_route")
+        if not (local or hosted)
+        else _ui_text("campaign_guide.inputs")
+        if not (params.get("corpora") or matched)
+        else _ui_text("campaign_guide.settings")
+    )
+    notice = _ui_text("campaign_guide.suggested_next_step_from_your_saved_settings")
     actions = []
     if owner:
         actions = app.db.workspace_activity(owner) or []
-    latest = next((row for row in actions if row['member_kind'] == 'job'), None)
-    if latest is not None and latest['state'] in {'queued', 'starting', 'running', 'retry_wait', 'retry_waiting', 'failed', 'aborted', 'interrupted'}:
-        state = latest['state']
-        stage = 'Recovery' if state in {'failed', 'aborted', 'interrupted'} else 'Run'
-        notice = 'The latest console job is recorded as ' + state + '. Open that job before starting or preparing another copy.'
-        steps[positions[stage]][3].insert(0, ('Open the current job', '/jobs/' + quote(latest['member_id'], safe='')))
-    elif latest is not None and latest['state'] == 'complete':
-        command = dict(latest).get('command', '')
-        judging_preparation = command in {'retained_native_judge_prepare', 'retained_response_judge_pair',
-            'retained_judge_inventory', 'retained_inventory_judge_items'} or (
-            latest['member_id'] == params.get('retained_inventory_plan_job'))
-        stage = ('Judge' if judging_preparation else 'SVM analysis' if command == 'response_svm' else
-                 'Results' if latest['role'] in {'judging', 'analysis'} else 'Judge' if latest['role'] == 'collection' else 'Prepare')
-        notice = 'The latest console job completed. Check what that job covered; this does not mean the whole campaign is finished.'
+    latest = next((row for row in actions if row["member_kind"] == "job"), None)
+    if latest is not None and latest["state"] in {
+        "queued",
+        "starting",
+        "running",
+        "retry_wait",
+        "retry_waiting",
+        "failed",
+        "aborted",
+        "interrupted",
+    }:
+        state = latest["state"]
+        stage = (
+            _ui_text("campaign_guide.recovery")
+            if state in {"failed", "aborted", "interrupted"}
+            else _ui_text("campaign_guide.run")
+        )
+        notice = (
+            _ui_text("campaign_guide.the_latest_console_job_is_recorded_as")
+            + state
+            + _ui_text("campaign_guide.open_that_job_before_starting_or_preparing_another_copy")
+        )
+        steps[positions[stage]][3].insert(
+            0,
+            (
+                _ui_text("campaign_guide.open_the_current_job"),
+                "/jobs/" + quote(latest["member_id"], safe=""),
+            ),
+        )
+    elif latest is not None and latest["state"] == "complete":
+        command = dict(latest).get("command", "")
+        judging_preparation = command in {
+            "retained_native_judge_prepare",
+            "retained_response_judge_pair",
+            "retained_judge_inventory",
+            "retained_inventory_judge_items",
+        } or (latest["member_id"] == params.get("retained_inventory_plan_job"))
+        stage = (
+            _ui_text("campaign_guide.judge")
+            if judging_preparation
+            else _ui_text("campaign_guide.svm_analysis")
+            if command == "response_svm"
+            else _ui_text("campaign_guide.results")
+            if latest["role"] in {"judging", "analysis"}
+            else _ui_text("campaign_guide.judge")
+            if latest["role"] == "collection"
+            else _ui_text("campaign_guide.prepare")
+        )
+        notice = _ui_text(
+            "campaign_guide.the_latest_console_job_completed_check_what_that_job_covered_this"
+        )
     elif matched:
-        stage = 'Prepare'
-    all_operations = getattr(app, '_operations', {})
+        stage = _ui_text("campaign_guide.prepare")
+    all_operations = getattr(app, "_operations", {})
     from .operations import operator_operations, operation_contains_job, completed_equivalent
-    operations = sorted((row for row in operator_operations(all_operations, owner)
-        if row['status'] in {'preparing', 'ready', 'failed', 'stopped','complete'}),
-        key=lambda row:row.get('created_at', 0))
-    if operations and (operations[-1]['status'] == 'preparing' or latest is None
-            or operations[-1].get('created_at', 0) >= (dict(latest).get('started_at') or 0)
-            or operation_contains_job(all_operations, operations[-1]['id'], latest['member_id'])):
+
+    operations = sorted(
+        (
+            row
+            for row in operator_operations(all_operations, owner)
+            if row["status"] in {"preparing", "ready", "failed", "stopped", "complete"}
+        ),
+        key=lambda row: row.get("created_at", 0),
+    )
+    if operations and (
+        operations[-1]["status"] == "preparing"
+        or latest is None
+        or operations[-1].get("created_at", 0) >= (dict(latest).get("started_at") or 0)
+        or operation_contains_job(all_operations, operations[-1]["id"], latest["member_id"])
+    ):
         current = completed_equivalent(all_operations, operations[-1]) or operations[-1]
-        stage = 'Recovery' if current['status'] in {'failed', 'stopped'} else 'Prepare'
-        notice = ('Preparation is '+current['status']+'. Open the operation, not its internal child jobs. '
-            'Completed preparation still requires an explicit execution start.')
-        steps[positions[stage]][3].insert(0, ('Open prepared or active work', '/operations/'+current['id']))
-        if current.get('kind') == 'campaign':
-            stage = ('Results' if current['status'] == 'complete' else 'Recovery' if current['status'] in {'failed','stopped'}
-                     else 'Run' if current.get('execution_authorized') else 'Prepare')
-            notice = 'Campaign is '+current['status']+'. Follow its progress page; internal jobs need no separate starts.'
-            steps[positions[stage]][3].insert(0,('Open campaign progress','/operations/'+current['id']))
-    if latest is not None and latest['role'] == 'collection' and not matched and params.get('mode') == 'attestation_probe':
-        notice += ' A diagnostic probe is not a measured result; finish its transport evidence before measured execution.'
-        if latest['state'] == 'complete':
-            stage = 'Prepare'
+        stage = (
+            _ui_text("campaign_guide.recovery")
+            if current["status"] in {"failed", "stopped"}
+            else _ui_text("campaign_guide.prepare")
+        )
+        notice = (
+            _ui_text("campaign_guide.preparation_is")
+            + current["status"]
+            + _ui_text(
+                "campaign_guide.open_the_operation_not_its_internal_child_jobs_completed_preparat"
+            )
+        )
+        steps[positions[stage]][3].insert(
+            0,
+            (
+                _ui_text("campaign_guide.open_prepared_or_active_work"),
+                "/operations/" + current["id"],
+            ),
+        )
+        if current.get("kind") == "campaign":
+            stage = (
+                _ui_text("campaign_guide.results")
+                if current["status"] == "complete"
+                else _ui_text("campaign_guide.recovery")
+                if current["status"] in {"failed", "stopped"}
+                else _ui_text("campaign_guide.run")
+                if current.get("execution_authorized")
+                else _ui_text("campaign_guide.prepare")
+            )
+            notice = (
+                _ui_text("campaign_guide.campaign_is")
+                + current["status"]
+                + _ui_text(
+                    "campaign_guide.follow_its_progress_page_internal_jobs_need_no_separate_starts"
+                )
+            )
+            steps[positions[stage]][3].insert(
+                0,
+                (_ui_text("campaign_guide.open_campaign_progress"), "/operations/" + current["id"]),
+            )
+    if (
+        latest is not None
+        and latest["role"] == "collection"
+        and not matched
+        and params.get("mode") == "attestation_probe"
+    ):
+        notice += _ui_text(
+            "campaign_guide.a_diagnostic_probe_is_not_a_measured_result_finish_its_transport"
+        )
+        if latest["state"] == "complete":
+            stage = _ui_text("campaign_guide.prepare")
     return steps, positions[stage], notice, route
 
 
 def render(app, params, *, builder=False):
-    enabled = params.get('campaign_guide') == 'on'
+    enabled = params.get("campaign_guide") == "on"
     if not builder and not enabled:
-        return ''
+        return ""
     steps, stage, notice, route = _guidance(app, params)
     escape = html.escape
-    owner = params.get('campaign_id') or 'new'
-    sections = ''
-    navigation = ''
+    owner = params.get("campaign_id") or "new"
+    sections = ""
+    navigation = ""
     for index, (short, title, text, links) in enumerate(steps):
-        navigation += (f"<button type='button' class='ghost' data-guide-step='{index}'>"
-                       + str(index + 1) + '. ' + escape(short) + '</button>')
-        sections += (f"<section class='campaign-guide-section' data-guide-section='{index}' tabindex='-1' hidden>"
-            + '<h3>' + escape(title) + '</h3><p>' + escape(text) + "</p><div class='campaign-guide-links'>"
-            + ''.join("<a href='" + escape(href, quote=True) + "'>" + escape(label) + '</a>' for label, href in links)
-            + '</div></section>')
+        navigation += (
+            f"<button type='button' class='ghost' data-guide-step='{index}'>"
+            + str(index + 1)
+            + ". "
+            + escape(short)
+            + "</button>"
+        )
+        sections += (
+            f"<section class='campaign-guide-section' data-guide-section='{index}' tabindex='-1' hidden>"
+            + "<h3>"
+            + escape(title)
+            + "</h3><p>"
+            + escape(text)
+            + "</p><div class='campaign-guide-links'>"
+            + "".join(
+                "<a href='" + escape(href, quote=True) + "'>" + escape(label) + "</a>"
+                for label, href in links
+            )
+            + "</div></section>"
+        )
     return (
-        "<div class='campaign-guide' data-guide-enabled='" + ('true' if enabled else 'false')
-        + "' data-guide-key='" + escape(owner + ':' + route + ':' + str(stage), quote=True)
+        "<div class='campaign-guide' data-guide-enabled='"
+        + ("true" if enabled else "false")
+        + "' data-guide-key='"
+        + escape(owner + ":" + route + ":" + str(stage), quote=True)
         + f"' data-guide-initial='{stage}'>"
         "<div class='campaign-guide-launch'><button type='button' class='ghost' data-guide-open"
-        + ('' if enabled else ' hidden') + ">Campaign guide</button></div>"
-        "<dialog class='campaign-guide-dialog' aria-labelledby='campaign-guide-title'>"
-        "<div class='campaign-guide-header'><h2 id='campaign-guide-title'>Your campaign, step by step</h2>"
-        "<button type='button' class='ghost' data-guide-close aria-label='Close campaign guide'>Close</button></div>"
-        "<div class='campaign-guide-content'><p class='note'>" + escape(notice) + '</p>'
-        "<p>No calls are made by this guide. Links open controls; you decide what to run.</p>"
-        "<p>This is a workflow companion, not a preset recipe. The small-campaign documents provide "
-        "the specific models, field values and example counts; this guide does not fill them in.</p>"
-        "<details class='campaign-guide-topics'><summary>Browse all " + str(len(steps)) + " topics</summary>"
-        "<div class='campaign-guide-steps' role='group' aria-label='Guide steps'>" + navigation + '</div></details>'
-        "<p class='note' data-guide-progress aria-live='polite'></p>" + sections
-        + "<div class='campaign-guide-footer'><button type='button' class='ghost' data-guide-back>Back</button>"
-        "<button type='button' data-guide-next>Next</button></div>"
-        "<p class='note'>Close this window to work. Reopen it with Campaign guide. To disable automatic guidance, "
-        "uncheck Guide me through this campaign in Build and save the campaign.</p>"
-        '</div></dialog></div>' + SCRIPT
+        + ("" if enabled else " hidden")
+        + _ui_template(
+            ">[[text:campaign_guide.campaign_guide]]</button></div><dialog class='campaign-guide-dialog' aria-labelledby='campaign-guide-title'><div class='campaign-guide-header'><h2 id='campaign-guide-title'>[[text:campaign_guide.your_campaign_step_by_step]]</h2><button type='button' class='ghost' data-guide-close aria-label='[[attr:campaign_guide.close_campaign_guide]]'>[[text:campaign_guide.close]]</button></div><div class='campaign-guide-content'><p class='note'>"
+        )
+        + escape(notice)
+        + _ui_template(
+            "</p><p>[[text:campaign_guide.no_calls_are_made_by_this_guide_links_open_controls_you_decide_wh]]</p><p>[[text:campaign_guide.this_is_a_workflow_companion_not_a_preset_recipe_the_small_campai]]</p><details class='campaign-guide-topics'><summary>[[text:campaign_guide.browse_all]] "
+        )
+        + str(len(steps))
+        + _ui_template(
+            " [[text:campaign_guide.topics]]</summary><div class='campaign-guide-steps' role='group' aria-label='[[attr:campaign_guide.guide_steps]]'>"
+        )
+        + navigation
+        + "</div></details>"
+        "<p class='note' data-guide-progress aria-live='polite'></p>"
+        + sections
+        + _ui_template(
+            "<div class='campaign-guide-footer'><button type='button' class='ghost' data-guide-back>[[text:campaign_guide.back]]</button><button type='button' data-guide-next>[[text:campaign_guide.next]]</button></div><p class='note'>[[text:campaign_guide.close_this_window_to_work_reopen_it_with_campaign_guide_to_disabl]]</p></div></dialog></div>"
+        )
+        + SCRIPT
     )
 
 
-SCRIPT = """<script>(()=>{
+SCRIPT = _ui_template("""<script>(()=>{
 const root=document.querySelector('.campaign-guide');if(!root)return;
 const dialog=root.querySelector('dialog'),open=root.querySelector('[data-guide-open]');
 const choice=document.querySelector('[name=campaign_guide]');
@@ -332,8 +616,8 @@ const back=root.querySelector('[data-guide-back]'),next=root.querySelector('[dat
 let current=Number(root.dataset.guideInitial),focusBefore,restoreFocus=true;
 function show(index,focus=false){current=Math.max(0,Math.min(index,panels.length-1));
 panels.forEach((p,i)=>p.hidden=i!==current);steps.forEach((b,i)=>{if(i===current)b.setAttribute('aria-current','step');else b.removeAttribute('aria-current');});
-back.disabled=current===0;next.textContent=current===panels.length-1?'Done':'Next';
-root.querySelector('[data-guide-progress]').textContent='Step '+(current+1)+' of '+panels.length;
+back.disabled=current===0;next.textContent=current===panels.length-1?[[js:campaign_guide.done]]:[[js:campaign_guide.next]];
+root.querySelector('[data-guide-progress]').textContent=[[js:campaign_guide.step]]+(current+1)+' of '+panels.length;
 if(focus)panels[current].focus();}
 const key='ura-campaign-guide:'+root.dataset.guideKey;
 function launch(){if(dialog.open||!dialog.showModal||window.uraBusy?.isBusy())return;
@@ -355,4 +639,4 @@ show(current);sync();
 document.addEventListener('DOMContentLoaded',()=>{sync();let seen=false;
 try{seen=sessionStorage.getItem(key)==='shown';}catch(e){}
 if(enabled()&&!seen)launch();},{once:true});
-})();</script>"""
+})();</script>""")

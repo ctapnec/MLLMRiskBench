@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+
+from .i18n import text as _ui_text
+
 import hashlib
 import json
 import os
@@ -22,9 +25,7 @@ from ura.adapters.ideator_manifest import (
 
 
 _RUNNER_ATTACKER_CONFIG_MAX_BYTES = 1024 * 1024
-_IDEATOR_SERIALIZED_TEXT_BUDGET_BYTES = (
-    _RUNNER_ATTACKER_CONFIG_MAX_BYTES // 2
-)
+_IDEATOR_SERIALIZED_TEXT_BUDGET_BYTES = _RUNNER_ATTACKER_CONFIG_MAX_BYTES // 2
 
 
 class BuilderModelsMixin:
@@ -86,7 +87,10 @@ class BuilderModelsMixin:
         options: list[tuple[str, str, tuple[str, ...], str]] = []
         api_registry = self._load_registry("api-targets.json", "rig/api-targets.example.json")
         api_seen: set[str] = set()
-        for env_name, label in (("FABLE", "Fable (focal)"), ("SOL", "Sol (focal)")):
+        for env_name, label in (
+            ("FABLE", _ui_text("builder_models.fable_focal")),
+            ("SOL", _ui_text("builder_models.sol_focal")),
+        ):
             spec = os.environ.get(env_name, "").strip()
             if spec and spec not in api_seen:
                 api_seen.add(spec)
@@ -154,11 +158,7 @@ class BuilderModelsMixin:
                 continue
             modalities = model.get("modalities")
             mods = (
-                tuple(
-                    str(modality)
-                    for modality in modalities
-                    if modality in {"text", "image"}
-                )
+                tuple(str(modality) for modality in modalities if modality in {"text", "image"})
                 if isinstance(modalities, list)
                 else ()
             )
@@ -168,14 +168,10 @@ class BuilderModelsMixin:
         return options
 
     @staticmethod
-    def _default_ollama_think(
-        spec: str, capabilities: object
-    ) -> bool | str:
+    def _default_ollama_think(spec: str, capabilities: object) -> bool | str:
         """Choose the model-family control used by automatic readiness."""
 
-        supports_thinking = (
-            isinstance(capabilities, list) and "thinking" in capabilities
-        )
+        supports_thinking = isinstance(capabilities, list) and "thinking" in capabilities
         if supports_thinking and spec.startswith("ollama:gpt-oss:"):
             return "low"
         if supports_thinking and spec.startswith("ollama:deepseek-r1:"):
@@ -214,9 +210,7 @@ class BuilderModelsMixin:
                     "digest": digest,
                     "modalities": list(modalities),
                     "num_ctx": DEFAULT_OLLAMA_NUM_CTX,
-                    "think": self._default_ollama_think(
-                        spec, model.get("capabilities")
-                    ),
+                    "think": self._default_ollama_think(spec, model.get("capabilities")),
                 }
         for spec, entry in configured.items():
             if isinstance(entry, dict):
@@ -225,9 +219,7 @@ class BuilderModelsMixin:
 
         for spec, entry in list(catalog.items()):
             try:
-                profiled, profile = apply_profile(
-                    spec, entry, repo_root=self.repo_root
-                )
+                profiled, profile = apply_profile(spec, entry, repo_root=self.repo_root)
             except ValueError as exc:
                 profiled = dict(entry)
                 profiled["_execution_profile_error"] = str(exc)
@@ -257,13 +249,13 @@ class BuilderModelsMixin:
             profile_entry["quantization"] = self._validated_local_quantization(
                 spec,
                 profile_entry["quantization"],
-                label="configured quantization",
+                label=_ui_text("builder_models.configured_quantization"),
             )
         model_override = self._validated_local_quantization(
-            spec, model_quantization, label="per-model quantization"
+            spec, model_quantization, label=_ui_text("builder_models.per_model_quantization")
         )
         default_override = self._validated_local_quantization(
-            spec, default_quantization, label="default quantization"
+            spec, default_quantization, label=_ui_text("builder_models.default_quantization")
         )
         if model_override and model_override != "auto":
             profile_entry["quantization"] = model_override
@@ -295,15 +287,18 @@ class BuilderModelsMixin:
             "gptq",
         }:
             raise ValueError(
-                f"local target {spec!r} {label} must be auto, none, fp8, "
-                "bitsandbytes, awq, or gptq"
+                (
+                    _ui_text("builder_models.local_target")
+                    + f"{spec!r}"
+                    + " "
+                    + f"{label}"
+                    + _ui_text("builder_models.must_be_auto_none_fp8_bitsandbytes_awq_or_gptq")
+                )
             )
         return normalized
 
     @staticmethod
-    def _local_max_model_len(
-        spec: str, entry: Mapping[str, object]
-    ) -> int:
+    def _local_max_model_len(spec: str, entry: Mapping[str, object]) -> int:
         """Validate the vLLM hardware-fit policy or an explicit context cap."""
 
         from ura.targets.local import (  # noqa: PLC0415
@@ -316,12 +311,12 @@ class BuilderModelsMixin:
                 entry.get("max_model_len", DEFAULT_VLLM_MAX_MODEL_LEN)
             )
         except ValueError as exc:
-            raise ValueError(f"local target {spec!r} {exc}") from exc
+            raise ValueError(
+                (_ui_text("builder_models.local_target") + f"{spec!r}" + " " + f"{exc}")
+            ) from exc
 
     @staticmethod
-    def _local_max_tokens(
-        spec: str, entry: Mapping[str, object]
-    ) -> int | None:
+    def _local_max_tokens(spec: str, entry: Mapping[str, object]) -> int | None:
         """Validate an optional vLLM generation override."""
 
         from ura.targets.local import (  # noqa: PLC0415
@@ -334,12 +329,12 @@ class BuilderModelsMixin:
         try:
             return validate_vllm_max_tokens(entry["max_tokens"])
         except ValueError as exc:
-            raise ValueError(f"local target {spec!r} {exc}") from exc
+            raise ValueError(
+                (_ui_text("builder_models.local_target") + f"{spec!r}" + " " + f"{exc}")
+            ) from exc
 
     @staticmethod
-    def _local_ollama_num_ctx(
-        spec: str, entry: Mapping[str, object]
-    ) -> int | str:
+    def _local_ollama_num_ctx(spec: str, entry: Mapping[str, object]) -> int | str:
         """Validate the native-maximum policy or an explicit context cap."""
 
         from ura.targets.local import (  # noqa: PLC0415
@@ -348,11 +343,11 @@ class BuilderModelsMixin:
         )
 
         try:
-            return validate_ollama_num_ctx(
-                entry.get("num_ctx", DEFAULT_OLLAMA_NUM_CTX)
-            )
+            return validate_ollama_num_ctx(entry.get("num_ctx", DEFAULT_OLLAMA_NUM_CTX))
         except ValueError as exc:
-            raise ValueError(f"local target {spec!r} {exc}") from exc
+            raise ValueError(
+                (_ui_text("builder_models.local_target") + f"{spec!r}" + " " + f"{exc}")
+            ) from exc
 
     @staticmethod
     def _local_ollama_num_predict(spec: str, entry: Mapping[str, object]) -> int:
@@ -364,16 +359,14 @@ class BuilderModelsMixin:
         )
 
         try:
-            return validate_ollama_num_predict(
-                entry.get("num_predict", DEFAULT_OLLAMA_NUM_PREDICT)
-            )
+            return validate_ollama_num_predict(entry.get("num_predict", DEFAULT_OLLAMA_NUM_PREDICT))
         except ValueError as exc:
-            raise ValueError(f"local target {spec!r} {exc}") from exc
+            raise ValueError(
+                (_ui_text("builder_models.local_target") + f"{spec!r}" + " " + f"{exc}")
+            ) from exc
 
     @staticmethod
-    def _local_ollama_think(
-        spec: str, entry: Mapping[str, object]
-    ) -> bool | str:
+    def _local_ollama_think(spec: str, entry: Mapping[str, object]) -> bool | str:
         """Validate the request-bound Ollama thinking policy."""
 
         from ura.targets.local import validate_ollama_think  # noqa: PLC0415
@@ -382,12 +375,12 @@ class BuilderModelsMixin:
         try:
             return validate_ollama_think(entry.get("think", default))
         except ValueError as exc:
-            raise ValueError(f"local target {spec!r} {exc}") from exc
+            raise ValueError(
+                (_ui_text("builder_models.local_target") + f"{spec!r}" + " " + f"{exc}")
+            ) from exc
 
     @staticmethod
-    def _local_request_timeout(
-        spec: str, entry: Mapping[str, object]
-    ) -> float:
+    def _local_request_timeout(spec: str, entry: Mapping[str, object]) -> float:
         """Validate the provider-independent per-request wall-clock bound."""
 
         from ura.targets.local import (  # noqa: PLC0415
@@ -400,12 +393,12 @@ class BuilderModelsMixin:
                 entry.get("timeout", DEFAULT_LOCAL_REQUEST_TIMEOUT_SECONDS)
             )
         except ValueError as exc:
-            raise ValueError(f"local target {spec!r} {exc}") from exc
+            raise ValueError(
+                (_ui_text("builder_models.local_target") + f"{spec!r}" + " " + f"{exc}")
+            ) from exc
 
     @staticmethod
-    def _local_gpu_memory_utilization(
-        spec: str, entry: Mapping[str, object]
-    ) -> float:
+    def _local_gpu_memory_utilization(spec: str, entry: Mapping[str, object]) -> float:
         """Validate the vLLM allocation fraction with the shared CLI bounds."""
 
         value = entry.get("gpu_memory_utilization", 0.90)
@@ -415,8 +408,11 @@ class BuilderModelsMixin:
             or not 0.1 <= float(value) <= 0.95
         ):
             raise ValueError(
-                f"local target {spec!r} gpu_memory_utilization must be in "
-                "[0.1, 0.95]"
+                (
+                    _ui_text("builder_models.local_target")
+                    + f"{spec!r}"
+                    + _ui_text("builder_models.gpu_memory_utilization_must_be_in_0_1_0_95")
+                )
             )
         return float(value)
 
@@ -444,21 +440,29 @@ class BuilderModelsMixin:
             or len(set(modalities)) != len(modalities)
         ):
             raise ValueError(
-                f"local target {spec!r} config requires unique declared "
-                "text[/image] modalities"
+                (
+                    _ui_text("builder_models.local_target")
+                    + f"{spec!r}"
+                    + _ui_text(
+                        "builder_models.config_requires_unique_declared_text_image_modalities"
+                    )
+                )
             )
         supported = [item for item in modalities if item in {"text", "image"}]
         if "text" not in supported or (not project_richer and supported != modalities):
             raise ValueError(
-                f"local target {spec!r} config requires unique declared "
-                "text[/image] modalities"
+                (
+                    _ui_text("builder_models.local_target")
+                    + f"{spec!r}"
+                    + _ui_text(
+                        "builder_models.config_requires_unique_declared_text_image_modalities"
+                    )
+                )
             )
         return supported
 
     @staticmethod
-    def _validate_ollama_local_entry(
-        spec: str, entry: Mapping[str, object]
-    ) -> None:
+    def _validate_ollama_local_entry(spec: str, entry: Mapping[str, object]) -> None:
         """Match the measured Ollama identity and modality CLI contract."""
 
         from ura.targets.local import (  # noqa: PLC0415
@@ -468,13 +472,21 @@ class BuilderModelsMixin:
         forbidden = sorted(set(entry) & OLLAMA_FORBIDDEN_LOCAL_CONFIG_FIELDS)
         if forbidden:
             raise ValueError(
-                f"local target {spec!r} Ollama config forbids vLLM fields: "
+                (
+                    _ui_text("builder_models.local_target")
+                    + f"{spec!r}"
+                    + _ui_text("builder_models.ollama_config_forbids_vllm_fields")
+                )
                 + ", ".join(forbidden)
             )
         digest = entry.get("digest")
         if not isinstance(digest, str) or re.fullmatch(r"[0-9a-fA-F]{64}", digest) is None:
             raise ValueError(
-                f"local target {spec!r} Ollama config requires a 64-hex digest"
+                (
+                    _ui_text("builder_models.local_target")
+                    + f"{spec!r}"
+                    + _ui_text("builder_models.ollama_config_requires_a_64_hex_digest")
+                )
             )
         BuilderModelsMixin._validated_local_modalities(spec, entry)
         BuilderModelsMixin._local_ollama_num_ctx(spec, entry)
@@ -497,20 +509,32 @@ class BuilderModelsMixin:
         if require_live_ollama and any(spec.startswith("ollama:") for spec in specs):
             snapshot = self._ollama_roster_snapshot(force=True)
             if snapshot.get("available") is not True:
-                reason = str(snapshot.get("error") or "daemon discovery unavailable")
+                reason = str(
+                    snapshot.get("error") or _ui_text("builder_models.daemon_discovery_unavailable")
+                )
                 raise ValueError(
-                    "selected Ollama targets require a current exact live roster: "
+                    _ui_text(
+                        "builder_models.selected_ollama_targets_require_a_current_exact_live_roster"
+                    )
                     + reason
                 )
             rows = snapshot.get("models")
             if not isinstance(rows, list):
-                raise ValueError("live Ollama roster has a malformed candidate section")
+                raise ValueError(
+                    _ui_text("builder_models.live_ollama_roster_has_a_malformed_candidate_section")
+                )
             for row in rows:
                 if not isinstance(row, Mapping):
-                    raise ValueError("live Ollama roster contains a malformed row")
+                    raise ValueError(
+                        _ui_text("builder_models.live_ollama_roster_contains_a_malformed_row")
+                    )
                 live_spec = str(row.get("spec", ""))
                 if not live_spec.startswith("ollama:") or live_spec in live_ollama:
-                    raise ValueError("live Ollama roster contains an ambiguous model spec")
+                    raise ValueError(
+                        _ui_text(
+                            "builder_models.live_ollama_roster_contains_an_ambiguous_model_spec"
+                        )
+                    )
                 live_ollama[live_spec] = row
         selected: dict[str, dict[str, object]] = {}
         allowed = {
@@ -533,7 +557,11 @@ class BuilderModelsMixin:
             entry = catalog.get(spec)
             if entry is None:
                 raise ValueError(
-                    f"local target {spec!r} is not in the local target catalog"
+                    (
+                        _ui_text("builder_models.local_target")
+                        + f"{spec!r}"
+                        + _ui_text("builder_models.is_not_in_the_local_target_catalog")
+                    )
                 )
             execution_profile = entry.get("_execution_profile")
             execution_profile_error = entry.get("_execution_profile_error")
@@ -543,37 +571,53 @@ class BuilderModelsMixin:
                     raise ValueError(execution_profile_error)
                 if not isinstance(execution_profile, Mapping):
                     raise ValueError(
-                        f"local target {spec!r} requires a passing readiness profile"
+                        (
+                            _ui_text("builder_models.local_target")
+                            + f"{spec!r}"
+                            + _ui_text("builder_models.requires_a_passing_readiness_profile")
+                        )
                     )
                 live_entry = live_ollama.get(spec) if require_live_ollama else None
                 if require_live_ollama:
                     if live_entry is None:
                         raise ValueError(
-                            f"local target {spec!r} is absent from the current exact "
-                            "Ollama daemon roster; refresh or pull it before starting"
+                            (
+                                _ui_text("builder_models.local_target")
+                                + f"{spec!r}"
+                                + _ui_text(
+                                    "builder_models.is_absent_from_the_current_exact_ollama_daemon_roster_refresh_or"
+                                )
+                            )
                         )
                     try:
                         self._validate_ollama_local_entry(spec, live_entry)
                     except ValueError as exc:
                         raise ValueError(
-                            f"local target {spec!r} live daemon row is invalid: {exc}"
+                            (
+                                _ui_text("builder_models.local_target")
+                                + f"{spec!r}"
+                                + _ui_text("builder_models.live_daemon_row_is_invalid")
+                                + f"{exc}"
+                            )
                         ) from exc
                     configured_modalities = self._validated_local_modalities(spec, entry)
                     live_modalities = self._validated_local_modalities(spec, live_entry)
                     if (
-                        str(entry["digest"]).lower()
-                        != str(live_entry["digest"]).lower()
+                        str(entry["digest"]).lower() != str(live_entry["digest"]).lower()
                         or configured_modalities != live_modalities
                     ):
                         raise ValueError(
-                            f"local target {spec!r} configured digest/modalities do "
-                            "not match current live Ollama discovery"
+                            (
+                                _ui_text("builder_models.local_target")
+                                + f"{spec!r}"
+                                + _ui_text(
+                                    "builder_models.configured_digest_modalities_do_not_match_current_live_ollama_dis"
+                                )
+                            )
                         )
                 resolved_ollama: dict[str, object] = {
                     "digest": str((live_entry or entry)["digest"]).lower(),
-                    "modalities": self._validated_local_modalities(
-                        spec, live_entry or entry
-                    ),
+                    "modalities": self._validated_local_modalities(spec, live_entry or entry),
                     "num_ctx": self._local_ollama_num_ctx(spec, entry),
                     "num_predict": self._local_ollama_num_predict(spec, entry),
                     "think": self._local_ollama_think(spec, entry),
@@ -581,24 +625,45 @@ class BuilderModelsMixin:
                 }
                 if "context_ceiling" in entry:
                     from ura.targets.local import validate_ollama_context_ceiling
-                    resolved_ollama["context_ceiling"] = validate_ollama_context_ceiling(entry["context_ceiling"])
+
+                    resolved_ollama["context_ceiling"] = validate_ollama_context_ceiling(
+                        entry["context_ceiling"]
+                    )
                     if resolved_ollama["num_ctx"] != "fit":
-                        raise ValueError("Ollama context ceiling requires hardware fit")
+                        raise ValueError(
+                            _ui_text("builder_models.ollama_context_ceiling_requires_hardware_fit")
+                        )
                 tested_execution = execution_profile.get("local_execution")
                 if isinstance(tested_execution, Mapping) and (
-                    any(resolved_ollama.get(key) != value for key, value in tested_execution.items())
-                    or ("context_ceiling" in resolved_ollama and "context_ceiling" not in tested_execution)
-                ):
-                    raise ValueError(f"local target {spec!r} differs from its tested context/thinking condition")
-                if (
-                    resolved_ollama["num_predict"]
-                    != execution_profile["generation_tokens"]
-                    or resolved_ollama["timeout"]
-                    != execution_profile["request_timeout_seconds"]
+                    any(
+                        resolved_ollama.get(key) != value for key, value in tested_execution.items()
+                    )
+                    or (
+                        "context_ceiling" in resolved_ollama
+                        and "context_ceiling" not in tested_execution
+                    )
                 ):
                     raise ValueError(
-                        f"local target {spec!r} differs from its approved "
-                        "readiness execution profile"
+                        (
+                            _ui_text("builder_models.local_target")
+                            + f"{spec!r}"
+                            + _ui_text(
+                                "builder_models.differs_from_its_tested_context_thinking_condition"
+                            )
+                        )
+                    )
+                if (
+                    resolved_ollama["num_predict"] != execution_profile["generation_tokens"]
+                    or resolved_ollama["timeout"] != execution_profile["request_timeout_seconds"]
+                ):
+                    raise ValueError(
+                        (
+                            _ui_text("builder_models.local_target")
+                            + f"{spec!r}"
+                            + _ui_text(
+                                "builder_models.differs_from_its_approved_readiness_execution_profile"
+                            )
+                        )
                     )
                 selected[spec] = resolved_ollama
                 continue
@@ -609,7 +674,11 @@ class BuilderModelsMixin:
             forbidden = sorted(set(entry) & VLLM_FORBIDDEN_LOCAL_CONFIG_FIELDS)
             if forbidden:
                 raise ValueError(
-                    f"local target {spec!r} vLLM config forbids Ollama fields: "
+                    (
+                        _ui_text("builder_models.local_target")
+                        + f"{spec!r}"
+                        + _ui_text("builder_models.vllm_config_forbids_ollama_fields")
+                    )
                     + ", ".join(forbidden)
                 )
             model_override = str((quantization_overrides or {}).get(spec, "")).strip().lower()
@@ -622,14 +691,16 @@ class BuilderModelsMixin:
             max_model_len = self._local_max_model_len(spec, entry)
             max_tokens = self._local_max_tokens(spec, entry)
             gpu_memory_utilization = self._local_gpu_memory_utilization(spec, entry)
-            modalities = self._validated_local_modalities(
-                spec, entry, project_richer=True
-            )
+            modalities = self._validated_local_modalities(spec, entry, project_richer=True)
             if isinstance(execution_profile_error, str):
                 raise ValueError(execution_profile_error)
             if not isinstance(execution_profile, Mapping):
                 raise ValueError(
-                    f"local target {spec!r} requires a passing readiness profile"
+                    (
+                        _ui_text("builder_models.local_target")
+                        + f"{spec!r}"
+                        + _ui_text("builder_models.requires_a_passing_readiness_profile")
+                    )
                 )
             resolved = {key: value for key, value in entry.items() if key in allowed}
             for identity_key in ("revision", "digest"):
@@ -643,18 +714,25 @@ class BuilderModelsMixin:
             resolved["timeout"] = self._local_request_timeout(spec, entry)
             if (
                 resolved["max_tokens"] != execution_profile["generation_tokens"]
-                or resolved["timeout"]
-                != execution_profile["request_timeout_seconds"]
+                or resolved["timeout"] != execution_profile["request_timeout_seconds"]
             ):
                 raise ValueError(
-                    f"local target {spec!r} differs from its approved "
-                    "readiness execution profile"
+                    (
+                        _ui_text("builder_models.local_target")
+                        + f"{spec!r}"
+                        + _ui_text(
+                            "builder_models.differs_from_its_approved_readiness_execution_profile"
+                        )
+                    )
                 )
             if max_model_len > 0:
                 if max_tokens is not None and max_tokens > max_model_len:
                     raise ValueError(
-                        f"local target {spec!r} max_tokens must not exceed "
-                        "max_model_len"
+                        (
+                            _ui_text("builder_models.local_target")
+                            + f"{spec!r}"
+                            + _ui_text("builder_models.max_tokens_must_not_exceed_max_model_len")
+                        )
                     )
             resolved["parameter_count_b"] = profile["parameter_count_b"]
             # Preserve the evidence boundary: an absent roster declaration stays
@@ -699,9 +777,15 @@ class BuilderModelsMixin:
         try:
             document = strict_json_loads(payload.decode("utf-8"))
         except (UnicodeError, ValueError) as exc:
-            raise ValueError("selected local config snapshot is invalid") from exc
+            raise ValueError(
+                _ui_text("builder_models.selected_local_config_snapshot_is_invalid")
+            ) from exc
         if not isinstance(document, dict) or set(document) != set(specs):
-            raise ValueError("selected local config snapshot does not match selected models")
+            raise ValueError(
+                _ui_text(
+                    "builder_models.selected_local_config_snapshot_does_not_match_selected_models"
+                )
+            )
         identities: dict[str, str] = {}
         for spec in specs:
             if not spec.startswith("vllm:"):
@@ -711,20 +795,19 @@ class BuilderModelsMixin:
                 continue
             entry = document.get(spec)
             digest = entry.get("digest") if isinstance(entry, dict) else None
-            if not isinstance(digest, str) or re.fullmatch(
-                r"[0-9a-fA-F]{64}", digest
-            ) is None:
+            if not isinstance(digest, str) or re.fullmatch(r"[0-9a-fA-F]{64}", digest) is None:
                 raise ValueError(
-                    "an explicit local checkpoint requires a 64-hex content digest"
+                    _ui_text(
+                        "builder_models.an_explicit_local_checkpoint_requires_a_64_hex_content_digest"
+                    )
                 )
             identities[spec] = f"vllm:local-checkpoint@sha256:{digest.lower()}"
-        durable = {
-            identities.get(str(spec), str(spec)): entry
-            for spec, entry in document.items()
-        }
+        durable = {identities.get(str(spec), str(spec)): entry for spec, entry in document.items()}
         if len(durable) != len(document):
             raise ValueError(
-                "selected local configs collapse to a duplicate content identity"
+                _ui_text(
+                    "builder_models.selected_local_configs_collapse_to_a_duplicate_content_identity"
+                )
             )
         durable_payload = (
             json.dumps(
@@ -763,13 +846,23 @@ class BuilderModelsMixin:
             )
         )
         if not payload or len(payload) > 1024 * 1024:
-            raise ValueError("selected local config snapshot must be a non-empty <=1 MiB file")
+            raise ValueError(
+                _ui_text(
+                    "builder_models.selected_local_config_snapshot_must_be_a_non_empty_1_mib_file"
+                )
+            )
         try:
             parsed = strict_json_loads(payload.decode("utf-8"))
         except (UnicodeError, ValueError) as exc:
-            raise ValueError("selected local config snapshot is invalid") from exc
+            raise ValueError(
+                _ui_text("builder_models.selected_local_config_snapshot_is_invalid")
+            ) from exc
         if not isinstance(parsed, dict) or set(parsed) != set(specs):
-            raise ValueError("selected local config snapshot does not match selected models")
+            raise ValueError(
+                _ui_text(
+                    "builder_models.selected_local_config_snapshot_does_not_match_selected_models"
+                )
+            )
         canonical = (
             json.dumps(
                 parsed,
@@ -781,7 +874,9 @@ class BuilderModelsMixin:
             + "\n"
         ).encode("utf-8")
         if canonical != payload:
-            raise ValueError("selected local config snapshot is not canonical")
+            raise ValueError(
+                _ui_text("builder_models.selected_local_config_snapshot_is_not_canonical")
+            )
         digest = hashlib.sha256(payload).hexdigest()
         # This file carries the runtime checkpoint locator and is therefore a
         # one-shot private launch input, not a durable console artifact. Each
@@ -790,10 +885,14 @@ class BuilderModelsMixin:
         # after its bounded startup read; lifecycle handles early failures.
         directory = self.state_dir / ".private-local-configs"
         if directory.is_symlink():
-            raise ValueError("private local-config directory must not be a symlink")
+            raise ValueError(
+                _ui_text("builder_models.private_local_config_directory_must_not_be_a_symlink")
+            )
         directory.mkdir(parents=True, exist_ok=True)
         if directory.is_symlink() or not directory.is_dir():
-            raise ValueError("private local-config directory must be a directory")
+            raise ValueError(
+                _ui_text("builder_models.private_local_config_directory_must_be_a_directory")
+            )
         try:
             os.chmod(directory, 0o700)
         except OSError:
@@ -813,19 +912,28 @@ class BuilderModelsMixin:
         """Resolve one builder-produced artifact inside the results tree."""
 
         if not raw:
-            raise ValueError(f"{label} path is required")
+            raise ValueError((f"{label}" + _ui_text("builder_models.path_is_required")))
         candidate = Path(raw).expanduser()
         if not candidate.is_absolute():
             candidate = self.repo_root / candidate
         if candidate.is_symlink():
-            raise ValueError(f"{label} must be a regular non-symlink file")
+            raise ValueError(
+                (f"{label}" + _ui_text("builder_models.must_be_a_regular_non_symlink_file"))
+            )
         try:
             path = candidate.resolve(strict=True)
             path.relative_to(self.results_root.resolve())
         except (OSError, ValueError) as exc:
-            raise ValueError(f"{label} must be an existing file under the results root") from exc
+            raise ValueError(
+                (
+                    f"{label}"
+                    + _ui_text("builder_models.must_be_an_existing_file_under_the_results_root")
+                )
+            ) from exc
         if not path.is_file():
-            raise ValueError(f"{label} must be a regular non-symlink file")
+            raise ValueError(
+                (f"{label}" + _ui_text("builder_models.must_be_a_regular_non_symlink_file"))
+            )
         return path
 
     @staticmethod
@@ -839,13 +947,15 @@ class BuilderModelsMixin:
     @staticmethod
     def _strict_json_object(path: Path, *, max_bytes: int) -> dict[str, Any]:
         if path.stat().st_size > max_bytes:
-            raise ValueError(f"{path.name} exceeds the accepted size limit")
+            raise ValueError(
+                (f"{path.name}" + _ui_text("builder_models.exceeds_the_accepted_size_limit"))
+            )
 
         def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
             value: dict[str, Any] = {}
             for key, child in pairs:
                 if key in value:
-                    raise ValueError(f"duplicate JSON key {key!r}")
+                    raise ValueError((_ui_text("builder_models.duplicate_json_key") + f"{key!r}"))
                 value[key] = child
             return value
 
@@ -854,13 +964,17 @@ class BuilderModelsMixin:
                 path.read_text(encoding="utf-8"),
                 object_pairs_hook=unique_object,
                 parse_constant=lambda constant: (_ for _ in ()).throw(
-                    ValueError(f"invalid JSON constant {constant}")
+                    ValueError((_ui_text("builder_models.invalid_json_constant") + f"{constant}"))
                 ),
             )
         except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
-            raise ValueError(f"{path.name} is not strict UTF-8 JSON") from exc
+            raise ValueError(
+                (f"{path.name}" + _ui_text("builder_models.is_not_strict_utf_8_json"))
+            ) from exc
         if not isinstance(value, dict):
-            raise ValueError(f"{path.name} must contain a JSON object")
+            raise ValueError(
+                (f"{path.name}" + _ui_text("builder_models.must_contain_a_json_object"))
+            )
         return value
 
     def _prepared_attacker_entries(
@@ -876,19 +990,27 @@ class BuilderModelsMixin:
         if "t3mp3st" in selected:
             artifact = self._prepared_file(
                 params.get("t3_artifact", ""),
-                label="T3MP3ST plan bundle",
+                label=_ui_text("builder_models.t3mp3st_plan_bundle"),
             )
             expected = params.get("t3_artifact_sha", "").strip().lower()
             if re.fullmatch(r"[0-9a-f]{64}", expected) is None:
-                raise ValueError("T3MP3ST bundle SHA-256 must be exact 64-hex")
+                raise ValueError(
+                    _ui_text("builder_models.t3mp3st_bundle_sha_256_must_be_exact_64_hex")
+                )
             if verify_digest and self._file_sha256(artifact) != expected:
-                raise ValueError("T3MP3ST bundle SHA-256 does not match the file")
+                raise ValueError(
+                    _ui_text("builder_models.t3mp3st_bundle_sha_256_does_not_match_the_file")
+                )
             bundle = self._strict_json_object(
                 artifact,
                 max_bytes=256 * 1024 * 1024,
             )
             if bundle.get("format_version") != "ura-t3mp3st-plan-bundle/1":
-                raise ValueError("T3MP3ST artifact is not a ura-t3mp3st-plan-bundle/1 bundle")
+                raise ValueError(
+                    _ui_text(
+                        "builder_models.t3mp3st_artifact_is_not_a_ura_t3mp3st_plan_bundle_1_bundle"
+                    )
+                )
             revision = bundle.get("upstream_revision")
             provider = bundle.get("source_provider")
             model = bundle.get("source_model")
@@ -900,11 +1022,13 @@ class BuilderModelsMixin:
                 )
                 is None
             ):
-                raise ValueError("T3MP3ST bundle has no exact upstream revision")
+                raise ValueError(
+                    _ui_text("builder_models.t3mp3st_bundle_has_no_exact_upstream_revision")
+                )
             if not isinstance(provider, str) or not provider.strip():
-                raise ValueError("T3MP3ST bundle has no source provider")
+                raise ValueError(_ui_text("builder_models.t3mp3st_bundle_has_no_source_provider"))
             if not isinstance(model, str) or not model.strip():
-                raise ValueError("T3MP3ST bundle has no source model")
+                raise ValueError(_ui_text("builder_models.t3mp3st_bundle_has_no_source_model"))
             entries["t3mp3st"] = {
                 "upstream_revision": revision.lower(),
                 "source_provider": provider.strip(),
@@ -917,7 +1041,7 @@ class BuilderModelsMixin:
         if "harmbench" in selected:
             config_path = self._prepared_file(
                 params.get("harm_config", ""),
-                label="HarmBench capture config",
+                label=_ui_text("builder_models.harmbench_capture_config"),
             )
             document = self._strict_json_object(
                 config_path,
@@ -925,7 +1049,11 @@ class BuilderModelsMixin:
             )
             config = document.get("harmbench")
             if set(document) != {"harmbench"} or not isinstance(config, dict):
-                raise ValueError("HarmBench capture config must contain only a harmbench object")
+                raise ValueError(
+                    _ui_text(
+                        "builder_models.harmbench_capture_config_must_contain_only_a_harmbench_object"
+                    )
+                )
             expected_keys = {
                 "methods",
                 "experiment",
@@ -934,14 +1062,18 @@ class BuilderModelsMixin:
                 "replay_artifact_sha256",
             }
             if set(config) != expected_keys:
-                raise ValueError("HarmBench capture config fields are incomplete")
+                raise ValueError(
+                    _ui_text("builder_models.harmbench_capture_config_fields_are_incomplete")
+                )
             methods = config.get("methods")
             if (
                 not isinstance(methods, list)
                 or not methods
                 or any(not isinstance(method, str) or not method.strip() for method in methods)
             ):
-                raise ValueError("HarmBench capture config methods are invalid")
+                raise ValueError(
+                    _ui_text("builder_models.harmbench_capture_config_methods_are_invalid")
+                )
             revision = config.get("upstream_revision")
             if (
                 not isinstance(revision, str)
@@ -951,7 +1083,9 @@ class BuilderModelsMixin:
                 )
                 is None
             ):
-                raise ValueError("HarmBench capture config revision is invalid")
+                raise ValueError(
+                    _ui_text("builder_models.harmbench_capture_config_revision_is_invalid")
+                )
             artifact_sha = config.get("replay_artifact_sha256")
             if (
                 not isinstance(artifact_sha, str)
@@ -961,28 +1095,40 @@ class BuilderModelsMixin:
                 )
                 is None
             ):
-                raise ValueError("HarmBench replay artifact SHA-256 is invalid")
+                raise ValueError(
+                    _ui_text("builder_models.harmbench_replay_artifact_sha_256_is_invalid")
+                )
             replay_artifact = self._prepared_file(
                 str(config.get("replay_artifact", "")),
-                label="HarmBench replay artifact",
+                label=_ui_text("builder_models.harmbench_replay_artifact"),
             )
             artifact_sha = artifact_sha.lower()
             if verify_digest and self._file_sha256(replay_artifact) != artifact_sha:
-                raise ValueError("HarmBench replay artifact SHA-256 does not match the file")
+                raise ValueError(
+                    _ui_text(
+                        "builder_models.harmbench_replay_artifact_sha_256_does_not_match_the_file"
+                    )
+                )
             bundle = self._strict_json_object(
                 replay_artifact,
                 max_bytes=64 * 1024 * 1024,
             )
             if bundle.get("format_version") != "ura-harmbench-transfer-replay/1":
                 raise ValueError(
-                    "HarmBench artifact is not a ura-harmbench-transfer-replay/1 bundle"
+                    _ui_text(
+                        "builder_models.harmbench_artifact_is_not_a_ura_harmbench_transfer_replay_1_bundl"
+                    )
                 )
             if (
                 bundle.get("methods") != methods
                 or bundle.get("experiment") != config.get("experiment")
                 or str(bundle.get("upstream_revision", "")).lower() != revision.lower()
             ):
-                raise ValueError("HarmBench capture config does not match its replay bundle")
+                raise ValueError(
+                    _ui_text(
+                        "builder_models.harmbench_capture_config_does_not_match_its_replay_bundle"
+                    )
+                )
             entries["harmbench"] = {
                 **config,
                 "upstream_revision": revision.lower(),
@@ -994,42 +1140,59 @@ class BuilderModelsMixin:
         if "ideator" in selected:
             manifest = self._prepared_file(
                 params.get("ideator_manifest", ""),
-                label="IDEATOR seed-pair manifest",
+                label=_ui_text("builder_models.ideator_seed_pair_manifest"),
             )
             expected = params.get("ideator_manifest_sha", "").strip().lower()
             if re.fullmatch(r"[0-9a-f]{64}", expected) is None:
-                raise ValueError("IDEATOR manifest SHA-256 must be exact 64-hex")
+                raise ValueError(
+                    _ui_text("builder_models.ideator_manifest_sha_256_must_be_exact_64_hex")
+                )
             if verify_digest and self._file_sha256(manifest) != expected:
-                raise ValueError("IDEATOR manifest SHA-256 does not match the file")
+                raise ValueError(
+                    _ui_text("builder_models.ideator_manifest_sha_256_does_not_match_the_file")
+                )
             document = self._strict_json_object(manifest, max_bytes=4 * 1024 * 1024)
             format_version = document.get("format_version")
             source_bindings: list[dict[str, object]] | None = None
             if format_version == "ura-ideator-seed-pairs/1":
                 if set(document) != {"format_version", "seed_pairs"}:
                     raise ValueError(
-                        "IDEATOR v1 manifest must contain only format_version and "
-                        "seed_pairs"
+                        _ui_text(
+                            "builder_models.ideator_v1_manifest_must_contain_only_format_version_and_seed_pai"
+                        )
                     )
             elif format_version == IDEATOR_MAPPED_FORMAT:
                 document = validate_ideator_mapped_manifest(document)
             else:
                 raise ValueError(
-                    "IDEATOR manifest is not a supported seed-pair artifact"
+                    _ui_text(
+                        "builder_models.ideator_manifest_is_not_a_supported_seed_pair_artifact"
+                    )
                 )
             raw_pairs = document.get("seed_pairs")
             if not isinstance(raw_pairs, list) or not raw_pairs:
-                raise ValueError("IDEATOR manifest seed_pairs must be a non-empty list")
+                raise ValueError(
+                    _ui_text("builder_models.ideator_manifest_seed_pairs_must_be_a_non_empty_list")
+                )
             if len(raw_pairs) > 256:
-                raise ValueError("IDEATOR manifest exceeds the 256 seed-pair limit")
+                raise ValueError(
+                    _ui_text("builder_models.ideator_manifest_exceeds_the_256_seed_pair_limit")
+                )
             raw_pair_limit = str(params.get("ideator_pair_limit", "")).strip() or "0"
             if re.fullmatch(r"[0-9]+", raw_pair_limit) is None:
-                raise ValueError("IDEATOR pair limit must be an integer from 0 to 256")
+                raise ValueError(
+                    _ui_text("builder_models.ideator_pair_limit_must_be_an_integer_from_0_to_256")
+                )
             pair_limit = int(raw_pair_limit)
             if pair_limit > 256:
-                raise ValueError("IDEATOR pair limit must be an integer from 0 to 256")
+                raise ValueError(
+                    _ui_text("builder_models.ideator_pair_limit_must_be_an_integer_from_0_to_256")
+                )
             if pair_limit > len(raw_pairs):
                 raise ValueError(
-                    "IDEATOR pair limit exceeds the verified manifest inventory"
+                    _ui_text(
+                        "builder_models.ideator_pair_limit_exceeds_the_verified_manifest_inventory"
+                    )
                 )
             if format_version == IDEATOR_MAPPED_FORMAT:
                 shared_config = materialize_runner_attacker_config(
@@ -1038,12 +1201,10 @@ class BuilderModelsMixin:
                     pair_limit=pair_limit,
                     image_resolver=lambda path, index: self._prepared_file(
                         path,
-                        label=f"IDEATOR seed-pair image {index}",
+                        label=(_ui_text("builder_models.ideator_seed_pair_image") + f"{index}"),
                     ),
                 )
-                source_bindings = shared_config["ideator"][
-                    "seed_pair_source_bindings"
-                ]  # type: ignore[assignment]
+                source_bindings = shared_config["ideator"]["seed_pair_source_bindings"]  # type: ignore[assignment]
             pairs: list[dict[str, object]] = []
             total_image_bytes = 0
             for index, raw_pair in enumerate(raw_pairs):
@@ -1051,35 +1212,58 @@ class BuilderModelsMixin:
                     {"text", "image_path", "image_sha256"}
                     if format_version == "ura-ideator-seed-pairs/1"
                     else {
-                        "text", "image_path", "image_sha256", "source_id",
-                        "source_text_sha256", "upstream_split", "upstream_index",
-                        "upstream_record_sha256", "upstream_image_path",
+                        "text",
+                        "image_path",
+                        "image_sha256",
+                        "source_id",
+                        "source_text_sha256",
+                        "upstream_split",
+                        "upstream_index",
+                        "upstream_record_sha256",
+                        "upstream_image_path",
                     }
                 )
                 if not isinstance(raw_pair, dict) or set(raw_pair) != expected_pair_fields:
                     raise ValueError(
-                        f"IDEATOR seed_pairs[{index}] has invalid fields"
+                        (
+                            _ui_text("builder_models.ideator_seed_pairs")
+                            + f"{index}"
+                            + _ui_text("builder_models.has_invalid_fields")
+                        )
                     )
                 text = raw_pair.get("text")
                 image_path = raw_pair.get("image_path")
                 image_sha256 = raw_pair.get("image_sha256")
                 if not isinstance(text, str) or not text.strip():
                     raise ValueError(
-                        f"IDEATOR seed_pairs[{index}].text must be non-blank"
+                        (
+                            _ui_text("builder_models.ideator_seed_pairs")
+                            + f"{index}"
+                            + _ui_text("builder_models.text_must_be_non_blank")
+                        )
                     )
                 if not isinstance(image_path, str) or not image_path.strip():
                     raise ValueError(
-                        f"IDEATOR seed_pairs[{index}].image_path must be non-blank"
+                        (
+                            _ui_text("builder_models.ideator_seed_pairs")
+                            + f"{index}"
+                            + _ui_text("builder_models.image_path_must_be_non_blank")
+                        )
                     )
-                if not isinstance(image_sha256, str) or re.fullmatch(
-                    r"[0-9a-fA-F]{64}", image_sha256
-                ) is None:
+                if (
+                    not isinstance(image_sha256, str)
+                    or re.fullmatch(r"[0-9a-fA-F]{64}", image_sha256) is None
+                ):
                     raise ValueError(
-                        f"IDEATOR seed_pairs[{index}].image_sha256 must be exact 64-hex"
+                        (
+                            _ui_text("builder_models.ideator_seed_pairs")
+                            + f"{index}"
+                            + _ui_text("builder_models.image_sha256_must_be_exact_64_hex")
+                        )
                     )
                 image = self._prepared_file(
                     image_path,
-                    label=f"IDEATOR seed-pair image {index}",
+                    label=(_ui_text("builder_models.ideator_seed_pair_image") + f"{index}"),
                 )
                 normalized_sha256 = image_sha256.lower()
                 try:
@@ -1095,31 +1279,41 @@ class BuilderModelsMixin:
                     )
                 except ValueError as exc:
                     raise ValueError(
-                        f"IDEATOR seed-pair image {index} is not the declared PNG: {exc}"
+                        (
+                            _ui_text("builder_models.ideator_seed_pair_image")
+                            + f"{index}"
+                            + _ui_text("builder_models.is_not_the_declared_png")
+                            + f"{exc}"
+                        )
                     ) from exc
                 total_image_bytes += identity.bytes
                 if total_image_bytes > 256 * 1024 * 1024:
                     raise ValueError(
-                        "IDEATOR seed-pair images exceed the 256 MiB snapshot limit"
+                        _ui_text(
+                            "builder_models.ideator_seed_pair_images_exceed_the_256_mib_snapshot_limit"
+                        )
                     )
-                pairs.append({
-                    "text": text,
-                    "image_path": str(image),
-                    "image_sha256": normalized_sha256,
-                    "image_bytes": identity.bytes,
-                })
-            projected_text_payload = self._canonical_json_bytes({
-                "ideator": {
-                    "seed_pairs": [
-                        [str(pair["text"]), ""] for pair in pairs
-                    ],
-                    "seed_pair_source_bindings": source_bindings,
+                pairs.append(
+                    {
+                        "text": text,
+                        "image_path": str(image),
+                        "image_sha256": normalized_sha256,
+                        "image_bytes": identity.bytes,
+                    }
+                )
+            projected_text_payload = self._canonical_json_bytes(
+                {
+                    "ideator": {
+                        "seed_pairs": [[str(pair["text"]), ""] for pair in pairs],
+                        "seed_pair_source_bindings": source_bindings,
+                    }
                 }
-            })
+            )
             if len(projected_text_payload) > _IDEATOR_SERIALIZED_TEXT_BUDGET_BYTES:
                 raise ValueError(
-                    "IDEATOR serialized seed text exceeds its 512 KiB share "
-                    "of Runner's 1 MiB attacker-config bound"
+                    _ui_text(
+                        "builder_models.ideator_serialized_seed_text_exceeds_its_512_kib_share_of_runner"
+                    )
                 )
             entries["ideator"] = {
                 "seed_pair_manifest": str(manifest),
@@ -1141,12 +1335,14 @@ class BuilderModelsMixin:
                 raise ValueError(LIVE_NANOGCG_DISABLED_MESSAGE)
             if not suffix:
                 raise ValueError(
-                    "NanoGCG requires an exact precomputed suffix replay; "
+                    _ui_text("builder_models.nanogcg_requires_an_exact_precomputed_suffix_replay")
                     + LIVE_NANOGCG_DISABLED_MESSAGE
                 )
             if not suffix_source:
                 raise ValueError(
-                    "NanoGCG precomputed suffix replay requires an exact suffix source"
+                    _ui_text(
+                        "builder_models.nanogcg_precomputed_suffix_replay_requires_an_exact_suffix_source"
+                    )
                 )
             entries["nanogcg"] = {
                 "suffix": suffix,
@@ -1162,15 +1358,17 @@ class BuilderModelsMixin:
 
         config_path = self._prepared_file(
             params.get("harm_config", ""),
-            label="HarmBench capture config",
+            label=_ui_text("builder_models.harmbench_capture_config"),
         )
         document = self._strict_json_object(config_path, max_bytes=1024 * 1024)
         config = document.get("harmbench")
         if not isinstance(config, dict):
-            raise ValueError("HarmBench capture config has no harmbench object")
+            raise ValueError(
+                _ui_text("builder_models.harmbench_capture_config_has_no_harmbench_object")
+            )
         replay = self._prepared_file(
             str(config.get("replay_artifact", "")),
-            label="HarmBench replay artifact",
+            label=_ui_text("builder_models.harmbench_replay_artifact"),
         )
         bundle = self._strict_json_object(replay, max_bytes=64 * 1024 * 1024)
         selection = bundle.get("selection")
@@ -1184,7 +1382,9 @@ class BuilderModelsMixin:
             or not isinstance(cases, int)
             or cases <= 0
         ):
-            raise ValueError("HarmBench replay bundle has invalid capture metadata")
+            raise ValueError(
+                _ui_text("builder_models.harmbench_replay_bundle_has_invalid_capture_metadata")
+            )
         corpus = selection.get("corpus_name")
         limit = selection.get("limit")
         seed = selection.get("sample_seed")
@@ -1197,7 +1397,9 @@ class BuilderModelsMixin:
             or isinstance(seed, bool)
             or not isinstance(seed, int)
         ):
-            raise ValueError("HarmBench replay bundle has invalid selection metadata")
+            raise ValueError(
+                _ui_text("builder_models.harmbench_replay_bundle_has_invalid_selection_metadata")
+            )
         return corpus, limit, seed, len(methods) * cases
 
     def _materialize_prepared_attacker_config(
@@ -1209,13 +1411,12 @@ class BuilderModelsMixin:
     ) -> Path | None:
         prior = str(params.get("_attacker_config_snapshot_sha256", ""))
         if snapshot_payload is None:
-            _snapshot, digest, entries = self._selected_prepared_attacker_snapshot(
-                params
-            )
+            _snapshot, digest, entries = self._selected_prepared_attacker_snapshot(params)
             if prior and prior != digest:
                 raise ValueError(
-                    "selected prepared attacker config changed after review; "
-                    "review the lane again"
+                    _ui_text(
+                        "builder_models.selected_prepared_attacker_config_changed_after_review_review_the"
+                    )
                 )
             payload = self._canonical_json_bytes(entries)
         else:
@@ -1223,9 +1424,13 @@ class BuilderModelsMixin:
             try:
                 loaded = strict_json_loads(payload.decode("utf-8"))
             except (UnicodeError, ValueError) as exc:
-                raise ValueError("reviewed attacker config snapshot is invalid") from exc
+                raise ValueError(
+                    _ui_text("builder_models.reviewed_attacker_config_snapshot_is_invalid")
+                ) from exc
             if not isinstance(loaded, dict):
-                raise ValueError("reviewed attacker config snapshot must be an object")
+                raise ValueError(
+                    _ui_text("builder_models.reviewed_attacker_config_snapshot_must_be_an_object")
+                )
             entries = {
                 str(name): dict(entry)
                 for name, entry in loaded.items()
@@ -1239,31 +1444,43 @@ class BuilderModelsMixin:
             }
             if set(entries) != expected_names or len(entries) != len(loaded):
                 raise ValueError(
-                    "reviewed attacker config snapshot no longer matches selection"
+                    _ui_text(
+                        "builder_models.reviewed_attacker_config_snapshot_no_longer_matches_selection"
+                    )
                 )
             portable = self._portable_prepared_attacker_entries(entries)
-            digest = hashlib.sha256(json.dumps(
-                {
-                    "schema": "ura-builder-selected-attacker-config/1",
-                    "attackers": portable,
-                },
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-                allow_nan=False,
-            ).encode("utf-8")).hexdigest()
+            digest = hashlib.sha256(
+                json.dumps(
+                    {
+                        "schema": "ura-builder-selected-attacker-config/1",
+                        "attackers": portable,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    allow_nan=False,
+                ).encode("utf-8")
+            ).hexdigest()
             if not prior or prior != digest:
                 raise ValueError(
-                    "reviewed attacker config snapshot identity does not match"
+                    _ui_text(
+                        "builder_models.reviewed_attacker_config_snapshot_identity_does_not_match"
+                    )
                 )
         if not entries:
             return None
         try:
             snapshot_entries = strict_json_loads(payload.decode("utf-8"))
         except (UnicodeError, ValueError) as exc:
-            raise ValueError("reviewed attacker config snapshot is invalid") from exc
+            raise ValueError(
+                _ui_text("builder_models.reviewed_attacker_config_snapshot_is_invalid")
+            ) from exc
         if snapshot_entries != entries or payload != self._canonical_json_bytes(entries):
-            raise ValueError("reviewed attacker config snapshot no longer matches selection")
+            raise ValueError(
+                _ui_text(
+                    "builder_models.reviewed_attacker_config_snapshot_no_longer_matches_selection"
+                )
+            )
         runtime_entries = {
             str(name): dict(entry)
             for name, entry in snapshot_entries.items()
@@ -1278,15 +1495,17 @@ class BuilderModelsMixin:
                 entry = runtime_entries.get(attacker)
                 if entry is None or path_field not in entry:
                     continue
-                artifact_payload = (artifact_snapshots or {}).get(
-                    f"attacker_artifact_{attacker}"
-                )
+                artifact_payload = (artifact_snapshots or {}).get(f"attacker_artifact_{attacker}")
                 if artifact_payload is None:
                     continue
                 expected = str(entry.get(digest_field, "")).lower()
                 if hashlib.sha256(artifact_payload).hexdigest() != expected:
                     raise ValueError(
-                        f"reviewed {attacker} artifact snapshot no longer matches"
+                        (
+                            "reviewed "
+                            + f"{attacker}"
+                            + _ui_text("builder_models.artifact_snapshot_no_longer_matches")
+                        )
                     )
                 artifact_path, _artifact_digest = self._materialize_private_config(
                     payload=bytes(artifact_payload),
@@ -1297,35 +1516,40 @@ class BuilderModelsMixin:
                 entry[path_field] = str(artifact_path)
             ideator = runtime_entries.get("ideator")
             if ideator is not None:
-                manifest_sha256 = str(
-                    ideator.get("seed_pair_manifest_sha256", "")
-                ).lower()
+                manifest_sha256 = str(ideator.get("seed_pair_manifest_sha256", "")).lower()
                 if re.fullmatch(r"[0-9a-f]{64}", manifest_sha256) is None:
                     raise ValueError(
-                        "reviewed IDEATOR manifest lacks an exact content digest"
+                        _ui_text(
+                            "builder_models.reviewed_ideator_manifest_lacks_an_exact_content_digest"
+                        )
                     )
                 if snapshot_payload is not None:
-                    manifest_payload = (artifact_snapshots or {}).get(
-                        "attacker_artifact_ideator"
-                    )
+                    manifest_payload = (artifact_snapshots or {}).get("attacker_artifact_ideator")
                     if (
                         manifest_payload is None
-                        or hashlib.sha256(manifest_payload).hexdigest()
-                        != manifest_sha256
+                        or hashlib.sha256(manifest_payload).hexdigest() != manifest_sha256
                     ):
                         raise ValueError(
-                            "reviewed IDEATOR manifest snapshot no longer matches"
+                            _ui_text(
+                                "builder_models.reviewed_ideator_manifest_snapshot_no_longer_matches"
+                            )
                         )
                 raw_pairs = ideator.get("seed_pairs")
                 if not isinstance(raw_pairs, list) or not raw_pairs:
-                    raise ValueError("reviewed IDEATOR seed-pair snapshot is invalid")
+                    raise ValueError(
+                        _ui_text("builder_models.reviewed_ideator_seed_pair_snapshot_is_invalid")
+                    )
                 source_bindings = ideator.get("seed_pair_source_bindings")
                 if source_bindings is not None and (
                     not isinstance(source_bindings, list)
                     or len(source_bindings) != len(raw_pairs)
                     or any(not isinstance(item, dict) for item in source_bindings)
                 ):
-                    raise ValueError("reviewed IDEATOR source-binding snapshot is invalid")
+                    raise ValueError(
+                        _ui_text(
+                            "builder_models.reviewed_ideator_source_binding_snapshot_is_invalid"
+                        )
+                    )
                 pair_limit = ideator.get("pair_limit")
                 if (
                     isinstance(pair_limit, bool)
@@ -1333,12 +1557,18 @@ class BuilderModelsMixin:
                     or not 0 <= pair_limit <= 256
                     or pair_limit > len(raw_pairs)
                 ):
-                    raise ValueError("reviewed IDEATOR pair limit is invalid")
+                    raise ValueError(
+                        _ui_text("builder_models.reviewed_ideator_pair_limit_is_invalid")
+                    )
                 runtime_pairs: list[list[str]] = []
                 runtime_image_sha256: list[str] = []
                 for index, raw_pair in enumerate(raw_pairs):
                     if not isinstance(raw_pair, dict):
-                        raise ValueError("reviewed IDEATOR seed-pair snapshot is invalid")
+                        raise ValueError(
+                            _ui_text(
+                                "builder_models.reviewed_ideator_seed_pair_snapshot_is_invalid"
+                            )
+                        )
                     text = raw_pair.get("text")
                     image_path = raw_pair.get("image_path")
                     image_sha256 = raw_pair.get("image_sha256")
@@ -1351,20 +1581,30 @@ class BuilderModelsMixin:
                         or re.fullmatch(r"[0-9a-f]{64}", image_sha256) is None
                     ):
                         raise ValueError(
-                            "reviewed IDEATOR seed-pair snapshot is invalid"
+                            _ui_text(
+                                "builder_models.reviewed_ideator_seed_pair_snapshot_is_invalid"
+                            )
                         )
                     artifact_payload = (artifact_snapshots or {}).get(
                         f"attacker_artifact_ideator_image_{index:04d}"
                     )
                     if snapshot_payload is not None and artifact_payload is None:
                         raise ValueError(
-                            f"reviewed IDEATOR image {index} snapshot is missing"
+                            (
+                                _ui_text("builder_models.reviewed_ideator_image")
+                                + f"{index}"
+                                + _ui_text("builder_models.snapshot_is_missing")
+                            )
                         )
                     runtime_image_path = image_path
                     if artifact_payload is not None:
                         if hashlib.sha256(artifact_payload).hexdigest() != image_sha256:
                             raise ValueError(
-                                f"reviewed IDEATOR image {index} snapshot no longer matches"
+                                (
+                                    _ui_text("builder_models.reviewed_ideator_image")
+                                    + f"{index}"
+                                    + _ui_text("builder_models.snapshot_no_longer_matches")
+                                )
                             )
                         private_image, _image_digest = self._materialize_private_config(
                             payload=bytes(artifact_payload),
@@ -1388,7 +1628,7 @@ class BuilderModelsMixin:
             runtime_payload = self._canonical_json_bytes(runtime_entries)
             if len(runtime_payload) > _RUNNER_ATTACKER_CONFIG_MAX_BYTES:
                 raise ValueError(
-                    "prepared attacker config exceeds Runner's 1 MiB bound"
+                    _ui_text("builder_models.prepared_attacker_config_exceeds_runner_s_1_mib_bound")
                 )
             path, _payload_sha256 = self._materialize_private_config(
                 payload=runtime_payload,
@@ -1410,23 +1650,30 @@ class BuilderModelsMixin:
     #: Operational resume/diagnostic controls that never change the planned
     #: grid (no row, target, attacker, or judge selection), so a successful
     #: no-call preflight stays valid when only they change.
-    _PROJECTION_OPERATIONAL_FIELDS = frozenset({
-        "campaign_flow", "campaign_inputs", "campaign_local", "campaign_haiku",
-        "campaign_judge_model", "campaign_judge_cost",
-        "campaign_collection_cost", "campaign_operation",
-        "retained_source_campaign",
-        "retained_source_runs",
-        "retained_sources_job",
-        "campaign_id",
-        "work_kind",
-        "campaign_name",
-        "campaign_guide",
-        "modality_scope",
-        "setup_mode",
-        "_setup_resolved",
-        "automatic_caps",
-        "_caps_resolved",
-        "verify_model_sha256",
-        "reset_open_circuits",
-        "lock_stale_seconds",
-    })
+    _PROJECTION_OPERATIONAL_FIELDS = frozenset(
+        {
+            "campaign_flow",
+            "campaign_inputs",
+            "campaign_local",
+            "campaign_haiku",
+            "campaign_judge_model",
+            "campaign_judge_cost",
+            "campaign_collection_cost",
+            "campaign_operation",
+            "retained_source_campaign",
+            "retained_source_runs",
+            "retained_sources_job",
+            "campaign_id",
+            "work_kind",
+            "campaign_name",
+            "campaign_guide",
+            "modality_scope",
+            "setup_mode",
+            "_setup_resolved",
+            "automatic_caps",
+            "_caps_resolved",
+            "verify_model_sha256",
+            "reset_open_circuits",
+            "lock_stale_seconds",
+        }
+    )

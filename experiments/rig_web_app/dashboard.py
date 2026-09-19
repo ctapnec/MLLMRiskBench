@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+
+from .i18n import template as _ui_template, text as _ui_text
+
 import hashlib
 import html
 import json
@@ -103,45 +106,38 @@ class DashboardMixin:
                 f"<p class='note'>{html.escape(entry['detail'])}</p>" if entry["detail"] else ""
             )
             rows.append(
-                f"<div class='notice {tone}' data-nid='{nid}'>"
-                "<button type='button' class='notice-close' "
-                "aria-label='dismiss notice' title='Dismiss (this browser "
-                "only)'>&times;</button>"
-                f"<span class='badge {tone}'>{html.escape(entry['level'])}"
-                f"</span> <strong>{html.escape(entry['title'])}</strong>" + detail + "</div>"
+                (
+                    "<div class='notice "
+                    + f"{tone}"
+                    + "' data-nid='"
+                    + f"{nid}"
+                    + _ui_template(
+                        "'><button type='button' class='notice-close' aria-label='[[attr:dashboard.dismiss_notice]]' title='[[attr:dashboard.dismiss_this_browser_only]]'>[[text:dashboard.message]]</button><span class='badge "
+                    )
+                    + f"{tone}"
+                    + "'>"
+                    + f"{html.escape(entry['level'])}"
+                    + "</span> <strong>"
+                    + f"{html.escape(entry['title'])}"
+                    + "</strong>"
+                )
+                + detail
+                + "</div>"
             )
         return (
             "<div class='card'><h2>"
             + _icon("pulse")
-            + "Notices</h2>"
+            + _ui_template("[[text:dashboard.notices]]</h2>")
             + "".join(rows)
-            + "<p class='note'>Operator-recorded notices from "
-            f"<code>{_WARNINGS_FILE}</code>; they annotate, and never "
-            "authorize or invalidate, the artifacts themselves. Dismissing "
-            "a notice hides it in this browser only - the file is "
-            "unchanged. <a href='#' id='notice-restore' "
-            "style='display:none'></a></p></div>"
-            "<script>(function(){"
-            "var KEY='ura-dismissed-notices';"
-            "function load(){try{return JSON.parse("
-            "localStorage.getItem(KEY))||[]}catch(e){return[]}}"
-            "function save(v){localStorage.setItem(KEY,JSON.stringify(v));}"
-            "var restore=document.getElementById('notice-restore');"
-            "function apply(){var d=load();var hidden=0;"
-            "document.querySelectorAll('.notice').forEach(function(n){"
-            "var on=d.indexOf(n.getAttribute('data-nid'))>=0;"
-            "n.style.display=on?'none':'';if(on){hidden++;}});"
-            "if(restore){restore.style.display=hidden?'':'none';"
-            "restore.textContent='Show '+hidden+' dismissed notice'+"
-            "(hidden===1?'':'s');}}"
-            "document.querySelectorAll('.notice-close').forEach(function(b){"
-            "b.addEventListener('click',function(){"
-            "var id=this.parentElement.getAttribute('data-nid');"
-            "var d=load();if(d.indexOf(id)<0){d.push(id);save(d);}"
-            "apply();});});"
-            "if(restore){restore.addEventListener('click',function(e){"
-            "e.preventDefault();save([]);apply();});}"
-            "apply();})();</script>"
+            + (
+                _ui_template(
+                    "<p class='note'>[[text:dashboard.operator_recorded_notices_from]] <code>"
+                )
+                + f"{_WARNINGS_FILE}"
+                + _ui_template(
+                    "</code>[[text:dashboard.they_annotate_and_never_authorize_or_invalidate_the_artifacts_the]] <a href='#' id='notice-restore' style='display:none'></a></p></div><script>(function(){var KEY='ura-dismissed-notices';function load(){try{return JSON.parse(localStorage.getItem(KEY))||[]}catch(e){return[]}}function save(v){localStorage.setItem(KEY,JSON.stringify(v));}var restore=document.getElementById('notice-restore');function apply(){var d=load();var hidden=0;document.querySelectorAll('.notice').forEach(function(n){var on=d.indexOf(n.getAttribute('data-nid'))>=0;n.style.display=on?'none':'';if(on){hidden++;}});if(restore){restore.style.display=hidden?'':'none';restore.textContent=[[js:dashboard.show]]+hidden+[[js:dashboard.dismissed_notice]]+(hidden===1?'':'s');}}document.querySelectorAll('.notice-close').forEach(function(b){b.addEventListener('click',function(){var id=this.parentElement.getAttribute('data-nid');var d=load();if(d.indexOf(id)<0){d.push(id);save(d);}apply();});});if(restore){restore.addEventListener('click',function(e){e.preventDefault();save([]);apply();});}apply();})();</script>"
+                )
+            )
         )
 
     def _campaign_context(self) -> str:
@@ -149,12 +145,12 @@ class DashboardMixin:
 
         rows = []
         for label, name in (
-            ("Pinned revision", "REF_URA"),
-            ("Revision receipt", "URA_PROJECT_REVISION_MANIFEST"),
-            ("Receipt SHA-256", "URA_PROJECT_REVISION_SHA256"),
-            ("Source receipt", "URA_SOURCE_CONFORMANCE_MANIFEST"),
-            ("Source receipt SHA-256", "URA_SOURCE_CONFORMANCE_SHA256"),
-            ("Corpora root", "URA_CORPORA"),
+            (_ui_text("dashboard.pinned_revision"), "REF_URA"),
+            (_ui_text("dashboard.revision_receipt"), "URA_PROJECT_REVISION_MANIFEST"),
+            (_ui_text("dashboard.receipt_sha_256"), "URA_PROJECT_REVISION_SHA256"),
+            (_ui_text("dashboard.source_receipt"), "URA_SOURCE_CONFORMANCE_MANIFEST"),
+            (_ui_text("dashboard.source_receipt_sha_256"), "URA_SOURCE_CONFORMANCE_SHA256"),
+            (_ui_text("dashboard.corpora_root"), "URA_CORPORA"),
         ):
             value = os.environ.get(name, "")
             if not value:
@@ -164,48 +160,54 @@ class DashboardMixin:
                 f"<tr><td>{html.escape(label)}</td><td><code>{html.escape(shown)}</code></td></tr>"
             )
         if not rows:
-            return (
-                "<p class='note'>No campaign bindings exported in this console's environment.</p>"
+            return _ui_template(
+                "<p class='note'>[[text:dashboard.no_campaign_bindings_exported_in_this_console_s_environment]]</p>"
             )
         return (
-            "<div class='scroll'><table>" + "".join(rows) + "</table></div>"
-            "<p class='note'>Values echoed from this console's environment "
-            "for orientation only; nothing here validates them. The receipt "
-            "and attestation validators are the only authority.</p>"
+            "<div class='scroll'><table>"
+            + "".join(rows)
+            + _ui_template(
+                "</table></div><p class='note'>[[text:dashboard.values_echoed_from_this_console_s_environment_for_orientation_onl]]</p>"
+            )
         )
 
     @staticmethod
     def _next_hint(stages: Mapping[str, StageInventory]) -> str:
         order = (
             (
-                "Revision receipt",
+                _ui_text("dashboard.revision_receipt"),
                 "project_revision",
-                "author the prospective revision receipt (runbook section 2)",
+                _ui_text("dashboard.author_the_prospective_revision_receipt_runbook_section_2"),
             ),
             (
-                "Source receipts",
+                _ui_text("dashboard.source_receipts"),
                 "source_conformance",
-                "run the bounded one-arm observations and author the source "
-                "receipt (runbook section 4.1)",
+                _ui_text(
+                    "dashboard.run_the_bounded_one_arm_observations_and_author_the_source_receip"
+                ),
             ),
             (
-                "Attestations",
+                _ui_text("dashboard.attestations"),
                 "run_matrix",
-                "run the account attestation probes and derive transport "
-                "receipts (runbook section 8)",
+                _ui_text(
+                    "dashboard.run_the_account_attestation_probes_and_derive_transport_receipts"
+                ),
             ),
             (
-                "Canaries",
+                _ui_text("dashboard.canaries"),
                 "run_matrix",
-                "run diagnostic canaries and record exact observed tokens/spend "
-                "(runbook section 9.1)",
+                _ui_text(
+                    "dashboard.run_diagnostic_canaries_and_record_exact_observed_tokens_spend_ru"
+                ),
             ),
-            ("Grids", "run_matrix", "start the measured lanes (runbook sections 10-13)"),
+            (
+                _ui_text("dashboard.grids"),
+                "run_matrix",
+                _ui_text("dashboard.start_the_measured_lanes_runbook_sections_10_13"),
+            ),
         )
-        note = (
-            "<p class='note'>This suggestion reads file presence only; the "
-            "runbook and its fail-closed gates decide what is actually "
-            "admissible.</p>"
+        note = _ui_template(
+            "<p class='note'>[[text:dashboard.this_suggestion_reads_file_presence_only_the_runbook_and_its_fail]]</p>"
         )
         for label, form, description in order:
             stage = stages.get(label)
@@ -213,15 +215,28 @@ class DashboardMixin:
                 return (
                     "<div class='card'><h2>"
                     + _icon("play")
-                    + "Suggested next step</h2><p>Runbook order points to: "
-                    f"<strong>{html.escape(description)}</strong> - the "
-                    f"<code>{html.escape(form)}</code> form on the "
-                    "<a href='/commands'>Run</a> page.</p>" + note + "</div>"
+                    + (
+                        _ui_template(
+                            "[[text:dashboard.suggested_next_step]]</h2><p>[[text:dashboard.runbook_order_points_to]] <strong>"
+                        )
+                        + f"{html.escape(description)}"
+                        + _ui_template("</strong> [[text:dashboard.the]] <code>")
+                        + f"{html.escape(form)}"
+                        + _ui_template(
+                            "</code> [[text:dashboard.form_on_the]] <a href='/commands'>[[text:dashboard.run]]</a> page.</p>"
+                        )
+                    )
+                    + note
+                    + "</div>"
                 )
         return (
-            "<div class='card'><h2>" + _icon("play") + "Suggested next step"
-            "</h2><p>All pipeline stages have files; analysis and reporting "
-            "live in runbook section 16.</p>" + note + "</div>"
+            "<div class='card'><h2>"
+            + _icon("play")
+            + _ui_template(
+                "[[text:dashboard.suggested_next_step]]</h2><p>[[text:dashboard.all_pipeline_stages_have_files_analysis_and_reporting_live_in_run]]</p>"
+            )
+            + note
+            + "</div>"
         )
 
     # -- stats -------------------------------------------------------------
@@ -235,8 +250,13 @@ class DashboardMixin:
         bar_h, gap, pad_l, width = 22, 10, 340, 760
         height = len(rows) * (bar_h + gap) + gap
         parts = [
-            f"<svg class='barchart' viewBox='0 0 {width} {height}' "
-            "role='img' aria-label='result chart'>"
+            (
+                "<svg class='barchart' viewBox='0 0 "
+                + f"{width}"
+                + " "
+                + f"{height}"
+                + _ui_template("' role='img' aria-label='[[attr:dashboard.result_chart]]'>")
+            )
         ]
         for index, (label, value) in enumerate(rows):
             value = 0.0 if value < 0 else (1.0 if value > 1 else value)
@@ -292,14 +312,17 @@ class DashboardMixin:
         if health["healthy"] and not health["last_error"]:
             return ""
         return (
-            "<div class='notice red'><span class='badge red'>database</span> "
-            "<strong>Console database "
+            _ui_template(
+                "<div class='notice red'><span class='badge red'>[[text:dashboard.database]]</span> <strong>[[text:dashboard.console_database]] "
+            )
             + ("error" if health["healthy"] else "unavailable")
-            + f"</strong><p class='note'>{html.escape(health['last_error'])} "
-            "- job history, run registry, and recorded usage may be "
-            "incomplete or unavailable (shown as unknown, never as empty). "
-            "Jobs still run; validated artifacts are unaffected. Use "
-            "Reindex on the dashboard after repairing the file.</p></div>"
+            + (
+                "</strong><p class='note'>"
+                + f"{html.escape(health['last_error'])}"
+                + _ui_template(
+                    " [[text:dashboard.job_history_run_registry_and_recorded_usage_may_be_incomplete_or]]</p></div>"
+                )
+            )
         )
 
     def _usage_cost_rows(self) -> tuple[list[dict[str, Any]] | None, str]:
@@ -307,7 +330,7 @@ class DashboardMixin:
 
         totals = self.db.usage_totals()
         if totals is None:
-            return None, "database unavailable - recorded usage unknown"
+            return None, _ui_text("dashboard.database_unavailable_recorded_usage_unknown")
         pricing = load_pricing(self.repo_root)
         return compute_costs(totals, pricing), ""
 
@@ -343,7 +366,7 @@ class DashboardMixin:
             return (
                 "<div class='card'><h2>"
                 + _icon("coins")
-                + "Budgets, usage &amp; calculated cost</h2>"
+                + _ui_template("[[text:dashboard.budgets_usage_calculated_cost]]</h2>")
                 + body
                 + "</div>"
             )
@@ -356,17 +379,24 @@ class DashboardMixin:
                 f"<td>{cats[c]:,}</td>" if cats[c] else "<td>-</td>" for c in _TOKEN_CATEGORIES
             )
             if not row["billable"]:
-                cost_cell = "<td>local (not billed)</td>"
+                cost_cell = _ui_template("<td>[[text:dashboard.local_not_billed]]</td>")
             elif row["cost"] is not None:
                 source = (
-                    " - <span class='badge amber'>auto-fetched, verify</span>"
+                    _ui_template(
+                        " - <span class='badge amber'>[[text:dashboard.auto_fetched_verify]]</span>"
+                    )
                     if row.get("auto_fetched")
                     else " - <span class='badge gray'>operator-set</span>"
                 )
                 cost_cell = (
-                    f"<td><strong>{self._fmt_money(row['cost'], row['currency'])}"
-                    f"</strong><br><span class='fieldhint'>rate of "
-                    f"{html.escape(row['effective_date'])}{source}</span></td>"
+                    "<td><strong>"
+                    + f"{self._fmt_money(row['cost'], row['currency'])}"
+                    + _ui_template(
+                        "</strong><br><span class='fieldhint'>[[text:dashboard.rate_of]] "
+                    )
+                    + f"{html.escape(row['effective_date'])}"
+                    + f"{source}"
+                    + "</span></td>"
                 )
             elif row.get("currency") == "mixed" and row.get("by_currency"):
                 parts = " + ".join(
@@ -374,12 +404,14 @@ class DashboardMixin:
                     for currency, value in row["by_currency"].items()
                 )
                 cost_cell = (
-                    f"<td><strong>{html.escape(parts)}</strong><br>"
-                    "<span class='fieldhint'>mixed currencies - shown per "
-                    "currency, never summed</span></td>"
+                    "<td><strong>"
+                    + f"{html.escape(parts)}"
+                    + _ui_template(
+                        "</strong><br><span class='fieldhint'>[[text:dashboard.mixed_currencies_shown_per_currency_never_summed]]</span></td>"
+                    )
                 )
             else:
-                why = "; ".join(row["missing"]) or "price not recorded"
+                why = "; ".join(row["missing"]) or _ui_text("dashboard.price_not_recorded")
                 cost_cell = "<td>N/A <span class='fieldhint'>" + html.escape(why) + "</span></td>"
             detail.append(
                 f"<tr><td>{html.escape(row['role'])}</td>"
@@ -387,8 +419,11 @@ class DashboardMixin:
                 f"{html.escape(row['model'][:44])}</code></td>"
                 f"<td>{row['calls']:,}"
                 + (
-                    f"<br><span class='fieldhint'>{row['missing_tokens']} "
-                    "with incomplete token usage</span>"
+                    (
+                        "<br><span class='fieldhint'>"
+                        + f"{row['missing_tokens']}"
+                        + _ui_template(" [[text:dashboard.with_incomplete_token_usage]]</span>")
+                    )
                     if row["missing_tokens"]
                     else ""
                 )
@@ -398,8 +433,13 @@ class DashboardMixin:
         unindexed = not detail and self._has_completion_markers()
         if detail:
             detail_table = (
-                "<div class='scroll'><table><tr><th>Role</th><th>Provider / "
-                f"model</th><th>Calls</th>{heads}<th>Calculated cost</th></tr>"
+                (
+                    _ui_template(
+                        "<div class='scroll'><table><tr><th>[[text:dashboard.role]]</th><th>[[text:dashboard.provider_model]]</th><th>[[text:dashboard.calls]]</th>"
+                    )
+                    + f"{heads}"
+                    + _ui_template("<th>[[text:dashboard.calculated_cost]]</th></tr>")
+                )
                 + "".join(detail)
                 + "</table></div>"
             )
@@ -407,22 +447,12 @@ class DashboardMixin:
             # Retained artifacts exist but the derived index is empty (a fresh
             # or stale SQLite file): the spend is UNKNOWN, not $0.  Never show a
             # zero here; prompt a reindex from the artifacts.
-            detail_table = (
-                "<div class='notice amber'><strong>Recorded usage not indexed."
-                "</strong><p class='note'>Completed run artifacts exist under "
-                "the results root but this database has no usage rows yet "
-                "(a fresh or rebuilt index), so recorded spend is "
-                "<strong>unknown, not zero</strong>. "
-                "<form class='inline' method='post' action='/db/reindex' "
-                "data-busy='Rebuilding the index from retained artifacts...'>"
-                "<button type='submit' class='small'>Reindex from artifacts"
-                "</button></form></p></div>"
+            detail_table = _ui_template(
+                "<div class='notice amber'><strong>[[text:dashboard.recorded_usage_not_indexed]]</strong><p class='note'>[[text:dashboard.completed_run_artifacts_exist_under_the_results_root_but_this_dat]] <strong>[[text:dashboard.unknown_not_zero]]</strong>. <form class='inline' method='post' action='/db/reindex' data-busy='[[attr:dashboard.rebuilding_the_index_from_retained_artifacts]]'><button type='submit' class='small'>[[text:dashboard.reindex_from_artifacts]]</button></form></p></div>"
             )
         else:
-            detail_table = (
-                "<p class='note'>No recorded usage yet. Usage appears here once "
-                "a completed run's artifacts are recorded (reconcile on job "
-                "finish, or Reindex on the dashboard).</p>"
+            detail_table = _ui_template(
+                "<p class='note'>[[text:dashboard.no_recorded_usage_yet_usage_appears_here_once_a_completed_run_s_a]]</p>"
             )
         # Provider budget summary: prepaid minus calculated spend.  Spend is
         # tracked PER CURRENCY and never summed across currencies; each provider
@@ -453,47 +483,54 @@ class DashboardMixin:
                 for ccy, amt in v["by_ccy"].items():
                     merged[ccy] = merged.get(ccy, 0.0) + amt
             if unindexed:
-                spent_text = (
-                    "unknown <span class='fieldhint'>not indexed - reindex from artifacts</span>"
+                spent_text = _ui_template(
+                    "[[text:dashboard.unknown]] <span class='fieldhint'>[[text:dashboard.not_indexed_reindex_from_artifacts]]</span>"
                 )
-                remaining = "N/A <span class='fieldhint'>cost incomplete</span>"
+                remaining = _ui_template(
+                    "N/A <span class='fieldhint'>[[text:dashboard.cost_incomplete]]</span>"
+                )
             elif not matched:
                 # No billable usage recorded under this budget's provider: the
                 # spend is genuinely absent, not zero, and there is nothing to
                 # net against prepaid.
-                spent_text = (
-                    "no recorded usage <span class='fieldhint'>no "
-                    "billable calls recorded for this provider</span>"
+                spent_text = _ui_template(
+                    "[[text:dashboard.no_recorded_usage]] <span class='fieldhint'>[[text:dashboard.no_billable_calls_recorded_for_this_provider]]</span>"
                 )
-                remaining = "N/A <span class='fieldhint'>no recorded spend to subtract</span>"
+                remaining = _ui_template(
+                    "N/A <span class='fieldhint'>[[text:dashboard.no_recorded_spend_to_subtract]]</span>"
+                )
             elif not complete:
-                spent_text = "N/A <span class='fieldhint'>some models lack a recorded price</span>"
-                remaining = "N/A <span class='fieldhint'>cost incomplete</span>"
+                spent_text = _ui_template(
+                    "N/A <span class='fieldhint'>[[text:dashboard.some_models_lack_a_recorded_price]]</span>"
+                )
+                remaining = _ui_template(
+                    "N/A <span class='fieldhint'>[[text:dashboard.cost_incomplete]]</span>"
+                )
             elif len(merged) > 1:
                 # Different currencies are never summed into one spend nor
                 # subtracted from a single prepaid figure.
-                spent_text = (
-                    " + ".join(self._fmt_money(amt, ccy) for ccy, amt in sorted(merged.items()))
-                    + " <span class='fieldhint'>mixed currencies (not summed)"
-                    "</span>"
+                spent_text = " + ".join(
+                    self._fmt_money(amt, ccy) for ccy, amt in sorted(merged.items())
+                ) + _ui_template(
+                    " <span class='fieldhint'>[[text:dashboard.mixed_currencies_not_summed]]</span>"
                 )
-                remaining = (
-                    "N/A <span class='fieldhint'>mixed currencies - "
-                    "cannot net one prepaid figure</span>"
+                remaining = _ui_template(
+                    "N/A <span class='fieldhint'>[[text:dashboard.mixed_currencies_cannot_net_one_prepaid_figure]]</span>"
                 )
             else:
                 ccy, amt = next(iter(merged.items())) if merged else ("USD", 0.0)
                 spent_text = self._fmt_money(amt, ccy)
                 if prepaid is None:
-                    remaining = "N/A <span class='fieldhint'>prepaid not numeric</span>"
+                    remaining = _ui_template(
+                        "N/A <span class='fieldhint'>[[text:dashboard.prepaid_not_numeric]]</span>"
+                    )
                 elif ccy != "USD":
                     # The maintained budgets config records dollar-denominated
                     # prepaid balances (for example "$100").  Never subtract
                     # those dollars from a non-USD spend without an exchange
                     # rate that the console deliberately does not invent.
-                    remaining = (
-                        "N/A <span class='fieldhint'>prepaid balance is USD; "
-                        "no currency conversion recorded</span>"
+                    remaining = _ui_template(
+                        "N/A <span class='fieldhint'>[[text:dashboard.prepaid_balance_is_usd_no_currency_conversion_recorded]]</span>"
                     )
                 else:
                     remaining = self._fmt_money(prepaid - amt, ccy)
@@ -503,68 +540,96 @@ class DashboardMixin:
                 f"<td>{spent_text}</td><td>{remaining}</td></tr>"
             )
         return (
-            "<div class='card'><h2>" + _icon("coins") + "Budgets, usage &amp; calculated cost</h2>"
-            "<div class='scroll'><table><tr><th>Provider</th><th>Prepaid</th>"
-            "<th>Calculated spend</th><th>Remaining</th></tr>"
+            "<div class='card'><h2>"
+            + _icon("coins")
+            + _ui_template(
+                "[[text:dashboard.budgets_usage_calculated_cost]]</h2><div class='scroll'><table><tr><th>[[text:dashboard.provider]]</th><th>[[text:dashboard.prepaid]]</th><th>[[text:dashboard.calculated_spend]]</th><th>[[text:dashboard.remaining]]</th></tr>"
+            )
             + "".join(budget_rows)
             + "</table></div>"
             + detail_table
-            + "<p class='note'>Tokens are the recorded usage read from "
-            "completion-bound run artifacts (Response tokens and provider "
-            "usage detail; judge-call tokens from completed trails) - never "
-            "an estimate. Cost multiplies those tokens by the operator-edited "
-            "<a href='/config?file=pricing'>pricing</a> table (effective-"
-            "dated); a missing token count or price renders as N/A, never as "
-            "zero. <code>target_failed</code>/<code>judge_failed</code> rows are "
-            "observable paid work from cells that later errored (operational "
-            "spend only, never part of any scientific result); "
-            "<code>reserved</code> rows are attempted calls with no recorded "
-            "token detail, shown as N/A exposure, never zero. Prepaid budgets "
-            "come from the editable <a href='/config?file=budgets'>budgets</a> "
-            "config. If a provider ever reports an actually billed amount in an "
-            "artifact, that amount is authoritative over this calculation."
-            "</p></div>"
+            + _ui_template(
+                "<p class='note'>[[text:dashboard.tokens_are_the_recorded_usage_read_from_completion_bound_run_arti]] <a href='/config?file=pricing'>[[text:dashboard.pricing]]</a> table (effective-dated); a missing token count or price renders as N/A, never as zero. <code>target_failed</code>/<code>judge_failed</code> rows are observable paid work from cells that later errored (operational spend only, never part of any scientific result); <code>reserved</code> [[text:dashboard.rows_are_attempted_calls_with_no_recorded_token_detail_shown_as_n]] <a href='/config?file=budgets'>[[text:dashboard.budgets]]</a> [[text:dashboard.config_if_a_provider_ever_reports_an_actually_billed_amount_in_an]]</p></div>"
+            )
         )
 
     def _retained_spend_card(self, inventory: dict) -> str:
         if inventory["errors"]:
-            content = "<div class='notice amber'>Campaign costs are unavailable, not zero.<ul>" + "".join(
-                "<li>" + html.escape(error) + "</li>" for error in inventory["errors"]
-            ) + "</ul></div>"
+            content = (
+                _ui_template(
+                    "<div class='notice amber'>[[text:dashboard.campaign_costs_are_unavailable_not_zero]]<ul>"
+                )
+                + "".join("<li>" + html.escape(error) + "</li>" for error in inventory["errors"])
+                + "</ul></div>"
+            )
         else:
+
             def money(row, key):
                 return self._fmt_money(row[key] / 1_000_000, "USD")
 
             rows = []
             for row in inventory["rows"]:
-                settled = money(row, "reported_cost_microusd") if row["settled_attempts"] else "Not settled"
-                rows.append("<tr><td>" + html.escape(row["provider"]) + "</td><td>"
-                    + html.escape(row["role"]) + f"</td><td>{row['http_attempts']:,}</td>"
+                settled = (
+                    money(row, "reported_cost_microusd")
+                    if row["settled_attempts"]
+                    else _ui_text("dashboard.not_settled")
+                )
+                rows.append(
+                    "<tr><td>"
+                    + html.escape(row["provider"])
+                    + "</td><td>"
+                    + html.escape(row["role"])
+                    + f"</td><td>{row['http_attempts']:,}</td>"
                     + f"<td>{settled}</td>"
-                    + f"<td>{money(row, 'unknown_exposure_microusd')} ({row['unknown_attempts']:,} attempts)</td>"
-                    + f"<td>{money(row, 'unsettled_exposure_microusd')} ({row['unsettled_attempts']:,} attempts)</td>"
-                    + f"<td>{money(row, 'unstarted_commitments_microusd')}</td></tr>")
-            content = ("<div class='scroll'><table><tr><th>Provider</th><th>Role</th>"
-                "<th>Request attempt records</th><th>Settled usage cost</th><th>Unknown-charge exposure</th>"
-                "<th>Unsettled attempt exposure</th><th>Unissued retained-plan allowance</th></tr>"
-                + "".join(rows) + "</table></div>")
-        links = "".join("<li><a href='/artifacts?path=" + quote(source["budget"])
-            + "'>" + html.escape(source["label"]) + "</a></li>" for source in inventory["sources"])
-        if any(source.get('spending_policy') == 'precalculated' for source in inventory['sources']):
-            content += ("<p class='note'>Pre-calculated execution is present: maximum-cost forecasts "
-                        "are not money holds. Reported spending is tracked; unknown charges remain "
-                        "unknown. Calls already in flight may finish after a spending stop.</p>")
-        return ("<div class='card'><h2>" + _icon("coins") + "Retained campaign costs</h2>"
-            + content + "<p class='note'>Target generation and hosted judging are separate. "
-            "Each physical request is counted once across recovery copies. Reported-usage costs "
-            "are retained ledger settlements, not provider invoices. Unknown charges and unsettled "
-            "attempt amounts are exposure, not confirmed spending or proof of a live request; "
-            "unissued allowances are not calls and can include superseded plans. "
-            "They are not today's reserved budget or authority for further spending. "
-            "Sequential batch ceilings are not added together. These figures are not live provider "
-            "credit balances and exclude unregistered work. The legacy usage index is not added, "
-            "to avoid double-counting. Local inference is not provider-billed.</p>"
-            + "<details><summary>Registered accounting sources</summary><ul>" + links + "</ul></details></div>")
+                    + (
+                        "<td>"
+                        + f"{money(row, 'unknown_exposure_microusd')}"
+                        + " ("
+                        + f"{row['unknown_attempts']:,}"
+                        + _ui_template(" [[text:dashboard.attempts]]</td>")
+                    )
+                    + (
+                        "<td>"
+                        + f"{money(row, 'unsettled_exposure_microusd')}"
+                        + " ("
+                        + f"{row['unsettled_attempts']:,}"
+                        + _ui_template(" [[text:dashboard.attempts]]</td>")
+                    )
+                    + f"<td>{money(row, 'unstarted_commitments_microusd')}</td></tr>"
+                )
+            content = (
+                _ui_template(
+                    "<div class='scroll'><table><tr><th>[[text:dashboard.provider]]</th><th>[[text:dashboard.role]]</th><th>[[text:dashboard.request_attempt_records]]</th><th>[[text:dashboard.settled_usage_cost]]</th><th>[[text:dashboard.unknown_charge_exposure]]</th><th>[[text:dashboard.unsettled_attempt_exposure]]</th><th>[[text:dashboard.unissued_retained_plan_allowance]]</th></tr>"
+                )
+                + "".join(rows)
+                + "</table></div>"
+            )
+        links = "".join(
+            "<li><a href='/artifacts?path="
+            + quote(source["budget"])
+            + "'>"
+            + html.escape(source["label"])
+            + "</a></li>"
+            for source in inventory["sources"]
+        )
+        if any(source.get("spending_policy") == "precalculated" for source in inventory["sources"]):
+            content += _ui_template(
+                "<p class='note'>[[text:dashboard.pre_calculated_execution_is_present_maximum_cost_forecasts_are_no]]</p>"
+            )
+        return (
+            "<div class='card'><h2>"
+            + _icon("coins")
+            + _ui_template("[[text:dashboard.retained_campaign_costs]]</h2>")
+            + content
+            + _ui_template(
+                "<p class='note'>[[text:dashboard.target_generation_and_hosted_judging_are_separate_each_physical_r]]</p>"
+            )
+            + _ui_template(
+                "<details><summary>[[text:dashboard.registered_accounting_sources]]</summary><ul>"
+            )
+            + links
+            + "</ul></details></div>"
+        )
 
     @staticmethod
     def _parse_money(amount: str) -> float | None:
@@ -575,26 +640,27 @@ class DashboardMixin:
         runs = self.db.list_runs()
         if runs is None:
             return (
-                "<div class='card'><h2>" + _icon("book") + "Campaign runs</h2>"
-                "<p class='note'><strong>Unavailable</strong> - the console "
-                "database cannot be read, so the run registry is unknown "
-                "(not empty).</p></div>"
+                "<div class='card'><h2>"
+                + _icon("book")
+                + _ui_template(
+                    "[[text:dashboard.campaign_runs]]</h2><p class='note'><strong>[[text:dashboard.unavailable]]</strong> [[text:dashboard.the_console_database_cannot_be_read_so_the_run_registry_is_unknow]]</p></div>"
+                )
             )
         if not runs:
             return (
-                "<div class='card'><h2>" + _icon("book") + "Campaign runs</h2>"
-                "<p class='note'>No lanes recorded yet. Each rig_check and "
-                "run_matrix job is registered here (kind, output, pinned "
-                "revision) as it finishes - durable across console "
-                "restarts.</p></div>"
+                "<div class='card'><h2>"
+                + _icon("book")
+                + _ui_template(
+                    "[[text:dashboard.campaign_runs]]</h2><p class='note'>[[text:dashboard.no_lanes_recorded_yet_each_rig_check_and_run_matrix_job_is_regist]]</p></div>"
+                )
             )
         tone = {"complete": "green", "failed": "red", "running": "blue"}
         work_labels = {
-            "preflight": "preflight - no model call",
-            "dry_run": "offline dry run - no model call",
-            "diagnostic_canary": "diagnostic model-capable run",
-            "attestation_probe": "model probe",
-            "measured": "model campaign",
+            "preflight": _ui_text("dashboard.preflight_no_model_call"),
+            "dry_run": _ui_text("dashboard.offline_dry_run_no_model_call"),
+            "diagnostic_canary": _ui_text("dashboard.diagnostic_model_capable_run"),
+            "attestation_probe": _ui_text("dashboard.model_probe"),
+            "measured": _ui_text("dashboard.model_campaign"),
         }
         rows = []
         for row in runs:
@@ -608,9 +674,7 @@ class DashboardMixin:
                 kind = run_kind(restored_job.command, restored_job.argv) or kind
             out = str(row["out_dir"] or "")
             link = f"<a href='/artifacts?path={quote(out)}'>{html.escape(out)}</a>" if out else "-"
-            when = time.strftime(
-                "%Y-%m-%d %H:%M:%S", time.localtime(float(row["created_at"] or 0))
-            )
+            when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(row["created_at"] or 0)))
             rows.append(
                 f"<tr><td>{when}</td>"
                 f"<td><span class='badge {tone.get(state, 'gray')}'>"
@@ -622,15 +686,15 @@ class DashboardMixin:
                 "</td></tr>"
             )
         return (
-            "<div class='card'><h2>" + _icon("book") + "Campaign runs</h2>"
-            "<div class='scroll'><table><tr><th>When</th><th>State</th><th>Work</th>"
-            "<th>Command</th><th>Output</th><th>Pin</th></tr>" + "".join(rows) + "</table></div>"
-            "<p class='note'>This is an operational process registry. Passed "
-            "means the CLI exited with status 0; it does not by itself prove "
-            "that a model generated a response. Preflight and offline dry-run "
-            "rows make no model calls. For model-capable rows, only the linked "
-            "validated artifacts and recorded usage establish execution.</p>"
-            "</div>"
+            "<div class='card'><h2>"
+            + _icon("book")
+            + _ui_template(
+                "[[text:dashboard.campaign_runs]]</h2><div class='scroll'><table><tr><th>[[text:dashboard.when]]</th><th>[[text:dashboard.state]]</th><th>[[text:dashboard.work]]</th><th>[[text:dashboard.command]]</th><th>[[text:dashboard.output]]</th><th>[[text:dashboard.pin]]</th></tr>"
+            )
+            + "".join(rows)
+            + _ui_template(
+                "</table></div><p class='note'>[[text:dashboard.this_is_an_operational_process_registry_passed_means_the_cli_exit]]</p></div>"
+            )
         )
 
     # -- campaign-first Stats presentation --------------------------------
@@ -711,15 +775,15 @@ class DashboardMixin:
     def _stats_cost_text(cost_rows: list[dict[str, Any]]) -> str:
         billable = [row for row in cost_rows if row.get("billable")]
         if not billable:
-            return "local / not billed" if cost_rows else "N/A"
+            return _ui_text("dashboard.local_not_billed_2") if cost_rows else "N/A"
         if any(row.get("cost") is None for row in billable):
-            return "N/A (incomplete pricing or usage)"
+            return _ui_text("dashboard.n_a_incomplete_pricing_or_usage")
         by_currency: dict[str, float] = {}
         for row in billable:
             currency = str(row.get("currency") or "")
             cost = row.get("cost")
             if not currency or not isinstance(cost, (int, float)):
-                return "N/A (incomplete pricing or usage)"
+                return _ui_text("dashboard.n_a_incomplete_pricing_or_usage")
             by_currency[currency] = by_currency.get(currency, 0.0) + float(cost)
         return " + ".join(
             DashboardMixin._fmt_money(value, currency)
@@ -756,12 +820,12 @@ class DashboardMixin:
     @staticmethod
     def _stats_work_label(kind: str) -> str:
         return {
-            "acquisition_plan": "model acquisition plan - no model call",
-            "preflight": "preflight - no model call",
-            "dry_run": "offline dry run - no model call",
-            "diagnostic_canary": "diagnostic model-capable run",
-            "attestation_probe": "model probe",
-            "measured": "model campaign",
+            "acquisition_plan": _ui_text("dashboard.model_acquisition_plan_no_model_call"),
+            "preflight": _ui_text("dashboard.preflight_no_model_call"),
+            "dry_run": _ui_text("dashboard.offline_dry_run_no_model_call"),
+            "diagnostic_canary": _ui_text("dashboard.diagnostic_model_capable_run"),
+            "attestation_probe": _ui_text("dashboard.model_probe"),
+            "measured": _ui_text("dashboard.model_campaign"),
         }.get(kind, kind or "unknown")
 
     @staticmethod
@@ -784,7 +848,7 @@ class DashboardMixin:
             # claim to provide.
             return (
                 "external-operational",
-                "external operational record / non-thesis",
+                _ui_text("dashboard.external_operational_record_non_thesis"),
                 "gray",
             )
         if kind in {"preflight", "acquisition_plan"}:
@@ -799,16 +863,14 @@ class DashboardMixin:
             + int(evidence.get("unreadable_artifacts", 0))
             + int(evidence.get("truncated", 0))
         )
-        if (
-            kind == "measured"
-            and corpora
-            and state == "complete"
-            and complete > 0
-            and invalid == 0
-        ):
-            return "thesis-measured", "thesis measured evidence", "green"
+        if kind == "measured" and corpora and state == "complete" and complete > 0 and invalid == 0:
+            return "thesis-measured", _ui_text("dashboard.thesis_measured_evidence"), "green"
         if kind == "measured":
-            return "measured-incomplete", "measured attempt / evidence incomplete", "amber"
+            return (
+                "measured-incomplete",
+                _ui_text("dashboard.measured_attempt_evidence_incomplete"),
+                "amber",
+            )
         return "unknown", "unclassified / non-authoritative", "gray"
 
     _STATS_PAGE_SIZE = 24
@@ -846,10 +908,15 @@ class DashboardMixin:
         for row in stored:
             job_id = str(row["job_id"] or "")
             command = str(row["command"] or "")
-            if not job_id or job_id in live_job_ids or command not in {
-                "level1_evidence",
-                "level2_report",
-            }:
+            if (
+                not job_id
+                or job_id in live_job_ids
+                or command
+                not in {
+                    "level1_evidence",
+                    "level2_report",
+                }
+            ):
                 continue
             if str(row["state"] or "") != "complete" or row["exit_code"] != 0:
                 continue
@@ -857,9 +924,7 @@ class DashboardMixin:
                 loaded = strict_json_loads(str(row["argv"] or "[]"))
             except (TypeError, ValueError):
                 continue
-            if not isinstance(loaded, list) or not all(
-                isinstance(part, str) for part in loaded
-            ):
+            if not isinstance(loaded, list) or not all(isinstance(part, str) for part in loaded):
                 continue
             records[job_id] = {
                 "job_id": job_id,
@@ -951,9 +1016,8 @@ class DashboardMixin:
             except OSError:
                 continue
             report_relative = self._stats_artifact_relative(report_path)
-            if (
-                derived_path_quarantined(result_root, self.results_root)
-                or derived_path_quarantined(report_path, self.results_root)
+            if derived_path_quarantined(result_root, self.results_root) or derived_path_quarantined(
+                report_path, self.results_root
             ):
                 continue
             candidates = [
@@ -965,9 +1029,7 @@ class DashboardMixin:
             if not candidates:
                 continue
             deepest = max(len(owner["root"].parts) for owner in candidates)
-            most_specific = [
-                owner for owner in candidates if len(owner["root"].parts) == deepest
-            ]
+            most_specific = [owner for owner in candidates if len(owner["root"].parts) == deepest]
             owner_ids = {str(owner["job_id"]) for owner in most_specific}
             if len(owner_ids) != 1:
                 continue
@@ -978,25 +1040,18 @@ class DashboardMixin:
                 # locators are never rendered or placed in artifact links.
                 "source_path": report_path,
                 "display_name": report_relative or report_path.name,
-                "kind": (
-                    "level1"
-                    if analysis_job["command"] == "level1_evidence"
-                    else "level2"
-                ),
+                "kind": ("level1" if analysis_job["command"] == "level1_evidence" else "level2"),
                 "producer_job_id": str(analysis_job["job_id"]),
             }
             prior = bindings_by_path.get(report_path)
             if prior is None:
                 bindings_by_path[report_path] = binding
             elif (
-                prior["owner_job_id"] != binding["owner_job_id"]
-                or prior["kind"] != binding["kind"]
+                prior["owner_job_id"] != binding["owner_job_id"] or prior["kind"] != binding["kind"]
             ):
                 ambiguous_paths.add(report_path)
         return [
-            binding
-            for path, binding in bindings_by_path.items()
-            if path not in ambiguous_paths
+            binding for path, binding in bindings_by_path.items() if path not in ambiguous_paths
         ]
 
     @staticmethod
@@ -1037,13 +1092,9 @@ class DashboardMixin:
         try:
             jobs, notice = self._external_measured_job_scan()
         except (AttributeError, OSError, ValueError):
-            return [], "External measured registry scan unavailable."
+            return [], _ui_text("dashboard.external_measured_registry_scan_unavailable")
         return (
-            [
-                job
-                for job in jobs
-                if self.db.load_campaign(job.job_id) is None
-            ],
+            [job for job in jobs if self.db.load_campaign(job.job_id) is None],
             notice,
         )
 
@@ -1083,14 +1134,11 @@ class DashboardMixin:
             )
             if console_rows is None:
                 console_rows = []
-                db_notice = (
-                    "Console campaign registry unavailable; externally registered "
-                    "measured jobs remain read-only and visible."
+                db_notice = _ui_text(
+                    "dashboard.console_campaign_registry_unavailable_externally_registered_measu"
                 )
                 unavailable = " ".join(part for part in (unavailable, db_notice) if part)
-            combined = console_rows + [
-                self._stats_external_row(job) for job in external_jobs
-            ]
+            combined = console_rows + [self._stats_external_row(job) for job in external_jobs]
             combined.sort(
                 key=lambda row: (
                     float(row.get("created_at") or 0),
@@ -1101,8 +1149,8 @@ class DashboardMixin:
             runs = combined[offset : offset + self._STATS_PAGE_SIZE]
             has_more = len(combined) > offset + self._STATS_PAGE_SIZE
             if required > 10_001 and not runs:
-                page_notice = (
-                    "Campaign pagination reached the bounded 10,001-row registry view."
+                page_notice = _ui_text(
+                    "dashboard.campaign_pagination_reached_the_bounded_10_001_row_registry_view"
                 )
                 unavailable = " ".join(part for part in (unavailable, page_notice) if part)
         pricing = load_pricing(self.repo_root)
@@ -1143,16 +1191,10 @@ class DashboardMixin:
                         loaded = strict_json_loads(str(stored["argv"] or "[]"))
                     except (TypeError, ValueError):
                         loaded = []
-                    if isinstance(loaded, list) and all(
-                        isinstance(part, str) for part in loaded
-                    ):
+                    if isinstance(loaded, list) and all(isinstance(part, str) for part in loaded):
                         argv = list(loaded)
                     started_at = float(stored["started_at"] or started_at)
-                    ended_at = (
-                        float(stored["ended_at"])
-                        if stored["ended_at"] is not None
-                        else None
-                    )
+                    ended_at = float(stored["ended_at"]) if stored["ended_at"] is not None else None
                     if not terminal_run:
                         state = str(stored["state"] or state)
                         command = str(stored["command"] or command)
@@ -1169,10 +1211,7 @@ class DashboardMixin:
                 if output_root is not None
                 else False
             )
-            uniquely_owned = (
-                output_root is not None
-                and owners_by_root.get(output_root) == {job_id}
-            )
+            uniquely_owned = output_root is not None and owners_by_root.get(output_root) == {job_id}
             usage_rows: list[dict[str, Any]] = []
             evidence: dict[str, int] = {
                 "markers": 0,
@@ -1192,8 +1231,7 @@ class DashboardMixin:
                 excluded_roots = tuple(
                     root
                     for root in owned_roots
-                    if root != output_root
-                    and self._stats_contains_path(output_root, root)
+                    if root != output_root and self._stats_contains_path(output_root, root)
                 )
                 usage_rows, observed = collect_usage(
                     output_root,
@@ -1288,9 +1326,7 @@ class DashboardMixin:
 
     def _stats_owned_report_paths(self) -> set[str]:
         owned = {
-            str(binding["path"])
-            for binding in self._stats_report_bindings()
-            if binding["path"]
+            str(binding["path"]) for binding in self._stats_report_bindings() if binding["path"]
         }
         try:
             engineering, _notice = self._engineering_campaign_scan()
@@ -1302,9 +1338,7 @@ class DashboardMixin:
                 campaign.route_id,
             )
             if registration is not None:
-                owned.update(
-                    report.artifact_relative for report in registration.reports
-                )
+                owned.update(report.artifact_relative for report in registration.reports)
         return owned
 
     @staticmethod
@@ -1324,23 +1358,23 @@ class DashboardMixin:
         reports = []
         terminal_inventory: dict[str, object] | None = None
         for report in registration.reports:
-            reports.append({
-                "owner_job_id": campaign.route_id,
-                "path": report.artifact_relative,
-                "source_path": report.path,
-                "display_name": report.display_name,
-                "kind": report.kind,
-                "producer_job_id": campaign.route_id,
-                "_external_analysis_report": report,
-            })
+            reports.append(
+                {
+                    "owner_job_id": campaign.route_id,
+                    "path": report.artifact_relative,
+                    "source_path": report.path,
+                    "display_name": report.display_name,
+                    "kind": report.kind,
+                    "producer_job_id": campaign.route_id,
+                    "_external_analysis_report": report,
+                }
+            )
             if report.kind == "terminal_inventory":
                 document = load_external_analysis_report(report)
                 if isinstance(document, dict):
                     terminal_inventory = document
         terminal_rows = (
-            terminal_inventory.get("rows")
-            if isinstance(terminal_inventory, Mapping)
-            else None
+            terminal_inventory.get("rows") if isinstance(terminal_inventory, Mapping) else None
         )
         failure_rows = (
             terminal_inventory.get("failure_rows")
@@ -1348,10 +1382,14 @@ class DashboardMixin:
             else None
         )
         coverage_text = (
-            f"{len(terminal_rows):,} terminal campaign rows; "
-            f"{len(failure_rows):,} failure rows"
+            (
+                f"{len(terminal_rows):,}"
+                + _ui_text("dashboard.terminal_campaign_rows")
+                + f"{len(failure_rows):,}"
+                + _ui_text("dashboard.failure_rows")
+            )
             if isinstance(terminal_rows, list) and isinstance(failure_rows, list)
-            else "validated external analysis reports"
+            else _ui_text("dashboard.validated_external_analysis_reports")
         )
         return {
             "job_id": campaign.route_id,
@@ -1377,12 +1415,12 @@ class DashboardMixin:
             },
             "usage_reported": False,
             "cost_rows": [],
-            "cost_text": "not reported by analysis registration",
+            "cost_text": _ui_text("dashboard.not_reported_by_analysis_registration"),
             "evidence": evidence,
             "coverage_text": coverage_text,
             "terminal_inventory": terminal_inventory,
             "authority": "external-analysis",
-            "authority_label": "registered external analysis / non-thesis",
+            "authority_label": _ui_text("dashboard.registered_external_analysis_non_thesis"),
             "authority_tone": "blue",
             "reports": reports,
             "analysis_limitations": registration.explicit_limitations,
@@ -1396,7 +1434,9 @@ class DashboardMixin:
     def _stats_state_badge(state: str) -> tuple[str, str]:
         label = {
             "complete": "passed",
-            "complete_with_explicit_limitations": "complete with explicit limitations",
+            "complete_with_explicit_limitations": _ui_text(
+                "dashboard.complete_with_explicit_limitations"
+            ),
         }.get(state, state or "unknown")
         tone = {
             "complete": "green",
@@ -1409,7 +1449,7 @@ class DashboardMixin:
 
     @staticmethod
     def _stats_list_text(values: tuple[str, ...]) -> str:
-        return ", ".join(values) if values else "not declared"
+        return ", ".join(values) if values else _ui_text("dashboard.not_declared")
 
     @staticmethod
     def _stats_coverage_text(evidence: Mapping[str, int]) -> str:
@@ -1418,27 +1458,30 @@ class DashboardMixin:
         invalid = int(evidence.get("skipped_invalid", 0)) + int(
             evidence.get("unreadable_artifacts", 0)
         )
-        text = f"{complete} complete cell{'s' if complete != 1 else ''}"
+        text = (
+            f"{complete}"
+            + _ui_text("dashboard.complete_cell")
+            + f"{('s' if complete != 1 else '')}"
+        )
         extras = []
         if failed:
             extras.append(f"{failed} failed")
         if invalid:
             extras.append(f"{invalid} invalid/unreadable")
         if evidence.get("truncated"):
-            extras.append("scan truncated")
+            extras.append(_ui_text("dashboard.scan_truncated"))
         return text + ("; " + ", ".join(extras) if extras else "")
 
     def _stats_usage_table(self, campaign: Mapping[str, Any]) -> str:
         if campaign.get("usage_reported") is False:
-            return (
-                "<p class='note'>This external analysis registration does not "
-                "carry a model-usage record.</p>"
+            return _ui_template(
+                "<p class='note'>[[text:dashboard.this_external_analysis_registration_does_not_carry_a_model_usage]]</p>"
             )
         rows = []
         for cost in campaign["cost_rows"]:
             tokens = cost["tokens"]
             if not cost["billable"]:
-                cost_text = "local / not billed"
+                cost_text = _ui_text("dashboard.local_not_billed_2")
             elif cost["cost"] is not None:
                 cost_text = self._fmt_money(cost["cost"], cost["currency"])
             elif cost.get("currency") == "mixed" and cost.get("by_currency"):
@@ -1459,11 +1502,13 @@ class DashboardMixin:
                 f"<td>{html.escape(cost_text)}</td></tr>"
             )
         if not rows:
-            return "<p class='note'>No completion-bound model usage was recorded.</p>"
+            return _ui_template(
+                "<p class='note'>[[text:dashboard.no_completion_bound_model_usage_was_recorded]]</p>"
+            )
         return (
-            "<div class='scroll'><table><tr><th>Role</th><th>Provider / model</th>"
-            "<th>Calls</th><th>Input tokens</th><th>Output tokens</th>"
-            "<th>Calculated cost</th></tr>"
+            _ui_template(
+                "<div class='scroll'><table><tr><th>[[text:dashboard.role]]</th><th>[[text:dashboard.provider_model]]</th><th>[[text:dashboard.calls]]</th><th>[[text:dashboard.input_tokens]]</th><th>[[text:dashboard.output_tokens]]</th><th>[[text:dashboard.calculated_cost]]</th></tr>"
+            )
             + "".join(rows)
             + "</table></div>"
         )
@@ -1471,10 +1516,7 @@ class DashboardMixin:
     def _stats_completion_has_results(self, campaign: Mapping[str, Any]) -> bool:
         """Whether an exact completed Runner cell declares aggregate results."""
 
-        if (
-            campaign.get("kind") != "measured"
-            or campaign.get("output_quarantined") is True
-        ):
+        if campaign.get("kind") != "measured" or campaign.get("output_quarantined") is True:
             return False
         root = campaign.get("output_root")
         if not isinstance(root, Path) or not root.is_dir():
@@ -1502,10 +1544,7 @@ class DashboardMixin:
         row is rendered.
         """
 
-        if (
-            campaign.get("kind") != "measured"
-            or campaign.get("output_quarantined") is True
-        ):
+        if campaign.get("kind") != "measured" or campaign.get("output_quarantined") is True:
             return [], ""
         root = campaign.get("output_root")
         if not isinstance(root, Path) or not root.is_dir():
@@ -1513,36 +1552,34 @@ class DashboardMixin:
         try:
             markers, observed = iter_completed_markers(root)
         except (OSError, ValueError) as exc:
-            return [], f"Runner completion scan failed: {exc}"
+            return [], (_ui_text("dashboard.runner_completion_scan_failed") + f"{exc}")
         if observed.get("truncated"):
-            return [], "Runner completion scan was truncated"
+            return [], _ui_text("dashboard.runner_completion_scan_was_truncated")
         if observed.get("skipped_invalid"):
-            return [], "Runner completion inventory contains an invalid marker"
+            return [], _ui_text("dashboard.runner_completion_inventory_contains_an_invalid_marker")
 
         rows: list[dict[str, Any]] = []
         seen_ids: set[str] = set()
         try:
             for marker_path, marker in markers:
                 artifacts = marker.get("artifacts")
-                descriptor = (
-                    artifacts.get("results")
-                    if isinstance(artifacts, Mapping)
-                    else None
-                )
+                descriptor = artifacts.get("results") if isinstance(artifacts, Mapping) else None
                 if descriptor is None:
                     continue
-                result_path = _marker_artifact_path(
-                    marker_path, descriptor, verify_sha=False
-                )
+                result_path = _marker_artifact_path(marker_path, descriptor, verify_sha=False)
                 if result_path.stat().st_size > self._STATS_RUNNER_RESULT_FILE_BYTES_MAX:
-                    raise ValueError("Runner results artifact exceeds the Stats byte cap")
+                    raise ValueError(
+                        _ui_text("dashboard.runner_results_artifact_exceeds_the_stats_byte_cap")
+                    )
                 expected_records = descriptor.get("records")
                 if (
                     not isinstance(expected_records, int)
                     or isinstance(expected_records, bool)
                     or expected_records < 0
                 ):
-                    raise ValueError("Runner results descriptor has no valid record count")
+                    raise ValueError(
+                        _ui_text("dashboard.runner_results_descriptor_has_no_valid_record_count")
+                    )
                 observed_records = 0
                 with result_path.open(encoding="utf-8") as handle:
                     for line_number, line in enumerate(handle, 1):
@@ -1550,11 +1587,17 @@ class DashboardMixin:
                             continue
                         observed_records += 1
                         if len(rows) >= self._STATS_RUNNER_RESULT_ROWS_MAX:
-                            raise ValueError("Runner aggregate row cap exceeded")
+                            raise ValueError(
+                                _ui_text("dashboard.runner_aggregate_row_cap_exceeded")
+                            )
                         value = strict_json_loads(line)
                         if not isinstance(value, Mapping):
                             raise ValueError(
-                                f"Runner result row {line_number} is not an object"
+                                (
+                                    _ui_text("dashboard.runner_result_row")
+                                    + f"{line_number}"
+                                    + _ui_text("dashboard.is_not_an_object")
+                                )
                             )
                         row_id = value.get("id")
                         metric = value.get("metric")
@@ -1587,7 +1630,11 @@ class DashboardMixin:
                             or n < 0
                         ):
                             raise ValueError(
-                                f"Runner result row {line_number} has an invalid identity"
+                                (
+                                    _ui_text("dashboard.runner_result_row")
+                                    + f"{line_number}"
+                                    + _ui_text("dashboard.has_an_invalid_identity")
+                                )
                             )
                         for bound in ("ci_low", "ci_high"):
                             candidate = value.get(bound)
@@ -1597,24 +1644,30 @@ class DashboardMixin:
                                 or not math.isfinite(float(candidate))
                             ):
                                 raise ValueError(
-                                    f"Runner result row {line_number} has an invalid {bound}"
+                                    (
+                                        _ui_text("dashboard.runner_result_row")
+                                        + f"{line_number}"
+                                        + _ui_text("dashboard.has_an_invalid")
+                                        + f"{bound}"
+                                    )
                                 )
                         seen_ids.add(row_id)
                         rows.append(dict(value))
                 if observed_records != expected_records:
                     raise ValueError(
-                        "Runner results record count changed since completion"
+                        _ui_text("dashboard.runner_results_record_count_changed_since_completion")
                     )
         except (OSError, TypeError, ValueError, RecursionError) as exc:
-            return [], f"Runner aggregate artifact invalid: {exc}"
+            return [], (_ui_text("dashboard.runner_aggregate_artifact_invalid") + f"{exc}")
         return rows, ""
 
     def _stats_runner_results_card(self, campaign: Mapping[str, Any]) -> str:
         rows, error = self._stats_runner_result_rows(campaign)
         if error:
             return (
-                "<div class='notice red'><strong>Runner aggregates not rendered."
-                "</strong><p class='note'>"
+                _ui_template(
+                    "<div class='notice red'><strong>[[text:dashboard.runner_aggregates_not_rendered]]</strong><p class='note'>"
+                )
                 + html.escape(error)
                 + ".</p></div>"
             )
@@ -1630,9 +1683,7 @@ class DashboardMixin:
                 metric_rows,
                 key=lambda row: tuple(
                     str(row.get("group_by", {}).get(field) or "")
-                    for field in (
-                        "source", "risk", "effective_modality", "attacker", "model"
-                    )
+                    for field in ("source", "risk", "effective_modality", "attacker", "model")
                 ),
             )
             chartable = [
@@ -1656,10 +1707,13 @@ class DashboardMixin:
             )
             if len(chartable) > self._STATS_RUNNER_RESULT_CHART_MAX:
                 chart += (
-                    "<p class='note'>Chart shows "
-                    f"{self._STATS_RUNNER_RESULT_CHART_MAX} of {len(chartable)} "
-                    "rate rows for this metric; the bounded table below retains "
-                    "the per-row details.</p>"
+                    _ui_template("<p class='note'>[[text:dashboard.chart_shows]] ")
+                    + f"{self._STATS_RUNNER_RESULT_CHART_MAX}"
+                    + " of "
+                    + f"{len(chartable)}"
+                    + _ui_template(
+                        " [[text:dashboard.rate_rows_for_this_metric_the_bounded_table_below_retains_the_per]]</p>"
+                    )
                 )
             table_rows = []
             for row in ordered[: self._STATS_RUNNER_RESULT_TABLE_MAX]:
@@ -1671,9 +1725,7 @@ class DashboardMixin:
                     if ci_low is None or ci_high is None
                     else f"{float(ci_low):.4f}, {float(ci_high):.4f}"
                 )
-                value_text = (
-                    "N/A" if row["value"] is None else f"{float(row['value']):.4f}"
-                )
+                value_text = "N/A" if row["value"] is None else f"{float(row['value']):.4f}"
                 table_rows.append(
                     "<tr>"
                     f"<td>{html.escape(str(group.get('model') or 'N/A'))}</td>"
@@ -1687,17 +1739,26 @@ class DashboardMixin:
             table_note = ""
             if len(ordered) > self._STATS_RUNNER_RESULT_TABLE_MAX:
                 table_note = (
-                    "<p class='note'>Table is bounded to "
-                    f"{self._STATS_RUNNER_RESULT_TABLE_MAX} of {len(ordered)} rows. "
-                    "Open the exact output artifacts for the full file.</p>"
+                    _ui_template("<p class='note'>[[text:dashboard.table_is_bounded_to]] ")
+                    + f"{self._STATS_RUNNER_RESULT_TABLE_MAX}"
+                    + " of "
+                    + f"{len(ordered)}"
+                    + _ui_template(
+                        " [[text:dashboard.rows_open_the_exact_output_artifacts_for_the_full_file]]</p>"
+                    )
                 )
             sections.append(
-                f"<h3>{html.escape(metric)} "
-                f"<span class='fieldhint'>({len(ordered)} row(s))</span></h3>"
+                (
+                    "<h3>"
+                    + f"{html.escape(metric)}"
+                    + " <span class='fieldhint'>("
+                    + f"{len(ordered)}"
+                    + _ui_template(" [[text:dashboard.row_s]]</span></h3>")
+                )
                 + chart
-                + "<div class='scroll'><table><tr><th>Model</th><th>Source</th>"
-                "<th>Risk</th><th>Modality</th><th>Attacker</th><th>Value</th>"
-                "<th>CI low, high</th><th>n</th></tr>"
+                + _ui_template(
+                    "<div class='scroll'><table><tr><th>[[text:dashboard.model]]</th><th>[[text:dashboard.source]]</th><th>[[text:dashboard.risk]]</th><th>[[text:dashboard.modality]]</th><th>[[text:dashboard.attacker]]</th><th>[[text:dashboard.value]]</th><th>[[text:dashboard.ci_low_high]]</th><th>[[text:dashboard.n]]</th></tr>"
+                )
                 + "".join(table_rows)
                 + "</table></div>"
                 + table_note
@@ -1705,11 +1766,9 @@ class DashboardMixin:
         return (
             "<div class='card'><h2>"
             + _icon("chart")
-            + "Runner cell aggregates <span class='badge blue'>exact job</span></h2>"
-            "<p class='note'>Digest-verified <code>*.results.jsonl</code> rows "
-            "bound by each completed cell marker. This is a per-job view only: "
-            "it does not pool strata, compare runs, or replace a separately "
-            "bound Level-2 analysis.</p>"
+            + _ui_template(
+                "[[text:dashboard.runner_cell_aggregates]] <span class='badge blue'>[[text:dashboard.exact_job]]</span></h2><p class='note'>Digest-verified <code>*.results.jsonl</code> [[text:dashboard.rows_bound_by_each_completed_cell_marker_this_is_a_per_job_view_o]]</p>"
+            )
             + "".join(sections)
             + "</div>"
         )
@@ -1719,78 +1778,103 @@ class DashboardMixin:
         state_label, state_tone = self._stats_state_badge(state)
         job_href = str(campaign.get("job_href") or f"/jobs/{quote(str(campaign['job_id']))}")
         external_badge = (
-            "<span class='badge blue'>external / read-only</span>"
+            _ui_template("<span class='badge blue'>[[text:dashboard.external_read_only]]</span>")
             if campaign.get("external_owned") is True
             else ""
         )
-        started = time.strftime(
-            "%Y-%m-%d %H:%M:%S UTC", time.gmtime(float(campaign["started_at"]))
-        )
+        started = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(float(campaign["started_at"])))
         ended_at = campaign["ended_at"]
         if ended_at is not None:
-            ended = time.strftime(
-                "%Y-%m-%d %H:%M:%S UTC", time.gmtime(float(ended_at))
-            )
+            ended = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(float(ended_at)))
         else:
-            ended = "running / not recorded" if state == "running" else "not recorded"
+            ended = (
+                _ui_text("dashboard.running_not_recorded")
+                if state == "running"
+                else _ui_text("dashboard.not_recorded")
+            )
         usage = campaign["usage"]
         usage_reported = campaign.get("usage_reported") is not False
         calls = (
             f"{usage['target_calls']:,} target / {usage['judge_calls']:,} judge"
             if usage_reported
-            else "not reported"
+            else _ui_text("dashboard.not_reported")
         )
         tokens = (
             f"{usage['input_tokens']:,} input / {usage['output_tokens']:,} output"
             if usage_reported
-            else "not reported"
+            else _ui_text("dashboard.not_reported")
         )
         has_chart = self._stats_completion_has_results(campaign) or any(
-            "class='barchart'" in self._stats_report_card(report)
-            for report in campaign["reports"]
+            "class='barchart'" in self._stats_report_card(report) for report in campaign["reports"]
         )
-        detail_label = "Statistics &amp; diagrams" if has_chart else "Statistics details"
+        detail_label = (
+            "Statistics &amp; diagrams" if has_chart else _ui_text("dashboard.statistics_details")
+        )
         coverage_text = str(
-            campaign.get("coverage_text")
-            or self._stats_coverage_text(campaign["evidence"])
+            campaign.get("coverage_text") or self._stats_coverage_text(campaign["evidence"])
         )
         return (
-            "<article class='stats-campaign-card' "
-            f"data-job-id='{html.escape(str(campaign['job_id']))}' "
-            f"data-authority='{html.escape(str(campaign['authority']))}'>"
-            "<div class='stats-campaign-head'><div><h3><a href='"
-            f"{html.escape(job_href, quote=True)}'>{html.escape(str(campaign['job_id']))}</a>"
-            "</h3><p class='note'>"
-            f"{html.escape(str(campaign['work_label']))}</p></div>"
-            "<div class='stats-badges'>"
-            f"<span class='badge {state_tone}'>{html.escape(state_label)}</span>"
-            f"<span class='badge {html.escape(str(campaign['authority_tone']))}'>"
-            f"{html.escape(str(campaign['authority_label']))}</span>{external_badge}</div></div>"
-            "<dl class='stats-campaign-meta'>"
-            f"<dt>Target</dt><dd>{html.escape(self._stats_list_text(campaign['targets']))}</dd>"
-            f"<dt>Framework</dt><dd>{html.escape(self._stats_list_text(campaign['frameworks']))}</dd>"
-            f"<dt>Corpus</dt><dd>{html.escape(self._stats_list_text(campaign['corpora']))}</dd>"
-            f"<dt>Started</dt><dd>{html.escape(started)}</dd>"
-            f"<dt>Ended</dt><dd>{html.escape(ended)}</dd>"
-            f"<dt>Calls</dt><dd>{html.escape(calls)}</dd>"
-            f"<dt>Tokens</dt><dd>{html.escape(tokens)}</dd>"
-            f"<dt>Cost</dt><dd>{html.escape(str(campaign['cost_text']))}</dd>"
-            f"<dt>Results</dt><dd>{html.escape(coverage_text)}</dd>"
-            "</dl><div class='stats-campaign-actions'>"
-            f"<a class='button ghost stats-detail-trigger' href='/stats/job/"
-            f"{quote(str(campaign['job_id']))}' data-stats-job='"
-            f"{html.escape(str(campaign['job_id']))}' "
-            "aria-controls='campaign-stats-modal' aria-haspopup='dialog' "
-            "aria-expanded='false'>"
-            f"{detail_label}</a></div></article>"
+            "<article class='stats-campaign-card' data-job-id='"
+            + f"{html.escape(str(campaign['job_id']))}"
+            + "' data-authority='"
+            + f"{html.escape(str(campaign['authority']))}"
+            + "'><div class='stats-campaign-head'><div><h3><a href='"
+            + f"{html.escape(job_href, quote=True)}"
+            + "'>"
+            + f"{html.escape(str(campaign['job_id']))}"
+            + "</a></h3><p class='note'>"
+            + f"{html.escape(str(campaign['work_label']))}"
+            + "</p></div><div class='stats-badges'><span class='badge "
+            + f"{state_tone}"
+            + "'>"
+            + f"{html.escape(state_label)}"
+            + "</span><span class='badge "
+            + f"{html.escape(str(campaign['authority_tone']))}"
+            + "'>"
+            + f"{html.escape(str(campaign['authority_label']))}"
+            + "</span>"
+            + f"{external_badge}"
+            + _ui_template(
+                "</div></div><dl class='stats-campaign-meta'><dt>[[text:dashboard.target]]</dt><dd>"
+            )
+            + f"{html.escape(self._stats_list_text(campaign['targets']))}"
+            + _ui_template("</dd><dt>[[text:dashboard.framework]]</dt><dd>")
+            + f"{html.escape(self._stats_list_text(campaign['frameworks']))}"
+            + _ui_template("</dd><dt>[[text:dashboard.corpus]]</dt><dd>")
+            + f"{html.escape(self._stats_list_text(campaign['corpora']))}"
+            + _ui_template("</dd><dt>[[text:dashboard.started]]</dt><dd>")
+            + f"{html.escape(started)}"
+            + _ui_template("</dd><dt>[[text:dashboard.ended]]</dt><dd>")
+            + f"{html.escape(ended)}"
+            + _ui_template("</dd><dt>[[text:dashboard.calls]]</dt><dd>")
+            + f"{html.escape(calls)}"
+            + _ui_template("</dd><dt>[[text:dashboard.tokens]]</dt><dd>")
+            + f"{html.escape(tokens)}"
+            + _ui_template("</dd><dt>[[text:dashboard.cost]]</dt><dd>")
+            + f"{html.escape(str(campaign['cost_text']))}"
+            + _ui_template("</dd><dt>[[text:dashboard.results]]</dt><dd>")
+            + f"{html.escape(coverage_text)}"
+            + "</dd></dl><div class='stats-campaign-actions'><a class='button ghost stats-detail-trigger' href='/stats/job/"
+            + f"{quote(str(campaign['job_id']))}"
+            + "' data-stats-job='"
+            + f"{html.escape(str(campaign['job_id']))}"
+            + "' aria-controls='campaign-stats-modal' aria-haspopup='dialog' aria-expanded='false'>"
+            + f"{detail_label}"
+            + "</a></div></article>"
         )
 
     def _stats_report_card(
-        self, report: Mapping[str, Any], *, detail_url: str | None = None,
-        detail_section: str = "overview", detail_page: int = 0,
+        self,
+        report: Mapping[str, Any],
+        *,
+        detail_url: str | None = None,
+        detail_section: str = "overview",
+        detail_page: int = 0,
     ) -> str:
         rel = str(report.get("path") or "")
-        display_name = str(report.get("display_name") or rel or "external report")
+        display_name = str(
+            report.get("display_name") or rel or _ui_text("dashboard.external_report")
+        )
         kind = str(report.get("kind") or "")
         registered_report = report.get("_external_analysis_report")
         source = report.get("source_path")
@@ -1806,209 +1890,461 @@ class DashboardMixin:
             return (
                 "<div class='card'><h3>"
                 + _icon("file")
-                + f"{html.escape(display_name)} <span class='badge red'>invalid</span></h3>"
-                "<p class='note'>The exact report output is missing or malformed; "
-                "no chart is rendered.</p></div>"
+                + (
+                    f"{html.escape(display_name)}"
+                    + _ui_template(
+                        " <span class='badge red'>[[text:dashboard.invalid]]</span></h3><p class='note'>[[text:dashboard.the_exact_report_output_is_missing_or_malformed_no_chart_is_rende]]</p></div>"
+                    )
+                )
             )
         if not isinstance(doc, dict):
             return (
-                f"<div class='card'><h3>{html.escape(display_name)} "
-                "<span class='badge red'>invalid</span></h3></div>"
+                "<div class='card'><h3>"
+                + f"{html.escape(display_name)}"
+                + _ui_template(
+                    " <span class='badge red'>[[text:dashboard.invalid]]</span></h3></div>"
+                )
             )
         expected = {
             "level1": {"ura-level1-evidence/3", "ura-level1-evidence/2"},
             "level2": {"ura-level2-report/1", "ura-level2-report/2"},
         }.get(kind)
-        if kind not in {
-            "level1",
-            "level2",
-            "judge_comparison",
-            "terminal_inventory",
-            "execution_accounting",
-        } or (
-            expected is not None
-            and str(doc.get("schema_version")) not in expected
-        ) or (
-            kind == "execution_accounting"
-            and doc.get("schema")
-            != "ura-local-campaign-execution-accounting/1"
+        if (
+            kind
+            not in {
+                "level1",
+                "level2",
+                "judge_comparison",
+                "terminal_inventory",
+                "execution_accounting",
+            }
+            or (expected is not None and str(doc.get("schema_version")) not in expected)
+            or (
+                kind == "execution_accounting"
+                and doc.get("schema") != "ura-local-campaign-execution-accounting/1"
+            )
         ):
             return (
                 "<div class='card'><h3>"
                 + _icon("file")
-                + f"{html.escape(display_name)} <span class='badge red'>invalid</span></h3>"
-                "<p class='note'>The declared schema does not match this analysis job; "
-                "no chart is rendered.</p></div>"
+                + (
+                    f"{html.escape(display_name)}"
+                    + _ui_template(
+                        " <span class='badge red'>[[text:dashboard.invalid]]</span></h3><p class='note'>[[text:dashboard.the_declared_schema_does_not_match_this_analysis_job_no_chart_is]]</p></div>"
+                    )
+                )
             )
         try:
             # The registered reader already validates this exact kind and
             # invalidates its cache when file metadata changes. Do not rebuild
             # the same scientific summary again on every pagination request.
-            if not (isinstance(registered_report, ExternalAnalysisReport)
-                    and registered_report.kind == kind):
+            if not (
+                isinstance(registered_report, ExternalAnalysisReport)
+                and registered_report.kind == kind
+            ):
                 _validate_report_document(kind, doc)
         except ValueError as exc:
             return (
                 "<div class='card'><h3>"
                 + _icon("file")
-                + f"{html.escape(display_name)} <span class='badge red'>invalid</span></h3>"
-                f"<p class='note'>{html.escape(str(exc))}. Not rendered; no chart "
-                "is produced.</p></div>"
+                + (
+                    f"{html.escape(display_name)}"
+                    + _ui_template(
+                        " <span class='badge red'>[[text:dashboard.invalid]]</span></h3><p class='note'>"
+                    )
+                    + f"{html.escape(str(exc))}"
+                    + _ui_template("[[text:dashboard.not_rendered_no_chart_is_produced]]</p></div>")
+                )
             )
         try:
             if kind == "judge_comparison":
                 return self._render_judge_comparison(
-                    display_name, doc, detail_url=detail_url,
-                    detail_section=detail_section, detail_page=detail_page,
+                    display_name,
+                    doc,
+                    detail_url=detail_url,
+                    detail_section=detail_section,
+                    detail_page=detail_page,
                 )
             if kind == "terminal_inventory":
-                return self._render_terminal_inventory(
-                    display_name, doc, artifact_relative=rel
-                )
+                return self._render_terminal_inventory(display_name, doc, artifact_relative=rel)
             if kind == "execution_accounting":
-                return self._render_execution_accounting(
-                    display_name, doc, artifact_relative=rel
-                )
+                return self._render_execution_accounting(display_name, doc, artifact_relative=rel)
             if kind == "level2":
                 return self._render_level2(display_name, doc, artifact_relative=rel)
             return self._render_level1(display_name, doc, artifact_relative=rel)
         except (KeyError, TypeError, ValueError):
             return (
-                f"<div class='card'><h3>{html.escape(display_name)} "
-                "<span class='badge red'>invalid</span></h3>"
-                "<p class='note'>Validated identity but unrenderable structure; "
-                "no chart is rendered.</p></div>"
+                "<div class='card'><h3>"
+                + f"{html.escape(display_name)}"
+                + _ui_template(
+                    " <span class='badge red'>[[text:dashboard.invalid]]</span></h3><p class='note'>[[text:dashboard.validated_identity_but_unrenderable_structure_no_chart_is_rendere]]</p></div>"
+                )
             )
 
     def _render_judge_comparison(
-        self, name: str, doc: Mapping[str, Any], *, detail_url: str | None = None,
-        detail_section: str = "overview", detail_page: int = 0,
+        self,
+        name: str,
+        doc: Mapping[str, Any],
+        *,
+        detail_url: str | None = None,
+        detail_section: str = "overview",
+        detail_page: int = 0,
     ) -> str:
         """Display matched judgments, never infer them from logs or job state."""
+
         def estimate(value: Mapping[str, Any]) -> str:
             point = value["value"]
             if point is None:
-                return "No comparable decisions"
-            ci = (f"95% CI {value['ci_low']:.3f} to {value['ci_high']:.3f}"
-                  if value["ci_low"] is not None else "CI unavailable: fewer than two source clusters")
-            inputs = f" / {value['n_inputs']} distinct inputs" if "n_inputs" in value else ""
+                return _ui_text("dashboard.no_comparable_decisions")
+            ci = (
+                f"95% CI {value['ci_low']:.3f} to {value['ci_high']:.3f}"
+                if value["ci_low"] is not None
+                else _ui_text("dashboard.ci_unavailable_fewer_than_two_source_clusters")
+            )
+            inputs = (
+                (" / " + f"{value['n_inputs']}" + _ui_text("dashboard.distinct_inputs"))
+                if "n_inputs" in value
+                else ""
+            )
             return f"{point:.3f}; {ci}; {value['n_records']} rows{inputs} / {value['n_clusters']} clusters"
 
         def condition_label(condition: Mapping[str, Any]) -> str:
-            annotation = " [same-model Haiku judge]" if condition["same_model_judge"] else ""
-            return " / ".join(str(condition[key]) for key in (
-                "cohort", "exact_model", "modality", "framework", "corpus", "risk", "expected_behavior"
-            )) + annotation
+            annotation = (
+                _ui_text("dashboard.same_model_haiku_judge")
+                if condition["same_model_judge"]
+                else ""
+            )
+            return (
+                " / ".join(
+                    str(condition[key])
+                    for key in (
+                        "cohort",
+                        "exact_model",
+                        "modality",
+                        "framework",
+                        "corpus",
+                        "risk",
+                        "expected_behavior",
+                    )
+                )
+                + annotation
+            )
 
         summary, completion = doc["summary"], doc["completion"]
         # Collapsed details still allocate their full DOM. Bound rendered rows,
         # not the retained report or the population used to compute aggregates.
         groups = {
-            "outcomes": ("Outcome conditions", summary["strata"]),
-            "contrasts": ("Matched model contrasts", summary["contrasts"]),
-            "tokens": ("Token windows", doc.get("generation_conditions", {}).get("conditions", [])),
+            "outcomes": (_ui_text("dashboard.outcome_conditions"), summary["strata"]),
+            "contrasts": (_ui_text("dashboard.matched_model_contrasts"), summary["contrasts"]),
+            "tokens": (
+                _ui_text("dashboard.token_windows"),
+                doc.get("generation_conditions", {}).get("conditions", []),
+            ),
         }
         if detail_section not in {"overview", *groups} or detail_page < 0:
-            raise ValueError("unknown comparison detail page")
+            raise ValueError(_ui_text("dashboard.unknown_comparison_detail_page"))
         page_size = 20
         navigation = ""
         if detail_url:
             links = []
-            for key, title in [("overview", "Overview"), *[(key, value[0]) for key, value in groups.items()]]:
+            for key, title in [
+                ("overview", _ui_text("dashboard.overview")),
+                *[(key, value[0]) for key, value in groups.items()],
+            ]:
                 href = f"{detail_url}&detail_section={key}"
                 current = " aria-current='page'" if key == detail_section else ""
-                links.append(f"<a data-stats-report href='{html.escape(href, quote=True)}'{current}>{title}</a>")
-            navigation = "<nav class='page-tabs' aria-label='Comparison details'>" + " ".join(links) + "</nav>"
+                links.append(
+                    f"<a data-stats-report href='{html.escape(href, quote=True)}'{current}>{title}</a>"
+                )
+            navigation = (
+                _ui_template(
+                    "<nav class='page-tabs' aria-label='[[attr:dashboard.comparison_details]]'>"
+                )
+                + " ".join(links)
+                + "</nav>"
+            )
 
         def window(key: str) -> list:
             title, rows = groups[key]
             if detail_section not in {"overview", key}:
                 return []
-            page = 0 if detail_section == "overview" else min(detail_page, max(0, (len(rows) - 1) // page_size))
+            page = (
+                0
+                if detail_section == "overview"
+                else min(detail_page, max(0, (len(rows) - 1) // page_size))
+            )
             start = page * page_size
-            chosen = rows[start:start + page_size]
+            chosen = rows[start : start + page_size]
             if rows:
-                parts.append(f"<p class='note'>{title}: showing {start + 1}-{start + len(chosen)} of {len(rows)}. "
-                             "Summary counts and rates above cover the full selected population.</p>")
+                parts.append(
+                    (
+                        "<p class='note'>"
+                        + f"{title}"
+                        + ": showing "
+                        + f"{start + 1}"
+                        + "-"
+                        + f"{start + len(chosen)}"
+                        + " of "
+                        + f"{len(rows)}"
+                        + _ui_template(
+                            "[[text:dashboard.summary_counts_and_rates_above_cover_the_full_selected_population]]</p>"
+                        )
+                    )
+                )
             if len(rows) > page_size and detail_url:
                 base = f"{detail_url}&detail_section={key}"
                 links = []
                 if page:
                     href = html.escape(f"{base}&detail_page={page - 1}", quote=True)
-                    links.append(f"<a data-stats-report href='{href}'>Previous {title.lower()}</a>")
+                    links.append(
+                        (
+                            "<a data-stats-report href='"
+                            + f"{href}"
+                            + _ui_template("'>[[text:dashboard.previous]] ")
+                            + f"{title.lower()}"
+                            + "</a>"
+                        )
+                    )
                 if start + len(chosen) < len(rows):
                     href = html.escape(f"{base}&detail_page={page + 1}", quote=True)
-                    links.append(f"<a data-stats-report href='{href}'>Next {title.lower()}</a>")
+                    links.append(
+                        (
+                            "<a data-stats-report href='"
+                            + f"{href}"
+                            + _ui_template("'>[[text:dashboard.next]] ")
+                            + f"{title.lower()}"
+                            + "</a>"
+                        )
+                    )
                 parts.append("<nav aria-label='" + title + " pages'>" + " ".join(links) + "</nav>")
             return chosen
-        if doc.get("schema") in {"ura-retained-judge-comparison/4", "ura-retained-judge-comparison/5"}:
-            usage = (f"<p>Completed source batches: {len(doc['source_partitions'])}; no new judge calls. "
-                     f"Selected verdicts: {completion['judge_calls']}; {completion['http_attempts']} recorded HTTP attempts; "
-                     f"{completion['input_tokens']:,} input / {completion['output_tokens']:,} output tokens; "
-                     f"token-priced selected usage USD {completion['actual_cost_microusd'] / 1e6:.6f}. "
-                     "Source spending ledgers remain separate.</p>")
+
+        if doc.get("schema") in {
+            "ura-retained-judge-comparison/4",
+            "ura-retained-judge-comparison/5",
+        }:
+            usage = (
+                _ui_template("<p>[[text:dashboard.completed_source_batches]] ")
+                + f"{len(doc['source_partitions'])}"
+                + _ui_text("dashboard.no_new_judge_calls_selected_verdicts")
+                + f"{completion['judge_calls']}"
+                + "; "
+                + f"{completion['http_attempts']}"
+                + _ui_text("dashboard.recorded_http_attempts")
+                + f"{completion['input_tokens']:,}"
+                + " input / "
+                + f"{completion['output_tokens']:,}"
+                + _ui_text("dashboard.output_tokens_token_priced_selected_usage_usd")
+                + f"{completion['actual_cost_microusd'] / 1000000.0:.6f}"
+                + _ui_template("[[text:dashboard.source_spending_ledgers_remain_separate]]</p>")
+            )
         else:
-            usage = (f"<p>Haiku: {completion['judge_calls']} logical calls; {completion['http_attempts']} HTTP attempts; "
-                     f"{completion['input_tokens']:,} input / {completion['output_tokens']:,} output tokens; "
-                     f"token-priced usage USD {completion['actual_cost_microusd'] / 1e6:.6f} / "
-                     f"plan ceiling USD {completion['max_cost_microusd'] / 1e6:.6f}.</p>")
-        parts = [f"<div class='card'><h3>{html.escape(name)}</h3>",
-                 "<p class='note'>Selected matched-output comparison. Counts precede rates; "
-                 "shared local judgments are charged once.</p>",
-                 self._count_bar_chart([
-                     ("Distinct local outputs judged", summary["cohorts"]["local"]),
-                     ("Distinct hosted outputs judged", summary["cohorts"]["hosted"]),
-                     ("Comparison links (not paid calls)", summary["comparison_pairs"]),
-                 ], label="Unique judged outputs and comparison links"),
-                 usage, navigation,
-                 "<details><summary>Source-view coverage before matched selection</summary>"]
+            usage = (
+                "<p>Haiku: "
+                + f"{completion['judge_calls']}"
+                + _ui_text("dashboard.logical_calls")
+                + f"{completion['http_attempts']}"
+                + _ui_text("dashboard.http_attempts")
+                + f"{completion['input_tokens']:,}"
+                + " input / "
+                + f"{completion['output_tokens']:,}"
+                + _ui_text("dashboard.output_tokens_token_priced_usage_usd")
+                + f"{completion['actual_cost_microusd'] / 1000000.0:.6f}"
+                + _ui_text("dashboard.plan_ceiling_usd")
+                + f"{completion['max_cost_microusd'] / 1000000.0:.6f}"
+                + ".</p>"
+            )
+        parts = [
+            f"<div class='card'><h3>{html.escape(name)}</h3>",
+            _ui_template(
+                "<p class='note'>[[text:dashboard.selected_matched_output_comparison_counts_precede_rates_shared_lo]]</p>"
+            ),
+            self._count_bar_chart(
+                [
+                    (
+                        _ui_text("dashboard.distinct_local_outputs_judged"),
+                        summary["cohorts"]["local"],
+                    ),
+                    (
+                        _ui_text("dashboard.distinct_hosted_outputs_judged"),
+                        summary["cohorts"]["hosted"],
+                    ),
+                    (
+                        _ui_text("dashboard.comparison_links_not_paid_calls"),
+                        summary["comparison_pairs"],
+                    ),
+                ],
+                label=_ui_text("dashboard.unique_judged_outputs_and_comparison_links"),
+            ),
+            usage,
+            navigation,
+            _ui_template(
+                "<details><summary>[[text:dashboard.source_view_coverage_before_matched_selection]]</summary>"
+            ),
+        ]
         if "input_weighting" in summary:
-            parts.insert(1, f"<p>Input-balanced comparison: {summary['distinct_inputs']} distinct inputs. "
-                         "Repeated outputs are averaged per input before equal source-cluster weighting; "
-                         "they are not independent questions.</p>")
+            parts.insert(
+                1,
+                (
+                    _ui_template("<p>[[text:dashboard.input_balanced_comparison]] ")
+                    + f"{summary['distinct_inputs']}"
+                    + _ui_template(
+                        " [[text:dashboard.distinct_inputs_repeated_outputs_are_averaged_per_input_before_eq]]</p>"
+                    )
+                ),
+            )
         if "invalid_verdicts" in completion:
-            parts.insert(-1, f"<p>Judge abstentions from invalid verdicts: {completion['invalid_verdicts']}; "
-                         f"attempts with unknown usage: {completion['unknown_usage_judgments']}. "
-                         "The displayed token-priced amount is known usage only, not the total charge.</p>")
+            parts.insert(
+                -1,
+                (
+                    _ui_template("<p>[[text:dashboard.judge_abstentions_from_invalid_verdicts]] ")
+                    + f"{completion['invalid_verdicts']}"
+                    + _ui_text("dashboard.attempts_with_unknown_usage")
+                    + f"{completion['unknown_usage_judgments']}"
+                    + _ui_template(
+                        "[[text:dashboard.the_displayed_token_priced_amount_is_known_usage_only_not_the_tot]]</p>"
+                    )
+                ),
+            )
         for cohort in ("local", "hosted"):
             audit = doc["plan"]["population"][cohort]
-            parts.append(f"<h4>{cohort.title()} source frame</h4>" + self._count_bar_chart(
-                [(key.replace("_", " "), value) for key, value in audit.items()],
-                label=f"{cohort} source-view coverage, not selected-cohort rates"))
+            parts.append(
+                (
+                    "<h4>"
+                    + f"{cohort.title()}"
+                    + _ui_template(" [[text:dashboard.source_frame]]</h4>")
+                )
+                + self._count_bar_chart(
+                    [(key.replace("_", " "), value) for key, value in audit.items()],
+                    label=(
+                        f"{cohort}"
+                        + _ui_text("dashboard.source_view_coverage_not_selected_cohort_rates")
+                    ),
+                )
+            )
         parts.append("</details>")
         for row in window("outcomes"):
             condition = row["condition"]
             label = condition_label(condition)
-            parts.extend([f"<details><summary>{html.escape(label)} - {row['selected_outputs']} outputs</summary>",
-                          "<p class='note'>Separate revision/output-policy/cascade condition: "
-                          + html.escape(" / ".join(str(condition[key]) for key in (
-                              "project_revision_sha256", "output_policy_sha256", "cascade_configuration_sha256"))) + "</p>"])
+            parts.extend(
+                [
+                    (
+                        "<details><summary>"
+                        + f"{html.escape(label)}"
+                        + " - "
+                        + f"{row['selected_outputs']}"
+                        + _ui_template(" [[text:dashboard.outputs]]</summary>")
+                    ),
+                    _ui_template(
+                        "<p class='note'>[[text:dashboard.separate_revision_output_policy_cascade_condition]] "
+                    )
+                    + html.escape(
+                        " / ".join(
+                            str(condition[key])
+                            for key in (
+                                "project_revision_sha256",
+                                "output_policy_sha256",
+                                "cascade_configuration_sha256",
+                            )
+                        )
+                    )
+                    + "</p>",
+                ]
+            )
             for judge in ("cascade", "haiku"):
                 outcome = row[judge]
-                parts.append(f"<h4>{judge.title()}: {outcome['decided']} decided / {outcome['abstained']} abstained</h4>")
-                chart = self._bar_chart([(label_name.replace("_", " "), rate["value"])
-                                         for label_name, rate in outcome["rates"].items() if rate["value"] is not None])
-                parts.append(chart.replace("aria-label='result chart'", "aria-label='" + html.escape(judge + " outcomes: " + label, quote=True) + "'"))
-                parts.append("<div class='table-scroll'><table><thead><tr><th>Label</th><th>Count</th><th>Equal-cluster rate and uncertainty</th></tr></thead><tbody>")
+                parts.append(
+                    (
+                        "<h4>"
+                        + f"{judge.title()}"
+                        + ": "
+                        + f"{outcome['decided']}"
+                        + " decided / "
+                        + f"{outcome['abstained']}"
+                        + _ui_template(" [[text:dashboard.abstained]]</h4>")
+                    )
+                )
+                chart = self._bar_chart(
+                    [
+                        (label_name.replace("_", " "), rate["value"])
+                        for label_name, rate in outcome["rates"].items()
+                        if rate["value"] is not None
+                    ]
+                )
+                parts.append(
+                    chart.replace(
+                        "aria-label='result chart'",
+                        "aria-label='"
+                        + html.escape(judge + " outcomes: " + label, quote=True)
+                        + "'",
+                    )
+                )
+                parts.append(
+                    _ui_template(
+                        "<div class='table-scroll'><table><thead><tr><th>[[text:dashboard.label]]</th><th>[[text:dashboard.count]]</th><th>[[text:dashboard.equal_cluster_rate_and_uncertainty]]</th></tr></thead><tbody>"
+                    )
+                )
                 for label_name, rate in outcome["rates"].items():
-                    parts.append(f"<tr><td>{html.escape(label_name)}</td><td>{outcome['labels'][label_name]}</td><td>{estimate(rate)}</td></tr>")
+                    parts.append(
+                        f"<tr><td>{html.escape(label_name)}</td><td>{outcome['labels'][label_name]}</td><td>{estimate(rate)}</td></tr>"
+                    )
                 parts.append("</tbody></table></div>")
-            parts.append("<p>Same-output label agreement: " + estimate(row["agreement"])
-                         + f"; {row['agreement']['excluded_abstentions']} excluded for abstention.</p></details>")
-        parts.append("<details><summary>Matched model contrasts</summary>")
+            parts.append(
+                _ui_template("<p>[[text:dashboard.same_output_label_agreement]] ")
+                + estimate(row["agreement"])
+                + (
+                    "; "
+                    + f"{row['agreement']['excluded_abstentions']}"
+                    + _ui_template(" [[text:dashboard.excluded_for_abstention]]</p></details>")
+                )
+            )
+        parts.append(
+            _ui_template("<details><summary>[[text:dashboard.matched_model_contrasts]]</summary>")
+        )
         for contrast in window("contrasts"):
-            label = condition_label(contrast["hosted_condition"]) + " versus " + condition_label(contrast["local_condition"])
-            parts.append(f"<h4>{html.escape(label)}</h4><p>{contrast['pairs']} matched links; "
-                         f"{html.escape(contrast['event'])}, hosted minus local.</p>")
+            label = (
+                condition_label(contrast["hosted_condition"])
+                + " versus "
+                + condition_label(contrast["local_condition"])
+            )
+            parts.append(
+                (
+                    "<h4>"
+                    + f"{html.escape(label)}"
+                    + "</h4><p>"
+                    + f"{contrast['pairs']}"
+                    + _ui_text("dashboard.matched_links")
+                    + f"{html.escape(contrast['event'])}"
+                    + _ui_template("[[text:dashboard.hosted_minus_local]]</p>")
+                )
+            )
             for judge in ("cascade", "haiku"):
                 rate = contrast[judge]
-                parts.append(f"<p>{judge.title()}: {estimate(rate)}; {rate['excluded_abstentions']} abstained pairs.</p>")
+                parts.append(
+                    (
+                        "<p>"
+                        + f"{judge.title()}"
+                        + ": "
+                        + f"{estimate(rate)}"
+                        + "; "
+                        + f"{rate['excluded_abstentions']}"
+                        + _ui_template(" [[text:dashboard.abstained_pairs]]</p>")
+                    )
+                )
         parts.append("</details>")
         conditions = window("tokens")
         if detail_section in {"overview", "tokens"}:
-            token_doc = doc if "generation_conditions" not in doc else {
-                **doc, "generation_conditions": {**doc["generation_conditions"], "conditions": conditions},
-            }
+            token_doc = (
+                doc
+                if "generation_conditions" not in doc
+                else {
+                    **doc,
+                    "generation_conditions": {
+                        **doc["generation_conditions"],
+                        "conditions": conditions,
+                    },
+                }
+            )
             parts.append(self._render_generation_conditions(token_doc))
         parts.extend(f"<p class='note'>{html.escape(note)}</p>" for note in doc["limitations"])
         return "".join(parts) + "</div>"
@@ -2019,26 +2355,31 @@ class DashboardMixin:
         rel = str(report.get("path") or "")
         kind = str(report.get("kind") or "")
         if kind not in {"level1", "level2"}:
-            return (
-                "<span class='badge red' title='Only Level-1/Level-2 reports "
-                "belong in this compatibility list'>unsupported kind</span>"
+            return _ui_template(
+                "<span class='badge red' title='[[attr:dashboard.only_level_1_level_2_reports_belong_in_this_compatibility_list]]'>[[text:dashboard.unsupported_kind]]</span>"
             )
         try:
             doc = strict_json_loads((self.results_root / rel).read_text(encoding="utf-8"))
             if not isinstance(doc, dict):
-                raise ValueError("report is not an object")
+                raise ValueError(_ui_text("dashboard.report_is_not_an_object"))
             _validate_report_document(kind, doc)
         except (OSError, TypeError, ValueError) as exc:
             return (
                 "<span class='badge red' title='"
                 + html.escape(str(exc), quote=True)
-                + "'>invalid</span>"
+                + _ui_template("'>[[text:dashboard.invalid]]</span>")
             )
-        return "<span class='badge green'>validated but unlinked</span>"
+        return _ui_template(
+            "<span class='badge green'>[[text:dashboard.validated_but_unlinked]]</span>"
+        )
 
     def _stats_campaign_detail(
-        self, campaign: Mapping[str, Any], *, report_index: int | None = None,
-        detail_section: str = "overview", detail_page: int = 0,
+        self,
+        campaign: Mapping[str, Any],
+        *,
+        report_index: int | None = None,
+        detail_section: str = "overview",
+        detail_page: int = 0,
     ) -> str:
         state_label, state_tone = self._stats_state_badge(str(campaign["state"]))
         job_href = str(campaign.get("job_href") or f"/jobs/{quote(str(campaign['job_id']))}")
@@ -2047,7 +2388,7 @@ class DashboardMixin:
             artifact_link = (
                 " <a href='/artifacts?path="
                 + quote(str(campaign["artifact_relative"]))
-                + "'>Browse exact output artifacts</a>."
+                + _ui_template("'>[[text:dashboard.browse_exact_output_artifacts]]</a>.")
             )
         evidence = campaign["evidence"]
         evidence_tone = "green"
@@ -2066,7 +2407,7 @@ class DashboardMixin:
             "external_analysis",
         }:
             evidence_tone = "amber"
-            evidence_label = "not established"
+            evidence_label = _ui_text("dashboard.not_established")
         available = campaign["reports"]
         rendered: dict[int, str] = {}
 
@@ -2075,53 +2416,85 @@ class DashboardMixin:
                 rendered[index] = self._stats_report_card(
                     available[index],
                     detail_url="/stats/job/" + quote(str(campaign["job_id"])) + f"?report={index}",
-                    detail_section=detail_section, detail_page=detail_page,
+                    detail_section=detail_section,
+                    detail_page=detail_page,
                 )
             return rendered[index]
 
         if report_index is not None:
             selected = [report_index]
         else:
-            selected = [index for index, report in enumerate(available) if report.get("kind") in {
-                "terminal_inventory", "execution_accounting",
-            }]
+            selected = [
+                index
+                for index, report in enumerate(available)
+                if report.get("kind")
+                in {
+                    "terminal_inventory",
+                    "execution_accounting",
+                }
+            ]
             if not selected and available:
                 # A diagrams link must not default to a table-only lifecycle
                 # report when this campaign has a validated outcome chart.
-                selected = [next((index for index in range(len(available))
-                                  if "class='barchart'" in report_card(index)), 0)]
+                selected = [
+                    next(
+                        (
+                            index
+                            for index in range(len(available))
+                            if "class='barchart'" in report_card(index)
+                        ),
+                        0,
+                    )
+                ]
         report_navigation = ""
         if len(available) > 1:
             detail_url = "/stats/job/" + quote(str(campaign["job_id"]))
             links = []
             for index, report in enumerate(available):
-                label = str(report.get("display_name") or report.get("path") or f"Report {index + 1}")
+                label = str(
+                    report.get("display_name")
+                    or report.get("path")
+                    or (_ui_text("dashboard.report") + f"{index + 1}")
+                )
                 current = " aria-current='page'" if index == report_index else ""
                 artifact = str(report.get("path") or "")
                 links.append(
                     f"<li><a data-stats-report href='{detail_url}?report={index}'{current}>"
-                    + html.escape(label) + "</a>"
-                    + (f" <a href='/artifacts?path={quote(artifact)}'>JSON</a>" if artifact else "")
+                    + html.escape(label)
+                    + "</a>"
+                    + (
+                        (
+                            " <a href='/artifacts?path="
+                            + f"{quote(artifact)}"
+                            + _ui_template("'>[[text:dashboard.json]]</a>")
+                        )
+                        if artifact
+                        else ""
+                    )
                     + "</li>"
                 )
             report_navigation = (
-                "<nav class='card' aria-label='Campaign reports'><h3>Reports</h3>"
-                f"<a data-stats-report href='{detail_url}'>Overview</a>"
-                "<p class='note'>Choose a report to view its tables and diagrams.</p><ul>"
-                + "".join(links) + "</ul></nav>"
+                (
+                    _ui_template(
+                        "<nav class='card' aria-label='[[attr:dashboard.campaign_reports]]'><h3>[[text:dashboard.reports]]</h3><a data-stats-report href='"
+                    )
+                    + f"{detail_url}"
+                    + _ui_template(
+                        "'>[[text:dashboard.overview]]</a><p class='note'>[[text:dashboard.choose_a_report_to_view_its_tables_and_diagrams]]</p><ul>"
+                    )
+                )
+                + "".join(links)
+                + "</ul></nav>"
             )
         reports = "".join(report_card(index) for index in selected)
         if not reports:
-            reports = (
-                "<div class='card'><p class='note'>No validated Level-1/Level-2 "
-                "analysis job is bound to this campaign yet. Completion-bound "
-                "usage and result coverage are still shown above.</p></div>"
+            reports = _ui_template(
+                "<div class='card'><p class='note'>[[text:dashboard.no_validated_level_1_level_2_analysis_job_is_bound_to_this_campai]]</p></div>"
             )
         external_analysis_note = (
-            "<div class='notice blue'><strong>Registered external analysis.</strong>"
-            "<p class='note'>The generic operational registration and exact report "
-            "bytes were validated before these diagrams were linked. Registration "
-            "does not grant thesis-evidence authority. Analysis status: <code>"
+            _ui_template(
+                "<div class='notice blue'><strong>[[text:dashboard.registered_external_analysis]]</strong><p class='note'>[[text:dashboard.the_generic_operational_registration_and_exact_report_bytes_were]] <code>"
+            )
             + html.escape(str(campaign.get("analysis_status") or "unknown"))
             + "</code>.</p></div>"
             if campaign.get("_external_analysis_registration") is not None
@@ -2129,8 +2502,9 @@ class DashboardMixin:
         )
         limitations = campaign.get("analysis_limitations") or ()
         limitations_note = (
-            "<div class='notice amber'><strong>Analysis completed with explicit "
-            "limitations.</strong><ul>"
+            _ui_template(
+                "<div class='notice amber'><strong>[[text:dashboard.analysis_completed_with_explicit_limitations]]</strong><ul>"
+            )
             + "".join(
                 "<li><code>"
                 + html.escape(str(name))
@@ -2144,32 +2518,42 @@ class DashboardMixin:
             else ""
         )
         runner_results = self._stats_runner_results_card(campaign)
-        coverage_text = str(
-            campaign.get("coverage_text")
-            or self._stats_coverage_text(evidence)
-        )
+        coverage_text = str(campaign.get("coverage_text") or self._stats_coverage_text(evidence))
         return (
-            "<p class='stats-detail-state'>Campaign status: "
-            f"<span class='badge {state_tone}'>{html.escape(state_label)}</span></p>"
-            f"<div class='notice {evidence_tone}'><strong>Evidence {evidence_label}."
-            "</strong><p class='note'>"
-            f"{html.escape(coverage_text)}. "
-            "Charts below are rendered only from completion-bound Runner "
-            "aggregates or producer-contract-validated reports attached to "
-            f"this job.{artifact_link}</p></div>"
+            (
+                _ui_template(
+                    "<p class='stats-detail-state'>[[text:dashboard.campaign_status]] <span class='badge "
+                )
+                + f"{state_tone}"
+                + "'>"
+                + f"{html.escape(state_label)}"
+                + "</span></p><div class='notice "
+                + f"{evidence_tone}"
+                + _ui_template("'><strong>[[text:dashboard.evidence]] ")
+                + f"{evidence_label}"
+                + ".</strong><p class='note'>"
+                + f"{html.escape(coverage_text)}"
+                + _ui_text(
+                    "dashboard.charts_below_are_rendered_only_from_completion_bound_runner_aggre"
+                )
+                + f"{artifact_link}"
+                + "</p></div>"
+            )
             + external_analysis_note
             + limitations_note
-            + "<div class='card'><h3>Recorded calls, tokens &amp; calculated cost</h3>"
+            + _ui_template(
+                "<div class='card'><h3>[[text:dashboard.recorded_calls_tokens_calculated_cost]]</h3>"
+            )
             + self._stats_usage_table(campaign)
-            + "<p class='note'>Usage is read only from this job's exact output "
-            "root and completion-bound artifacts. It is not mixed with diagnostic, "
-            "synthetic, engineering, or temporary trees.</p></div>"
+            + _ui_template(
+                "<p class='note'>[[text:dashboard.usage_is_read_only_from_this_job_s_exact_output_root_and_completi]]</p></div>"
+            )
             + runner_results
             + report_navigation
             + reports
             + "<p class='stats-modal-links'><a href='"
             + html.escape(job_href, quote=True)
-            + "'>Open full job record</a></p>"
+            + _ui_template("'>[[text:dashboard.open_full_job_record]]</a></p>")
         )
 
     def _stats_campaign_panel(self, page: int) -> str:
@@ -2183,16 +2567,16 @@ class DashboardMixin:
         elif unavailable:
             listing = f"<div class='notice red'>{html.escape(unavailable)}</div>"
         else:
-            listing = (
-                "<div class='card'><p class='note'>No console-owned or explicitly "
-                "registered external campaign jobs are retained yet. Start a preflight, "
-                "diagnostic, or measured lane from Build; it will appear here without "
-                "importing unrelated files.</p></div>"
+            listing = _ui_template(
+                "<div class='card'><p class='note'>[[text:dashboard.no_console_owned_or_explicitly_registered_external_campaign_jobs]]</p></div>"
             )
         try:
             engineering, engineering_note = self._engineering_campaign_scan()
         except (AttributeError, OSError, ValueError):
-            engineering, engineering_note = [], "Engineering campaign scan unavailable."
+            engineering, engineering_note = (
+                [],
+                _ui_text("dashboard.engineering_campaign_scan_unavailable"),
+            )
         engineering_cards = []
         for campaign in engineering:
             label = html.escape(campaign.campaign_id)
@@ -2202,14 +2586,10 @@ class DashboardMixin:
                 self.results_root,
                 campaign.route_id,
             )
-            display_state_label, display_state_tone = self._stats_state_badge(
-                campaign.status_tag
-            )
+            display_state_label, display_state_tone = self._stats_state_badge(campaign.status_tag)
             analysis_state = (
-                "<dt>Analysis</dt><dd>"
-                + html.escape(
-                    self._stats_state_badge(registration.completion_status)[0]
-                )
+                _ui_template("<dt>[[text:dashboard.analysis]]</dt><dd>")
+                + html.escape(self._stats_state_badge(registration.completion_status)[0])
                 + "</dd>"
                 if registration is not None
                 else ""
@@ -2219,88 +2599,105 @@ class DashboardMixin:
                 + route
                 + "' data-stats-job='"
                 + html.escape(campaign.route_id)
-                + "' aria-controls='campaign-stats-modal' aria-haspopup='dialog' "
-                "aria-expanded='false'>Statistics &amp; diagrams</a>"
+                + _ui_template(
+                    "' aria-controls='campaign-stats-modal' aria-haspopup='dialog' aria-expanded='false'>[[text:dashboard.statistics_diagrams]]</a>"
+                )
                 if registration is not None
                 else ""
             )
             engineering_cards.append(
-                "<article class='stats-campaign-card engineering' "
-                "data-authority='engineering'><div class='stats-campaign-head'>"
-                f"<div><h3><a href='/jobs/campaign/{route}'>{label}</a></h3>"
-                "<p class='note'>externally managed engineering campaign</p></div>"
-                f"<span class='badge {display_state_tone}'>"
-                f"{html.escape(display_state_label)}</span>"
-                "</div><dl class='stats-campaign-meta'>"
-                "<dt>Authority</dt><dd>engineering / non-thesis</dd>"
-                f"<dt>Progress</dt><dd>{html.escape(campaign.progress)}</dd>"
+                (
+                    "<article class='stats-campaign-card engineering' data-authority='engineering'><div class='stats-campaign-head'><div><h3><a href='/jobs/campaign/"
+                    + f"{route}"
+                    + "'>"
+                    + f"{label}"
+                    + _ui_template(
+                        "</a></h3><p class='note'>[[text:dashboard.externally_managed_engineering_campaign]]</p></div><span class='badge "
+                    )
+                    + f"{display_state_tone}"
+                    + "'>"
+                    + f"{html.escape(display_state_label)}"
+                    + _ui_template(
+                        "</span></div><dl class='stats-campaign-meta'><dt>[[text:dashboard.authority]]</dt><dd>[[text:dashboard.engineering_non_thesis]]</dd><dt>[[text:dashboard.progress]]</dt><dd>"
+                    )
+                    + f"{html.escape(campaign.progress)}"
+                    + "</dd>"
+                )
                 + analysis_state
                 + (
-                    "<dt>Reported target attempts</dt><dd>"
+                    _ui_template("<dt>[[text:dashboard.reported_target_attempts]]</dt><dd>")
                     if campaign.model_execution_scope == "target_only_mixed_controller"
-                    else "<dt>Reported calls</dt><dd>"
+                    else _ui_template("<dt>[[text:dashboard.reported_calls]]</dt><dd>")
                 )
                 + (
-                    "not applicable - support only"
+                    _ui_text("dashboard.not_applicable_support_only")
                     if campaign.model_tasks == ()
-                    else "not reported"
+                    else _ui_text("dashboard.not_reported")
                     if campaign.model_attempted_calls is None
                     else str(campaign.model_attempted_calls)
                 )
-                + " (operational self-report)</dd></dl>"
-                f"<p><a href='/jobs/campaign/{route}'>Open engineering details</a> "
-                f"<a href='/artifacts?path={artifact_route}'>Browse campaign artifacts</a></p>"
+                + (
+                    _ui_template(
+                        " [[text:dashboard.operational_self_report]]</dd></dl><p><a href='/jobs/campaign/"
+                    )
+                    + f"{route}"
+                    + _ui_template(
+                        "'>[[text:dashboard.open_engineering_details]]</a> <a href='/artifacts?path="
+                    )
+                    + f"{artifact_route}"
+                    + _ui_template("'>[[text:dashboard.browse_campaign_artifacts]]</a></p>")
+                )
                 + analysis_action
                 + "</article>"
             )
         engineering_html = ""
         if page == 1:
             engineering_html = (
-                "<details class='stats-engineering-disclosure'><summary>"
-                f"Engineering campaigns ({len(engineering_cards)}) - non-thesis "
-                "operational records</summary>"
+                (
+                    _ui_template(
+                        "<details class='stats-engineering-disclosure'><summary>[[text:dashboard.engineering_campaigns]]"
+                    )
+                    + f"{len(engineering_cards)}"
+                    + _ui_template("[[text:dashboard.non_thesis_operational_records]]</summary>")
+                )
                 + (
                     f"<div class='notice amber'>{html.escape(engineering_note)}</div>"
                     if engineering_note
                     else ""
                 )
                 + (
-                    "<div class='stats-campaign-list'>"
-                    + "".join(engineering_cards)
-                    + "</div>"
+                    "<div class='stats-campaign-list'>" + "".join(engineering_cards) + "</div>"
                     if engineering_cards
-                    else "<p class='note'>No external engineering campaigns retained.</p>"
+                    else _ui_template(
+                        "<p class='note'>[[text:dashboard.no_external_engineering_campaigns_retained]]</p>"
+                    )
                 )
                 + "</details>"
             )
-        page_links = "<nav class='stats-pagination' aria-label='Campaign pages'>"
+        page_links = _ui_template(
+            "<nav class='stats-pagination' aria-label='[[attr:dashboard.campaign_pages]]'>"
+        )
         if page > 1:
-            page_links += f"<a class='button ghost' href='/stats?view=legacy&amp;page={page - 1}'>Newer</a>"
-        page_links += f"<span>Page {page}</span>"
+            page_links += (
+                "<a class='button ghost' href='/stats?view=legacy&amp;page="
+                + f"{page - 1}"
+                + _ui_template("'>[[text:dashboard.newer]]</a>")
+            )
+        page_links += _ui_template("<span>[[text:dashboard.page]] ") + f"{page}" + "</span>"
         if has_more:
-            page_links += f"<a class='button ghost' href='/stats?view=legacy&amp;page={page + 1}'>Older</a>"
+            page_links += (
+                "<a class='button ghost' href='/stats?view=legacy&amp;page="
+                + f"{page + 1}"
+                + _ui_template("'>[[text:dashboard.older]]</a>")
+            )
         page_links += "</nav>"
-        reusable_modal = (
-            "<section class='stats-modal' id='campaign-stats-modal' data-stats-modal "
-            "role='dialog' aria-modal='false' aria-labelledby='campaign-stats-title' "
-            "tabindex='-1'><div class='stats-modal-shell'>"
-            "<header class='stats-modal-head'><div><p class='wizard-kicker'>"
-            "Campaign details</p><h2 id='campaign-stats-title'>"
-            "<span data-stats-modal-title>Statistics &amp; diagrams</span>"
-            "</h2></div><button type='button' class='ghost small "
-            "stats-modal-close' data-stats-close aria-label='Close campaign "
-            "statistics'>Close</button></header><div class='stats-modal-body' "
-            "data-stats-modal-body aria-live='polite'><p class='note'>Choose a "
-            "campaign to load its validated details.</p></div></div></section>"
+        reusable_modal = _ui_template(
+            "<section class='stats-modal' id='campaign-stats-modal' data-stats-modal role='dialog' aria-modal='false' aria-labelledby='campaign-stats-title' tabindex='-1'><div class='stats-modal-shell'><header class='stats-modal-head'><div><p class='wizard-kicker'>[[text:dashboard.campaign_details]]</p><h2 id='campaign-stats-title'><span data-stats-modal-title>[[text:dashboard.statistics_diagrams]]</span></h2></div><button type='button' class='ghost small stats-modal-close' data-stats-close aria-label='[[attr:dashboard.close_campaign_statistics]]'>[[text:dashboard.close]]</button></header><div class='stats-modal-body' data-stats-modal-body aria-live='polite'><p class='note'>[[text:dashboard.choose_a_campaign_to_load_its_validated_details]]</p></div></div></section>"
         )
         return (
-            "<h2>Model campaign runs</h2>"
-            "<p class='note'>Model campaign attempts appear first. Passed means the "
-            "CLI exited with status 0 for a console run attempt; externally managed "
-            "model-run status comes from its generic terminal record. Only "
-            "completion-bound artifacts establish model execution. "
-            "Thesis-measured, diagnostic, synthetic, engineering, and preflight "
-            "work remain visibly separate.</p>"
+            _ui_template(
+                "<h2>[[text:dashboard.model_campaign_runs]]</h2><p class='note'>[[text:dashboard.model_campaign_attempts_appear_first_passed_means_the_cli_exited]]</p>"
+            )
             + listing
             + page_links
             + engineering_html
@@ -2319,13 +2716,13 @@ class DashboardMixin:
     ) -> bytes | None:
         if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", job_id) is None:
             return None
-        if (detail_section not in {"overview", "outcomes", "contrasts", "tokens"}
-                or re.fullmatch(r"[0-9]{1,6}", detail_page) is None):
+        if (
+            detail_section not in {"overview", "outcomes", "contrasts", "tokens"}
+            or re.fullmatch(r"[0-9]{1,6}", detail_page) is None
+        ):
             return None
         self._reconcile()
-        campaigns, unavailable, _has_more = self._stats_run_campaigns(
-            exact_job_id=job_id
-        )
+        campaigns, unavailable, _has_more = self._stats_run_campaigns(exact_job_id=job_id)
         if not campaigns:
             try:
                 engineering = self._engineering_campaign(job_id)
@@ -2338,9 +2735,7 @@ class DashboardMixin:
             )
             if engineering is None or registration is None:
                 return None
-            campaigns = [
-                self._stats_external_analysis_campaign(engineering, registration)
-            ]
+            campaigns = [self._stats_external_analysis_campaign(engineering, registration)]
             unavailable = ""
         if unavailable:
             return None
@@ -2355,30 +2750,38 @@ class DashboardMixin:
             if report_index >= len(campaign["reports"]):
                 return None
         detail = self._stats_campaign_detail(
-            campaign, report_index=report_index,
-            detail_section=detail_section, detail_page=int(detail_page),
+            campaign,
+            report_index=report_index,
+            detail_section=detail_section,
+            detail_page=int(detail_page),
         )
         if fragment:
             return detail.encode("utf-8")
-        title = f"Campaign statistics: {job_id}"
+        title = _ui_text("dashboard.campaign_statistics") + f"{job_id}"
         return _page(
             title,
-            "<p><a href='/stats'>&larr; Back to campaign statistics</a></p>"
-            f"<h1>{_icon('chart', size=22)}{html.escape(job_id)}</h1>"
+            (
+                _ui_template(
+                    "<p><a href='/stats'>[[text:dashboard.back_to_campaign_statistics]]</a></p><h1>"
+                )
+                + f"{_icon('chart', size=22)}"
+                + f"{html.escape(job_id)}"
+                + "</h1>"
+            )
             + detail,
-            active="Stats",
+            active=_ui_text("dashboard.stats"),
         )
 
     @staticmethod
     def _stats_modal_script() -> str:
-        return """<script>(function(){
+        return _ui_template("""<script>(function(){
 var root=document.documentElement;root.classList.add('stats-modal-ready');
 var modal=document.getElementById('campaign-stats-modal');
 var body=modal&&modal.querySelector('[data-stats-modal-body]');
 var title=modal&&modal.querySelector('[data-stats-modal-title]');
 var active=false,lastFocus=null,requestId=0;
 function focusable(modal){return Array.prototype.slice.call(modal.querySelectorAll(
-'a[href],button:not([disabled]),[tabindex]:not([tabindex="-1"])'))
+'a[href],button:not([disabled]),[tabindex]:not([tabindex=\"-1\"])'))
 .filter(function(node){return !node.hidden;});}
 function close(){if(!active||!modal){return;}modal.classList.remove('is-open');
 modal.setAttribute('aria-modal','false');document.body.classList.remove(
@@ -2390,24 +2793,24 @@ active=true;lastFocus=opener||document.activeElement;modal.classList.add('is-ope
 modal.setAttribute('aria-modal','true');document.body.classList.add(
 'stats-modal-open');var nodes=focusable(modal);(nodes[0]||modal).focus();}
 function load(href){
-var release=window.uraBusy.begin('Loading campaign statistics...');
+var release=window.uraBusy.begin([[js:dashboard.loading_campaign_statistics]]);
 var controller=new AbortController(),timer=setTimeout(function(){controller.abort();},90000);
 var current=++requestId;body.setAttribute('aria-busy','true');
-body.innerHTML="<p class='note'>Loading " +
-"validated campaign statistics...</p>";var separator=href.indexOf('?')>=0?'&':'?';
+body.innerHTML=(\"<p class='note'>\"+[[jshtml:dashboard.loading]]+\" \") +
+([[jshtml:dashboard.validated_campaign_statistics]]+\"</p>\");var separator=href.indexOf('?')>=0?'&':'?';
 fetch(href+separator+'fragment=1',{credentials:'same-origin',signal:controller.signal,headers:{
 'X-Requested-With':'ura-stats-modal'}}).then(function(response){
-if(!response.ok){throw new Error('detail request failed');}return response.text();})
+if(!response.ok){throw new Error([[js:dashboard.detail_request_failed]]);}return response.text();})
 .then(function(markup){if(active&&current===requestId){body.innerHTML=markup;
 body.removeAttribute('aria-busy');}})
 .catch(function(){if(active&&current===requestId){body.innerHTML=
-"<div class='notice red'>Campaign details could not be loaded. <a href='"+
-href+"'>Open the standalone detail page</a>.</div>";
+(\"<div class='notice red'>\"+[[jshtml:dashboard.campaign_details_could_not_be_loaded]]+\" <a href='\")+
+href+(\"'>\"+[[jshtml:dashboard.open_the_standalone_detail_page]]+\"</a>.</div>\");
 body.removeAttribute('aria-busy');}}).finally(function(){clearTimeout(timer);release();});}
 document.querySelectorAll('[data-stats-job]').forEach(function(trigger){
 trigger.addEventListener('click',function(event){event.preventDefault();
 open(trigger);if(title){title.textContent=trigger.getAttribute('data-stats-job')||
-'Campaign statistics';}trigger.setAttribute('aria-expanded','true');load(trigger.href);});});
+[[js:dashboard.campaign_statistics_2]];}trigger.setAttribute('aria-expanded','true');load(trigger.href);});});
 if(body){body.addEventListener('click',function(event){
 var link=event.target.closest('[data-stats-report]');
 if(active&&link&&body.contains(link)){event.preventDefault();load(link.href);}});}
@@ -2421,7 +2824,7 @@ if(event.key!=='Tab'){return;}var nodes=focusable(modal);if(!nodes.length){
 event.preventDefault();modal.focus();return;}var first=nodes[0],last=nodes[nodes.length-1];
 if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}
 else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}});
-})();</script>"""
+})();</script>""")
 
     def _report_index(self) -> list[dict[str, Any]]:
         """Unlinked-compatible Level-1/2 reports, DB index then live scan."""
@@ -2475,33 +2878,36 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
             )
         funnel_chart = self._count_bar_chart(
             [
-                ("selected inputs", int(totals["selected_inputs"])),
-                ("initial target calls", int(totals["initial_target_calls"])),
-                ("answer retries", int(totals["answer_retry_calls"])),
+                (_ui_text("dashboard.selected_inputs"), int(totals["selected_inputs"])),
+                (_ui_text("dashboard.initial_target_calls"), int(totals["initial_target_calls"])),
+                (_ui_text("dashboard.answer_retries"), int(totals["answer_retry_calls"])),
                 (
-                    "successful outputs",
+                    _ui_text("dashboard.successful_outputs"),
                     int(totals["successful_output_generations"]),
                 ),
-                ("missing outputs", int(totals["retained_missing_outputs"])),
+                (_ui_text("dashboard.missing_outputs"), int(totals["retained_missing_outputs"])),
             ],
-            label="Local campaign input, call and output funnel",
+            label=_ui_text("dashboard.local_campaign_input_call_and_output_funnel"),
         )
         provider_chart = self._count_bar_chart(
             sorted(provider_calls.items()),
-            label="Initial target calls by local serving provider",
+            label=_ui_text("dashboard.initial_target_calls_by_local_serving_provider"),
         )
         judge_chart = self._count_bar_chart(
             [
-                ("common local judgments", int(totals["common_local_judgments"])),
-                ("rules decisions", int(totals["local_rules_decisions"])),
-                ("guardrail calls", int(totals["local_guardrail_calls"])),
                 (
-                    "source-authoritative decisions",
+                    _ui_text("dashboard.common_local_judgments"),
+                    int(totals["common_local_judgments"]),
+                ),
+                (_ui_text("dashboard.rules_decisions"), int(totals["local_rules_decisions"])),
+                (_ui_text("dashboard.guardrail_calls"), int(totals["local_guardrail_calls"])),
+                (
+                    _ui_text("dashboard.source_authoritative_decisions"),
                     int(totals["source_authoritative_decisions"]),
                 ),
-                ("Haiku calls", int(totals["haiku_judge_calls"])),
+                (_ui_text("dashboard.haiku_calls"), int(totals["haiku_judge_calls"])),
             ],
-            label="Local and hosted judge-path accounting",
+            label=_ui_text("dashboard.local_and_hosted_judge_path_accounting"),
         )
         table_rows = []
         for row in rows:
@@ -2533,38 +2939,42 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
         if artifact_relative is None:
             artifact_relative = rel
         artifact_note = (
-            f"<p class='note'><a href='/artifacts?path={quote(artifact_relative)}'>"
-            "open the full validated execution accounting &rarr;</a></p>"
+            (
+                "<p class='note'><a href='/artifacts?path="
+                + f"{quote(artifact_relative)}"
+                + _ui_template(
+                    "'>[[text:dashboard.open_the_full_validated_execution_accounting]]</a></p>"
+                )
+            )
             if artifact_relative
             else ""
         )
         return (
             "<div class='card'><h2>"
             + _icon("chart")
-            + "Campaign execution accounting "
-            "<span class='badge blue'>validated local evidence</span></h2>"
-            "<p class='note'>The planned population contains "
-            f"<strong>{int(plan['intended_target_calls_before_optional_defense']):,}"
-            "</strong> target calls before optional defense work: "
-            f"{int(plan['source_authoritative_rows']):,} source-authoritative and "
-            f"{int(plan['common_judge_eligible_rows']):,} common-judge-eligible. "
-            "The table below reports observed success-view strata separately. "
-            "Retries never inflate selected inputs, multiple judge stages never "
-            "inflate target calls, and revision/output-policy strata are not pooled."
-            "</p><h3>Input to output funnel</h3>"
+            + (
+                _ui_template(
+                    "[[text:dashboard.campaign_execution_accounting]] <span class='badge blue'>[[text:dashboard.validated_local_evidence]]</span></h2><p class='note'>[[text:dashboard.the_planned_population_contains]] <strong>"
+                )
+                + f"{int(plan['intended_target_calls_before_optional_defense']):,}"
+                + _ui_template(
+                    "</strong> [[text:dashboard.target_calls_before_optional_defense_work]] "
+                )
+                + f"{int(plan['source_authoritative_rows']):,}"
+                + _ui_text("dashboard.source_authoritative_and")
+                + f"{int(plan['common_judge_eligible_rows']):,}"
+                + _ui_template(
+                    " [[text:dashboard.common_judge_eligible_the_table_below_reports_observed_success_vi]]</p><h3>[[text:dashboard.input_to_output_funnel]]</h3>"
+                )
+            )
             + funnel_chart
-            + "<h3>Calls by local provider</h3>"
+            + _ui_template("<h3>[[text:dashboard.calls_by_local_provider]]</h3>")
             + provider_chart
-            + "<h3>Judge coverage</h3>"
+            + _ui_template("<h3>[[text:dashboard.judge_coverage]]</h3>")
             + judge_chart
-            + "<div class='scroll'><table><tr><th>Local provider / exact model</th>"
-            "<th>Framework</th><th>Corpus / logical arm</th>"
-            "<th>Modality / risk / behavior</th><th>Seed</th>"
-            "<th>Revision / output policy</th><th>Selected inputs</th>"
-            "<th>Initial calls</th><th>Retries</th><th>Successful outputs</th>"
-            "<th>Missing outputs</th><th>Rules decisions</th>"
-            "<th>Guardrail calls</th><th>Source-authoritative decisions</th>"
-            "<th>Common local judgments</th><th>Haiku calls</th></tr>"
+            + _ui_template(
+                "<div class='scroll'><table><tr><th>[[text:dashboard.local_provider_exact_model]]</th><th>[[text:dashboard.framework]]</th><th>[[text:dashboard.corpus_logical_arm]]</th><th>[[text:dashboard.modality_risk_behavior]]</th><th>[[text:dashboard.seed]]</th><th>[[text:dashboard.revision_output_policy]]</th><th>[[text:dashboard.selected_inputs_2]]</th><th>[[text:dashboard.initial_calls]]</th><th>[[text:dashboard.retries]]</th><th>[[text:dashboard.successful_outputs_2]]</th><th>[[text:dashboard.missing_outputs_2]]</th><th>[[text:dashboard.rules_decisions_2]]</th><th>[[text:dashboard.guardrail_calls_2]]</th><th>[[text:dashboard.source_authoritative_decisions_2]]</th><th>[[text:dashboard.common_local_judgments_2]]</th><th>[[text:dashboard.haiku_calls]]</th></tr>"
+            )
             + "".join(table_rows)
             + "</table></div>"
             + artifact_note
@@ -2596,21 +3006,18 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
                 (str(cohort).replace("_", " "), int(cohort_counts[cohort]))
                 for cohort in cohort_order
             ],
-            label="Campaign terminal rows by cohort",
+            label=_ui_text("dashboard.campaign_terminal_rows_by_cohort"),
         )
         state_chart = self._count_bar_chart(
-            [
-                (state.replace("_", " "), count)
-                for state, count in sorted(state_counts.items())
-            ],
-            label="Campaign terminal rows by terminal state",
+            [(state.replace("_", " "), count) for state, count in sorted(state_counts.items())],
+            label=_ui_text("dashboard.campaign_terminal_rows_by_terminal_state"),
         )
         failure_chart = self._count_bar_chart(
             [
-                ("failure rows", len(failure_rows)),
-                ("other terminal rows", len(rows) - len(failure_rows)),
+                (_ui_text("dashboard.failure_rows_2"), len(failure_rows)),
+                (_ui_text("dashboard.other_terminal_rows"), len(rows) - len(failure_rows)),
             ],
-            label="Campaign failure-row accounting",
+            label=_ui_text("dashboard.campaign_failure_row_accounting"),
         )
 
         def stratum_table(title: str, field: str) -> str:
@@ -2624,52 +3031,75 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
                 for identity, keys in strata.items()
             )
             return (
-                f"<h3>{html.escape(title)}</h3><div class='scroll'><table>"
-                "<tr><th>Exact identity</th><th>Terminal rows</th></tr>"
+                (
+                    "<h3>"
+                    + f"{html.escape(title)}"
+                    + _ui_template(
+                        "</h3><div class='scroll'><table><tr><th>[[text:dashboard.exact_identity]]</th><th>[[text:dashboard.terminal_rows]]</th></tr>"
+                    )
+                )
                 + body
                 + "</table></div>"
             )
 
         failure_detail = (
-            "<h3>Failure rows</h3><div class='scroll'><table>"
-            "<tr><th>Namespaced row key</th></tr>"
+            _ui_template(
+                "<h3>[[text:dashboard.failure_rows_3]]</h3><div class='scroll'><table><tr><th>[[text:dashboard.namespaced_row_key]]</th></tr>"
+            )
             + "".join(
-                f"<tr><td><code>{html.escape(str(key))}</code></td></tr>"
-                for key in failure_rows
+                f"<tr><td><code>{html.escape(str(key))}</code></td></tr>" for key in failure_rows
             )
             + "</table></div>"
             if failure_rows
-            else "<h3>Failure rows</h3><p class='note'>None recorded.</p>"
+            else _ui_template(
+                "<h3>[[text:dashboard.failure_rows_3]]</h3><p class='note'>[[text:dashboard.none_recorded]]</p>"
+            )
         )
         if artifact_relative is None:
             artifact_relative = rel
         artifact_note = (
-            f"<p class='note'><a href='/artifacts?path={quote(artifact_relative)}'>open "
-            "the full validated terminal inventory &rarr;</a></p>"
+            (
+                "<p class='note'><a href='/artifacts?path="
+                + f"{quote(artifact_relative)}"
+                + _ui_template(
+                    "'>[[text:dashboard.open_the_full_validated_terminal_inventory]]</a></p>"
+                )
+            )
             if artifact_relative
             else ""
         )
         return (
             "<div class='card'><h2>"
             + _icon("chart")
-            + "Campaign terminal rows <span class='badge blue'>validated inventory</span>"
-            + "</h2><p class='note'>Terminal lifecycle rows are not relabelled as "
-            "Runner cells. The report records cross-revision pooling as "
-            f"<strong>{'permitted' if revision_pooling else 'not permitted'}</strong> "
-            "and cross-source pooling as "
-            f"<strong>{'permitted' if source_pooling else 'not permitted'}</strong>. "
-            "The inventory contains "
-            f"<strong>{len(rows):,}</strong> terminal rows across "
-            f"<strong>{len(cohort_order):,}</strong> cohorts.</p>"
-            + "<h3>Rows by cohort</h3>"
+            + _ui_template(
+                "[[text:dashboard.campaign_terminal_rows]] <span class='badge blue'>[[text:dashboard.validated_inventory]]</span>"
+            )
+            + (
+                _ui_template(
+                    "</h2><p class='note'>[[text:dashboard.terminal_lifecycle_rows_are_not_relabelled_as_runner_cells_the_re]] <strong>"
+                )
+                + f"{('permitted' if revision_pooling else _ui_text('dashboard.not_permitted'))}"
+                + _ui_template("</strong> [[text:dashboard.and_cross_source_pooling_as]] <strong>")
+                + f"{('permitted' if source_pooling else _ui_text('dashboard.not_permitted'))}"
+                + _ui_template("</strong>[[text:dashboard.the_inventory_contains]] <strong>")
+                + f"{len(rows):,}"
+                + _ui_template("</strong> [[text:dashboard.terminal_rows_across]] <strong>")
+                + f"{len(cohort_order):,}"
+                + "</strong> cohorts.</p>"
+            )
+            + _ui_template("<h3>[[text:dashboard.rows_by_cohort]]</h3>")
             + cohort_chart
-            + "<h3>Rows by terminal state</h3>"
+            + _ui_template("<h3>[[text:dashboard.rows_by_terminal_state]]</h3>")
             + state_chart
-            + "<h3>Failure accounting</h3>"
+            + _ui_template("<h3>[[text:dashboard.failure_accounting]]</h3>")
             + failure_chart
             + failure_detail
-            + stratum_table("Project-revision strata", "project_revision_strata")
-            + stratum_table("Source-conformance strata", "source_conformance_strata")
+            + stratum_table(
+                _ui_text("dashboard.project_revision_strata"), "project_revision_strata"
+            )
+            + stratum_table(
+                _ui_text("dashboard.source_conformance_strata"), "source_conformance_strata"
+            )
             + artifact_note
             + "</div>"
         )
@@ -2677,34 +3107,56 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
     def _render_generation_conditions(self, doc: Mapping[str, Any]) -> str:
         report = doc.get("generation_conditions")
         if not isinstance(report, Mapping):
-            return "<p class='note'>Token windows and truncation: not recorded in this older report.</p>"
-        sections = ["<section data-section='generation-conditions'><h3>Token windows and completion</h3>"
-                    "<p class='note'>Context capacity, output allowance and reported usage are separate. "
-                    "Truncated usable text remains analysable; missing output is a separate count. "
-                    "Transport failures are infrastructure observations, not evidence of model quality. "
-                    "Retry pending means an unresolved transport attempt, not an active worker or an extra answer retry. "
-                    "Stop reasons are provider-reported, never inferred from token totals. "
-                    "Each row below retains its own run, model, arm and token condition.</p>"]
+            return _ui_template(
+                "<p class='note'>[[text:dashboard.token_windows_and_truncation_not_recorded_in_this_older_report]]</p>"
+            )
+        sections = [
+            _ui_template(
+                "<section data-section='generation-conditions'><h3>[[text:dashboard.token_windows_and_completion]]</h3><p class='note'>[[text:dashboard.context_capacity_output_allowance_and_reported_usage_are_separate]]</p>"
+            )
+        ]
 
         def shown(value: Any) -> str:
-            return "not recorded" if value is None else "runtime maximum" if value == -1 else html.escape(str(value))
+            return (
+                _ui_text("dashboard.not_recorded")
+                if value is None
+                else _ui_text("dashboard.runtime_maximum")
+                if value == -1
+                else html.escape(str(value))
+            )
 
         def usage(value: Mapping[str, Any], rows: int) -> str:
             n = value["reported_rows"]
             if not n:
-                return f"not recorded (0/{rows} rows)"
-            return (f"{value['sum']:,} total; {value['minimum']:,}-{value['maximum']:,} per row; "
-                    f"reported {n}/{rows}")
+                return _ui_text("dashboard.not_recorded_0") + f"{rows}" + " rows)"
+            return (
+                f"{value['sum']:,}"
+                + " total; "
+                + f"{value['minimum']:,}"
+                + "-"
+                + f"{value['maximum']:,}"
+                + _ui_text("dashboard.per_row_reported")
+                + f"{n}"
+                + "/"
+                + f"{rows}"
+            )
 
         for row in report["conditions"]:
-            label = " / ".join(str(row[k]) for k in ("model_spec", "corpus_arm", "attacker", "modality"))
+            label = " / ".join(
+                str(row[k]) for k in ("model_spec", "corpus_arm", "attacker", "modality")
+            )
             label += f" / context {shown(row['context_tokens'])}, output {shown(row['output_allowance'])}"
             sections.append(
-                "<details class='card'><summary>" + html.escape(label) + f" - {row['rows']} responses</summary>"
-                + "<div class='scroll'><table><thead><tr><th>Run</th><th>Context tokens</th>"
-                "<th>Output allowance</th><th>Reported input tokens</th><th>Reported output tokens</th>"
-                "<th>Missing output</th><th>Input context errors</th>"
-                "<th>Transport failures</th><th>Transport retry pending</th></tr></thead><tbody><tr>"
+                "<details class='card'><summary>"
+                + html.escape(label)
+                + (
+                    " - "
+                    + f"{row['rows']}"
+                    + _ui_template(" [[text:dashboard.responses]]</summary>")
+                )
+                + _ui_template(
+                    "<div class='scroll'><table><thead><tr><th>[[text:dashboard.run]]</th><th>[[text:dashboard.context_tokens]]</th><th>[[text:dashboard.output_allowance]]</th><th>[[text:dashboard.reported_input_tokens]]</th><th>[[text:dashboard.reported_output_tokens]]</th><th>[[text:dashboard.missing_output]]</th><th>[[text:dashboard.input_context_errors]]</th><th>[[text:dashboard.transport_failures]]</th><th>[[text:dashboard.transport_retry_pending]]</th></tr></thead><tbody><tr>"
+                )
                 + f"<td>{html.escape(row['run_id'])}</td>"
                 + f"<td>{shown(row['context_tokens'])} ({html.escape(row['context_source'])}; "
                 + f"policy {shown(row['context_policy'])})</td>"
@@ -2715,11 +3167,19 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
                 + f"<td>{row['input_context_error']}/{row['rows']}</td>"
                 + f"<td>{shown(row.get('transport_failure'))}</td>"
                 + f"<td>{shown(row.get('transport_retry_pending'))}</td></tr></tbody></table></div>"
-                + "<h4 data-chart='generation-completion'>Provider completion reasons</h4>"
-                + self._count_bar_chart([
-                    ("Normal stop", row["normal_stop"]), ("Truncated", row["truncated"]),
-                    ("Other stop", row["other_stop"]), ("Not recorded", row["unknown_stop"]),
-                ], label="Generation completion counts") + "</details>"
+                + _ui_template(
+                    "<h4 data-chart='generation-completion'>[[text:dashboard.provider_completion_reasons]]</h4>"
+                )
+                + self._count_bar_chart(
+                    [
+                        (_ui_text("dashboard.normal_stop"), row["normal_stop"]),
+                        (_ui_text("dashboard.truncated"), row["truncated"]),
+                        (_ui_text("dashboard.other_stop"), row["other_stop"]),
+                        (_ui_text("dashboard.not_recorded_2"), row["unknown_stop"]),
+                    ],
+                    label=_ui_text("dashboard.generation_completion_counts"),
+                )
+                + "</details>"
             )
         return "".join(sections) + "</section>"
 
@@ -2740,18 +3200,25 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
             if artifact_relative is None:
                 artifact_relative = rel
             artifact_note = (
-                f"<p class='note'><a href='/artifacts?path={quote(artifact_relative)}'>open "
-                "the full validated artifact &rarr;</a></p>"
+                (
+                    "<p class='note'><a href='/artifacts?path="
+                    + f"{quote(artifact_relative)}"
+                    + _ui_template("'>[[text:dashboard.open_the_full_validated_artifact]]</a></p>")
+                )
                 if artifact_relative
-                else "<p class='note'>This report is retained outside the configured "
-                "artifact root, so no artifact-browser link is offered.</p>"
+                else _ui_template(
+                    "<p class='note'>[[text:dashboard.this_report_is_retained_outside_the_configured_artifact_root_so_n]]</p>"
+                )
             )
             return (
                 "<div class='card'><h2>"
                 + _icon("chart")
-                + f"{html.escape(rel)}</h2><p class='note'>Validated Level-2 "
-                "report with no common estimate rows (native-only or empty)."
-                "</p>"
+                + (
+                    f"{html.escape(rel)}"
+                    + _ui_template(
+                        "</h2><p class='note'>[[text:dashboard.validated_level_2_report_with_no_common_estimate_rows_native_only]]</p>"
+                    )
+                )
                 + artifact_note
                 + self._render_generation_conditions(doc)
                 + "</div>"
@@ -2818,14 +3285,17 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
                 chart = self._bar_chart(bars)
                 if len(rows) > self._LEVEL2_CHART_CAP:
                     chart += (
-                        f"<p class='note'>Chart shows {self._LEVEL2_CHART_CAP} "
-                        f"of {len(rows)} rows; all {len(rows)} are in the table "
-                        "below.</p>"
+                        _ui_template("<p class='note'>[[text:dashboard.chart_shows]] ")
+                        + f"{self._LEVEL2_CHART_CAP}"
+                        + " of "
+                        + f"{len(rows)}"
+                        + " rows; all "
+                        + f"{len(rows)}"
+                        + _ui_template(" [[text:dashboard.are_in_the_table_below]]</p>")
                     )
             else:
-                chart = (
-                    "<p class='note'>Not charted: values are not rates in "
-                    "[0, 1]; the table below is the presentation.</p>"
+                chart = _ui_template(
+                    "<p class='note'>[[text:dashboard.not_charted_values_are_not_rates_in_0_1_the_table_below_is_the_pr]]</p>"
                 )
             stability_bars = []
             for row in rows[: self._LEVEL2_CHART_CAP]:
@@ -2839,20 +3309,24 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
                     and not isinstance(missing, bool)
                     and 0 <= missing <= completed
                 ):
-                    stability_bars.append((
-                        f"{row.get('model_spec', '?')} / {row.get('corpus_arm', '?')}",
-                        missing / completed,
-                    ))
+                    stability_bars.append(
+                        (
+                            f"{row.get('model_spec', '?')} / {row.get('corpus_arm', '?')}",
+                            missing / completed,
+                        )
+                    )
             stability_chart = (
-                "<h4 data-chart='model-stability-failed-output'>"
-                "Response availability - failed-output rate</h4>"
+                _ui_template(
+                    "<h4 data-chart='model-stability-failed-output'>[[text:dashboard.response_availability_failed_output_rate]]</h4>"
+                )
                 + self._bar_chart(stability_bars)
-                + "<p class='note'>Missing responses include model-output and infrastructure failures. "
-                "This all-cause coverage rate is not an intrinsic model-stability estimate. "
-                "Missing responses are retained in coverage and excluded from security-rate denominators.</p>"
+                + _ui_template(
+                    "<p class='note'>[[text:dashboard.missing_responses_include_model_output_and_infrastructure_failure]]</p>"
+                )
                 if stability_bars
-                else "<h4>Response availability</h4><p class='note'>N/A: this older "
-                "report does not carry completed and missing-response counts.</p>"
+                else _ui_template(
+                    "<h4>[[text:dashboard.response_availability]]</h4><p class='note'>[[text:dashboard.n_a_this_older_report_does_not_carry_completed_and_missing_respon]]</p>"
+                )
             )
             table_rows = []
             for row in rows:  # every bounded row, never truncated
@@ -2860,7 +3334,7 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
                 ci = (
                     f"[{ci_low:.3f}, {ci_high:.3f}]"
                     if isinstance(ci_low, (int, float)) and isinstance(ci_high, (int, float))
-                    else "N/A (no CI recorded)"
+                    else _ui_text("dashboard.n_a_no_ci_recorded")
                 )
                 completed = row.get("judgments_completed")
                 decided = row.get("judgments_decided")
@@ -2874,7 +3348,7 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
                     f"{missing_responses:,}"
                     if isinstance(missing_responses, int)
                     and not isinstance(missing_responses, bool)
-                    else "N/A (older report)"
+                    else _ui_text("dashboard.n_a_older_report")
                 )
                 n_clusters = row.get("n_clusters")
                 value = row.get("value")
@@ -2885,14 +3359,13 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
                 )
                 if row.get("metric_authority") == "supplementary_non_authoritative":
                     synthetic = row.get("evidence_class") == "synthetic"
-                    evidence = (
-                        "⚠ synthetic + approximate"
-                        if synthetic
-                        else "⚠ approximate"
-                    )
+                    evidence = "⚠ synthetic + approximate" if synthetic else "⚠ approximate"
                     reliability = row.get("reliability_score")
                     reliability_text = (
-                        f"{float(reliability):.4f} heuristic (not probability)"
+                        (
+                            f"{float(reliability):.4f}"
+                            + _ui_text("dashboard.heuristic_not_probability")
+                        )
                         if isinstance(reliability, (int, float))
                         and not isinstance(reliability, bool)
                         else "invalid/missing"
@@ -2901,13 +3374,10 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
                     evidence = "authoritative/source-native"
                     reliability_text = "N/A"
                 query_count = row.get("approximate_model_query_count")
-                reference_count = row.get(
-                    "approximate_source_reference_use_count"
-                )
+                reference_count = row.get("approximate_source_reference_use_count")
                 proxy_support = (
                     f"{query_count}/{reference_count}"
-                    if isinstance(query_count, int)
-                    and isinstance(reference_count, int)
+                    if isinstance(query_count, int) and isinstance(reference_count, int)
                     else "N/A"
                 )
                 table_rows.append(
@@ -2931,59 +3401,70 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
             if rows[0].get("metric_authority") == "supplementary_non_authoritative":
                 synthetic = rows[0].get("evidence_class") == "synthetic"
                 authority_badge = (
-                    " <span class='badge red'>⚠ synthetic + approximate</span>"
+                    _ui_template(
+                        " <span class='badge red'>[[text:dashboard.synthetic_approximate]]</span>"
+                    )
                     if synthetic
-                    else " <span class='badge amber'>⚠ approximate</span>"
+                    else _ui_template(
+                        " <span class='badge amber'>[[text:dashboard.approximate]]</span>"
+                    )
                 )
-                authority_note = (
-                    "<p class='note'>Supplementary, non-authoritative response "
-                    "proxy. Reliability is an uncalibrated heuristic, not a "
-                    "probability or accuracy estimate.</p>"
+                authority_note = _ui_template(
+                    "<p class='note'>[[text:dashboard.supplementary_non_authoritative_response_proxy_reliability_is_an]]</p>"
                 )
             sections.append(
-                f"<h3>{html.escape(str(fields['metric']))}{authority_badge} "
-                f"<span class='fieldhint'>({len(rows)} row(s))</span><br>"
+                (
+                    "<h3>"
+                    + f"{html.escape(str(fields['metric']))}"
+                    + f"{authority_badge}"
+                    + " <span class='fieldhint'>("
+                    + f"{len(rows)}"
+                    + _ui_template(" [[text:dashboard.row_s]]</span><br>")
+                )
                 + label_bits
                 + "</h3>"
                 + authority_note
                 + chart
                 + stability_chart
-                + "<div class='scroll'><table><tr><th>model_spec</th>"
-                "<th>corpus_arm</th><th>attacker</th><th>defense</th>"
-                "<th>value</th><th>ci_low, ci_high</th><th>n_records</th>"
-                "<th>n_clusters</th><th>decided/completed</th>"
-                "<th>failed/missing responses (all causes)</th>"
-                "<th>model queries/reference uses</th><th>evidence</th>"
-                "<th>reliability</th></tr>"
+                + _ui_template(
+                    "<div class='scroll'><table><tr><th>model_spec</th><th>corpus_arm</th><th>[[text:dashboard.attacker_2]]</th><th>[[text:dashboard.defense]]</th><th>[[text:dashboard.value_2]]</th><th>[[text:dashboard.ci_low_ci_high]]</th><th>n_records</th><th>n_clusters</th><th>decided/completed</th><th>[[text:dashboard.failed_missing_responses_all_causes]]</th><th>[[text:dashboard.model_queries_reference_uses]]</th><th>[[text:dashboard.evidence_2]]</th><th>[[text:dashboard.reliability]]</th></tr>"
+                )
                 + "".join(table_rows)
                 + "</table></div>"
             )
         if artifact_relative is None:
             artifact_relative = rel
         artifact_note = (
-            f"<p class='note'><a href='/artifacts?path={quote(artifact_relative)}'>open "
-            "the full validated artifact &rarr;</a></p>"
+            (
+                "<p class='note'><a href='/artifacts?path="
+                + f"{quote(artifact_relative)}"
+                + _ui_template("'>[[text:dashboard.open_the_full_validated_artifact]]</a></p>")
+            )
             if artifact_relative
-            else "<p class='note'>This report is retained outside the configured "
-            "artifact root, so no artifact-browser link is offered.</p>"
+            else _ui_template(
+                "<p class='note'>[[text:dashboard.this_report_is_retained_outside_the_configured_artifact_root_so_n]]</p>"
+            )
         )
         return (
             "<div class='card'><h2>"
             + _icon("chart")
-            + f"{html.escape(rel)} <span class='badge blue'>measured artifact</span>"
             + (
-                " <span class='badge amber'>contains supplementary proxies</span>"
+                f"{html.escape(rel)}"
+                + _ui_template(
+                    " <span class='badge blue'>[[text:dashboard.measured_artifact]]</span>"
+                )
+            )
+            + (
+                _ui_template(
+                    " <span class='badge amber'>[[text:dashboard.contains_supplementary_proxies]]</span>"
+                )
                 if contains_approximate
                 else ""
             )
             + "</h2>"
-            + "<p class='note'>Deterministic Level-2 export "
-            "(<code>common.estimates</code>). One chart per COMPATIBLE metric "
-            "stratum (exact run/served target/source/policy/modality/population/"
-            "attacker/defense/judge/sampling condition); distinct targets or "
-            "runs are not presented as a ranking, and no universal safety "
-            "score exists. Diagnostic evidence cannot reach this report by "
-            "construction.</p>"
+            + _ui_template(
+                "<p class='note'>[[text:dashboard.deterministic_level_2_export]]<code>common.estimates</code>). One chart per COMPATIBLE metric stratum (exact run/served target/source/policy/modality/population/attacker/defense/judge/sampling condition); distinct targets or runs are not presented as a ranking, and no universal safety score exists. Diagnostic evidence cannot reach this report by construction.</p>"
+            )
             + self._render_generation_conditions(doc)
             + "".join(sections)
             + artifact_note
@@ -3007,31 +3488,41 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
         # Diagnostic stays diagnostic; a missing, malformed, or unknown kind is
         # unknown/invalid - never silently promoted to measured.
         if kind == "measured_run":
-            badge = "<span class='badge blue'>measured</span>"
+            badge = _ui_template("<span class='badge blue'>[[text:dashboard.measured]]</span>")
         elif kind == "diagnostic_dry_run":
-            badge = "<span class='badge amber'>diagnostic dry-run</span>"
+            badge = _ui_template(
+                "<span class='badge amber'>[[text:dashboard.diagnostic_dry_run]]</span>"
+            )
         else:
             badge = (
-                "<span class='badge gray'>unknown/invalid evidence kind"
-                f" ({html.escape(kind)})</span>"
+                _ui_template(
+                    "<span class='badge gray'>[[text:dashboard.unknown_invalid_evidence_kind]]"
+                )
+                + f"{html.escape(kind)}"
+                + ")</span>"
             )
         tables = []
         for title, key in (
-            ("Prospective request units", "prospective_request_units"),
-            ("Planning strata", "planning_strata"),
-            ("Execution units", "execution_units"),
-            ("Judgment records", "judgment_records"),
+            (_ui_text("dashboard.prospective_request_units"), "prospective_request_units"),
+            (_ui_text("dashboard.planning_strata"), "planning_strata"),
+            (_ui_text("dashboard.execution_units"), "execution_units"),
+            (_ui_text("dashboard.judgment_records"), "judgment_records"),
             (
-                "Supplementary approximate proxy judgment records",
+                _ui_text("dashboard.supplementary_approximate_proxy_judgment_records"),
                 "approximate_proxy_judgment_records",
             ),
-            ("Request-level errors", "request_level_errors"),
+            (_ui_text("dashboard.request_level_errors"), "request_level_errors"),
         ):
             block = counts.get(key)
             if not isinstance(block, Mapping):
                 tables.append(
-                    f"<h3>{html.escape(title)}</h3><p class='note'>"
-                    "N/A - not supplied in this artifact.</p>"
+                    (
+                        "<h3>"
+                        + f"{html.escape(title)}"
+                        + _ui_template(
+                            "</h3><p class='note'>[[text:dashboard.n_a_not_supplied_in_this_artifact]]</p>"
+                        )
+                    )
                 )
                 continue
             cells = "".join(
@@ -3039,7 +3530,7 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
                 + html.escape(str(name).replace("_", " "))
                 + "</td><td>"
                 + (
-                    "null (by design)"
+                    _ui_text("dashboard.null_by_design")
                     if value is None
                     else f"{value:,}"
                     if isinstance(value, int) and not isinstance(value, bool)
@@ -3058,18 +3549,27 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
         if artifact_relative is None:
             artifact_relative = rel
         artifact_note = (
-            f"<p class='note'><a href='/artifacts?path={quote(artifact_relative)}'>open "
-            "the full validated artifact &rarr;</a></p>"
+            (
+                "<p class='note'><a href='/artifacts?path="
+                + f"{quote(artifact_relative)}"
+                + _ui_template("'>[[text:dashboard.open_the_full_validated_artifact]]</a></p>")
+            )
             if artifact_relative
-            else "<p class='note'>This report is retained outside the configured "
-            "artifact root, so no artifact-browser link is offered.</p>"
+            else _ui_template(
+                "<p class='note'>[[text:dashboard.this_report_is_retained_outside_the_configured_artifact_root_so_n]]</p>"
+            )
         )
         return (
-            "<div class='card'><h2>" + _icon("file") + f"{html.escape(rel)} {badge}</h2>"
-            "<p class='note'>Level-1 lifecycle inventory. Request units, "
-            "planning strata, execution units, and judgment records are "
-            "separate unit ledgers and are never summed into each other; "
-            "structural N/A, missing, and error are distinct states.</p>"
+            "<div class='card'><h2>"
+            + _icon("file")
+            + (
+                f"{html.escape(rel)}"
+                + " "
+                + f"{badge}"
+                + _ui_template(
+                    "</h2><p class='note'>[[text:dashboard.level_1_lifecycle_inventory_request_units_planning_strata_executi]]</p>"
+                )
+            )
             + "".join(tables)
             + artifact_note
             + "</div>"
@@ -3106,59 +3606,64 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
                 f"{self._stats_report_index_badge(report)}</li>"
             )
         results = (
-            "<div class='card'><h2>" + _icon("file") + "Unlinked report artifacts</h2>"
-            f"<ul>{''.join(listed)}</ul></div>"
+            "<div class='card'><h2>"
+            + _icon("file")
+            + (
+                _ui_template("[[text:dashboard.unlinked_report_artifacts]]</h2><ul>")
+                + f"{''.join(listed)}"
+                + "</ul></div>"
+            )
             if listed
-            else "<div class='card'><p class='note'>No Level-1/Level-2 report "
-            "artifacts remain unlinked. Analysis jobs attached to a campaign "
-            "appear only in that campaign's Statistics &amp; diagrams modal.</p></div>"
+            else _ui_template(
+                "<div class='card'><p class='note'>[[text:dashboard.no_level_1_level_2_report_artifacts_remain_unlinked_analysis_jobs]]</p></div>"
+            )
         )
         unlinked_panel = (
-            "<div class='notice amber'><strong>Unlinked analysis artifacts are "
-            "not campaign evidence.</strong><p class='note'>This compatibility "
-            "view contains only report schemas outside explicit analysis-job "
-            "bindings. It never contributes to a thesis aggregate. Engineering "
-            "and temporary subtrees are excluded. Full tables are not expanded "
-            "here; bind an analysis Job to a campaign to render its diagrams in "
-            "that job's detail view.</p></div>"
+            _ui_template(
+                "<div class='notice amber'><strong>[[text:dashboard.unlinked_analysis_artifacts_are_not_campaign_evidence]]</strong><p class='note'>[[text:dashboard.this_compatibility_view_contains_only_report_schemas_outside_expl]]</p></div>"
+            )
             + results
         )
         stats_tabs = (
-            ("stats-campaigns", "Executions"),
-            ("stats-operational", "Operational cost"),
-            ("stats-unlinked", "Unlinked reports"),
+            ("stats-campaigns", _ui_text("dashboard.executions")),
+            ("stats-operational", _ui_text("dashboard.operational_cost")),
+            ("stats-unlinked", _ui_text("dashboard.unlinked_reports")),
         )
         body = (
             "<h1>"
             + _icon("chart", size=22)
-            + "Earlier run reports</h1>"
+            + _ui_template("[[text:dashboard.earlier_run_reports]]</h1>")
             + self._health_banner()
             + self._work_view_tabs("stats", "legacy")
-            + "<div class='notice blue'><strong>Earlier report publications.</strong>"
-            "<p class='note'>Each card is one retained console Job/run. Calls, "
-            "tokens, costs, coverage, and diagrams stay bound to that job; "
-            "non-authoritative diagnostics are never blended into thesis "
-            "results.</p></div>"
+            + _ui_template(
+                "<div class='notice blue'><strong>[[text:dashboard.earlier_report_publications]]</strong><p class='note'>[[text:dashboard.each_card_is_one_retained_console_job_run_calls_tokens_costs_cove]]</p></div>"
+            )
             + "<div class='page-tabs' data-page-tabs data-tab-key='stats' "
             "data-default-tab='stats-campaigns'>"
-            + _page_tablist("Statistics sections", stats_tabs, default="stats-campaigns")
+            + _page_tablist(
+                _ui_text("dashboard.statistics_sections"), stats_tabs, default="stats-campaigns"
+            )
             + _page_tabpanel("stats-campaigns", campaign_panel)
             + _page_tabpanel(
                 "stats-operational",
-                "<p class='note'>Operational spend is accounting only; it is "
-                "never a scientific aggregate.</p>" + self._spend_card(),
+                _ui_template(
+                    "<p class='note'>[[text:dashboard.operational_spend_is_accounting_only_it_is_never_a_scientific_agg]]</p>"
+                )
+                + self._spend_card(),
             )
             + _page_tabpanel("stats-unlinked", unlinked_panel)
             + "</div>"
         )
-        return _page("Campaign statistics", body, active="Stats")
+        return _page(
+            _ui_text("dashboard.campaign_statistics_2"), body, active=_ui_text("dashboard.stats")
+        )
 
     # -- campaign builder --------------------------------------------------
 
     def _dashboard_hardware_card(self) -> str:
         gpus = [gpu for gpu in self.gpu_hardware.get("gpus", []) if isinstance(gpu, Mapping)]
         if not self.gpu_hardware.get("available"):
-            summary = "No NVIDIA GPU detected; local model fit is unknown."
+            summary = _ui_text("dashboard.no_nvidia_gpu_detected_local_model_fit_is_unknown")
         else:
             names = ", ".join(
                 f"GPU {gpu.get('index', '?')}: {gpu.get('name', 'unknown')} "
@@ -3166,10 +3671,11 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
                 for gpu in gpus
             )
             summary = (
-                f"{self.gpu_hardware.get('gpu_count', len(gpus))} GPU(s), "
-                f"{self.gpu_hardware.get('aggregate_vram_gib', 0)} GiB aggregate VRAM"
-                + (f" - {names}" if names else "")
-            )
+                f"{self.gpu_hardware.get('gpu_count', len(gpus))}"
+                + " GPU(s), "
+                + f"{self.gpu_hardware.get('aggregate_vram_gib', 0)}"
+                + _ui_text("dashboard.gib_aggregate_vram")
+            ) + (f" - {names}" if names else "")
         system = self.system_hardware
 
         def shown(value: object, suffix: str = "") -> str:
@@ -3185,7 +3691,7 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
         )
         gpu_rows = []
         for gpu in gpus:
-            details = [f"{shown(gpu.get('vram_gib'))} GiB VRAM"]
+            details = [(f"{shown(gpu.get('vram_gib'))}" + _ui_text("dashboard.gib_vram"))]
             if gpu.get("compute_capability"):
                 details.append("SM " + shown(gpu["compute_capability"]))
             if gpu.get("pci_bus_id"):
@@ -3193,7 +3699,7 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
             if gpu.get("driver_version"):
                 details.append("driver " + shown(gpu["driver_version"]))
             gpu_rows.append(
-                "<li><strong>GPU "
+                _ui_template("<li><strong>[[text:dashboard.gpu]] ")
                 + shown(gpu.get("index", "?"))
                 + " - "
                 + shown(gpu.get("name", "unknown"))
@@ -3203,30 +3709,32 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
         gpu_content = (
             "<ul class='hardware-list'>" + "".join(gpu_rows) + "</ul>"
             if self.gpu_hardware.get("available") and gpu_rows
-            else "<div class='notice amber'>No NVIDIA GPU detected; local model "
-            "fit is unknown.</div>"
+            else _ui_template(
+                "<div class='notice amber'>[[text:dashboard.no_nvidia_gpu_detected_local_model_fit_is_unknown]]</div>"
+            )
         )
         return (
             "<div class='card' id='rig-hardware' aria-label='"
             + html.escape(summary, quote=True)
-            + "'><h2>Rig hardware</h2>"
-            "<div class='hardware-grid'><section><h3>System</h3>"
-            "<dl class='hardware-spec'><dt>OS</dt><dd>"
+            + _ui_template(
+                "'><h2>[[text:dashboard.rig_hardware]]</h2><div class='hardware-grid'><section><h3>[[text:dashboard.system]]</h3><dl class='hardware-spec'><dt>[[text:dashboard.os]]</dt><dd>"
+            )
             + shown(system.get("platform"))
-            + "</dd><dt>CPU</dt><dd>"
+            + _ui_template("</dd><dt>[[text:dashboard.cpu]]</dt><dd>")
             + shown(system.get("cpu_model"))
-            + "</dd><dt>Cores</dt><dd>"
+            + _ui_template("</dd><dt>[[text:dashboard.cores]]</dt><dd>")
             + html.escape(cores)
-            + "</dd><dt>RAM</dt><dd>"
-            + shown(system.get("total_ram_gib"), " GiB")
-            + "</dd></dl></section><section><h3>GPUs "
-            "<span class='badge blue'>"
+            + _ui_template("</dd><dt>[[text:dashboard.ram]]</dt><dd>")
+            + shown(system.get("total_ram_gib"), _ui_text("dashboard.gib"))
+            + _ui_template(
+                "</dd></dl></section><section><h3>[[text:dashboard.gpus]] <span class='badge blue'>"
+            )
             + shown(self.gpu_hardware.get("gpu_count", len(gpus)))
             + "</span></h3>"
             + gpu_content
-            + "</section></div>"
-            "<p class='note'>Detected once at console startup; no model or "
-            "provider call is made. Aggregate VRAM: <strong>"
-            + shown(self.gpu_hardware.get("aggregate_vram_gib"), " GiB")
+            + _ui_template(
+                "</section></div><p class='note'>[[text:dashboard.detected_once_at_console_startup_no_model_or_provider_call_is_mad]] <strong>"
+            )
+            + shown(self.gpu_hardware.get("aggregate_vram_gib"), _ui_text("dashboard.gib"))
             + "</strong>.</p></div>"
         )

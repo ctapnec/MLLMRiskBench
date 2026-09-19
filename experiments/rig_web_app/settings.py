@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .i18n import template as _ui_template, text as _ui_text
+
 import contextlib
 import html
 import json
@@ -55,19 +57,24 @@ class SettingsMixin:
             for name, amount, _match, role in configured
         )
         table = (
-            "<div class='scroll'><table><tr><th>Provider</th><th>Prepaid</th>"
-            "<th>Funds</th></tr>" + rows + "</table></div>"
+            _ui_template(
+                "<div class='scroll'><table><tr><th>[[text:settings.provider]]</th><th>[[text:settings.prepaid]]</th><th>[[text:settings.funds]]</th></tr>"
+            )
+            + rows
+            + "</table></div>"
             if configured
-            else "<p class='note'>No provider budgets are configured.</p>"
+            else _ui_template(
+                "<p class='note'>[[text:settings.budgets_not_configured]]</p>"
+            )
         )
         return (
-            "<div class='card'><h2>" + _icon("coins") + "Provider budgets</h2>"
+            "<div class='card'><h2>"
+            + _icon("coins")
+            + _ui_template("[[text:settings.provider_budgets]]</h2>")
             + table
-            + "<p class='note'>Optional operator values come from the editable "
-            "<a href='/config?file=budgets'>budgets</a> config. They support "
-            "usage reporting only: execution limits remain the explicit "
-            "sampling, call, HTTP and deadline controls recorded by each run. "
-            "This card spends nothing.</p></div>"
+            + _ui_template(
+                "<p class='note'>[[text:settings.optional_operator_values_come_from_the_editable]] <a href='/config?file=budgets'>[[text:settings.budgets]]</a> [[text:settings.config_they_support_usage_reporting_only_execution_limits_remain]]</p></div>"
+            )
         )
 
     @staticmethod
@@ -82,8 +89,11 @@ class SettingsMixin:
             return ""
         if summary.get("error"):
             return (
-                "<div class='notice red'><strong>Pricing fetch failed."
-                "</strong><p class='note'>" + html.escape(str(summary["error"])) + "</p></div>"
+                _ui_template(
+                    "<div class='notice red'><strong>[[text:settings.pricing_fetch_failed]]</strong><p class='note'>"
+                )
+                + html.escape(str(summary["error"]))
+                + "</p></div>"
             )
         lines = []
         for provider, report in sorted((summary.get("providers") or {}).items()):
@@ -93,9 +103,15 @@ class SettingsMixin:
             note = report.get("note") or ""
             if matched:
                 lines.append(
-                    f"<li><strong>{html.escape(provider)}</strong>: "
-                    f"{len(matched)} rate(s) read from "
-                    f"<code>{html.escape(str(report.get('url', '')))}</code></li>"
+                    (
+                        "<li><strong>"
+                        + f"{html.escape(provider)}"
+                        + "</strong>: "
+                        + f"{len(matched)}"
+                        + _ui_template(" [[text:settings.rate_s_read_from]] <code>")
+                        + f"{html.escape(str(report.get('url', '')))}"
+                        + "</code></li>"
+                    )
                 )
             elif note:
                 lines.append(
@@ -106,30 +122,36 @@ class SettingsMixin:
                 # no model rows: say so, so the operator is not left assuming the
                 # provider's prices are current when they stay N/A.
                 lines.append(
-                    f"<li><strong>{html.escape(provider)}</strong>: fetched "
-                    f"but matched 0 of {len(unmatched)} model(s) - the page "
-                    "layout may have changed; enter these rates by hand</li>"
+                    (
+                        "<li><strong>"
+                        + f"{html.escape(provider)}"
+                        + _ui_template("</strong>[[text:settings.fetched_but_matched_0_of]] ")
+                        + f"{len(unmatched)}"
+                        + _ui_template(
+                            " [[text:settings.model_s_the_page_layout_may_have_changed_enter_these_rates_by_han]]</li>"
+                        )
+                    )
                 )
         added = summary.get("models_added", [])
         added_note = ""
         if isinstance(added, list) and added:
             added_note = (
-                " <strong>Added "
+                _ui_template(" <strong>[[text:settings.added]] ")
                 + html.escape(str(len(added)))
-                + " missing current-roster model(s).</strong>"
+                + _ui_template(" [[text:settings.missing_current_roster_model_s]]</strong>")
             )
         return (
-            "<div class='notice blue'><strong>Fetched provider pricing ("
+            _ui_template(
+                "<div class='notice blue'><strong>[[text:settings.fetched_provider_pricing]]"
+            )
             + html.escape(str(summary.get("rates_written", 0)))
-            + " rate(s) written).</strong>"
+            + _ui_template(" [[text:settings.rate_s_written]]</strong>")
             + added_note
-            + "<p class='note'>Auto-fetched rates "
-            "are stamped with their source and date; verify each against the "
-            "provider's page before relying on the calculated cost. A model you "
-            "have priced by hand is left untouched, and editing a fetched rate "
-            "in the config editor makes it yours too - once you change its "
-            "value the fetcher stops overwriting it.</p>"
-            "<ul>" + "".join(lines) + "</ul></div>"
+            + _ui_template(
+                "<p class='note'>[[text:settings.auto_fetched_rates_are_stamped_with_their_source_and_date_verify]]</p><ul>"
+            )
+            + "".join(lines)
+            + "</ul></div>"
         )
 
     def fetch_pricing(self) -> dict[str, Any]:
@@ -160,17 +182,17 @@ class SettingsMixin:
     #: (env var, provider label, funded).  Values are never displayed; only
     #: presence and a masked last-4 hint are ever surfaced.
     _SECRET_ENV_VARS: tuple[tuple[str, str, bool], ...] = (
-        ("ANTHROPIC_API_KEY", "Anthropic", True),
-        ("OPENAI_API_KEY", "OpenAI", True),
-        ("GEMINI_API_KEY", "Google Gemini", True),
-        ("DEEPSEEK_API_KEY", "DeepSeek", True),
+        ("ANTHROPIC_API_KEY", _ui_text("settings.anthropic"), True),
+        ("OPENAI_API_KEY", _ui_text("settings.openai"), True),
+        ("GEMINI_API_KEY", _ui_text("settings.google_gemini"), True),
+        ("DEEPSEEK_API_KEY", _ui_text("settings.deepseek"), True),
         ("MOONSHOT_API_KEY", "Moonshot / Kimi", True),
         (
             "HF_TOKEN",
-            "Hugging Face",
+            _ui_text("settings.hugging_face"),
             False,
         ),
-        ("DASHSCOPE_API_KEY", "Alibaba DashScope / Qwen", False),
+        ("DASHSCOPE_API_KEY", _ui_text("settings.alibaba_dashscope_qwen"), False),
         ("ZHIPU_API_KEY", "Zhipu / GLM", False),
     )
     _SECRET_NAMES = frozenset(name for name, _label, _funded in _SECRET_ENV_VARS)
@@ -210,7 +232,7 @@ class SettingsMixin:
                         if name == "HF_TOKEN" and value.strip()
                         else self._mask(value)
                         if value.strip()
-                        else "not set"
+                        else _ui_text("settings.not_set")
                     ),
                 }
             )
@@ -229,10 +251,10 @@ class SettingsMixin:
         """
 
         if name not in self._SECRET_NAMES:
-            raise ValueError(f"unknown secret {name!r}")
+            raise ValueError((_ui_text("settings.unknown_secret") + f"{name!r}"))
         value = value.strip()
         if not value:
-            raise ValueError("secret value must not be empty")
+            raise ValueError(_ui_text("settings.secret_value_must_not_be_empty"))
         # Must be a single line by str.splitlines()'s definition, which is what
         # the env file is later read back with.  That set is broader than just
         # \n/\r: it also includes the Unicode line/paragraph separators
@@ -240,18 +262,18 @@ class SettingsMixin:
         # carry.  Reject them here so a stored key can never be split apart on
         # the next read-modify-write and corrupt the sourced file.
         if value.splitlines() != [value]:
-            raise ValueError("secret value must be a single line")
+            raise ValueError(_ui_text("settings.secret_value_must_be_a_single_line"))
         if len(value) > 4096:
-            raise ValueError("secret value is implausibly long")
+            raise ValueError(_ui_text("settings.secret_value_is_implausibly_long"))
         # The value is written inside single quotes into a file that is sourced
         # by the campaign shell.  A single quote would close the quoting and let
         # the remainder run as shell; control characters would corrupt the line.
         # Real provider keys never contain either, so reject them fail-closed
         # rather than attempting to escape them.
         if "'" in value:
-            raise ValueError("secret value must not contain a single quote")
+            raise ValueError(_ui_text("settings.secret_value_must_not_contain_a_single_quote"))
         if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in value):
-            raise ValueError("secret value must not contain control characters")
+            raise ValueError(_ui_text("settings.secret_value_must_not_contain_control_characters"))
         line = f"export {name}='{value}'"
         pattern = re.compile(rf"^\s*export\s+{re.escape(name)}=")
         # Serialize the read-modify-write so a concurrent set/clear cannot drop
@@ -265,15 +287,13 @@ class SettingsMixin:
                 # Remove any legacy durable acquisition credential before
                 # making the newly supplied token visible to this process.
                 # If the scrub cannot be committed, fail without setting it.
-                out_lines = [
-                    entry for entry in existing if not pattern.match(entry)
-                ]
+                out_lines = [entry for entry in existing if not pattern.match(entry)]
                 if out_lines != existing:
                     try:
                         self._write_env_file("\n".join(out_lines) + "\n")
                     except OSError as exc:
                         raise ValueError(
-                            f"could not write the secrets file: {exc}"
+                            (_ui_text("settings.could_not_write_the_secrets_file") + f"{exc}")
                         ) from exc
                 os.environ[name] = value
                 return
@@ -293,7 +313,9 @@ class SettingsMixin:
             try:
                 self._write_env_file(text)
             except OSError as exc:
-                raise ValueError(f"could not write the secrets file: {exc}") from exc
+                raise ValueError(
+                    (_ui_text("settings.could_not_write_the_secrets_file") + f"{exc}")
+                ) from exc
             os.environ[name] = value  # live: new jobs inherit it immediately
 
     def _read_env_lines(self) -> list[str]:
@@ -310,7 +332,9 @@ class SettingsMixin:
         except FileNotFoundError:
             return []
         except OSError as exc:
-            raise ValueError(f"could not read the secrets file: {exc}") from exc
+            raise ValueError(
+                (_ui_text("settings.could_not_read_the_secrets_file") + f"{exc}")
+            ) from exc
 
     def _write_env_file(self, text: str) -> None:
         """Write the operator secrets file atomically at mode 0600.
@@ -348,7 +372,7 @@ class SettingsMixin:
         """Remove an allowlisted secret from durable storage and the process."""
 
         if name not in self._SECRET_NAMES:
-            raise ValueError(f"unknown secret {name!r}")
+            raise ValueError((_ui_text("settings.unknown_secret") + f"{name!r}"))
         pattern = re.compile(rf"^\s*export\s+{re.escape(name)}=")
         with self._secret_lock:
             # Fail-closed: if the file is present but unreadable, _read_env_lines
@@ -360,25 +384,39 @@ class SettingsMixin:
                 try:
                     self._write_env_file("\n".join(out_lines) + "\n")
                 except OSError as exc:
-                    raise ValueError(f"could not write the secrets file: {exc}") from exc
+                    raise ValueError(
+                        (_ui_text("settings.could_not_write_the_secrets_file") + f"{exc}")
+                    ) from exc
             os.environ.pop(name, None)
 
     def _secrets_page(self, *, error: str = "", saved: str = "") -> bytes:
-        groups = {"Campaign providers": [], "Additional providers": [], "Model and corpus downloads": []}
+        groups = {
+            "Campaign providers": [],
+            "Additional providers": [],
+            "Model and corpus downloads": [],
+        }
         statuses = self.secret_status()
         for row in statuses:
             tone = "green" if row["present"] else ("gray" if not row["funded"] else "amber")
             state = html.escape(row["hint"])
             clear = (
-                "<form class='action-row provider-key-clear' method='post' action='/config/secrets'>"
-                f"<input type='hidden' name='name' value='{html.escape(row['name'])}'>"
-                "<input type='hidden' name='action' value='clear'>"
-                "<button type='submit' class='danger small'>Clear</button></form>"
+                (
+                    "<form class='action-row provider-key-clear' method='post' action='/config/secrets'><input type='hidden' name='name' value='"
+                    + f"{html.escape(row['name'])}"
+                    + _ui_template(
+                        "'><input type='hidden' name='action' value='clear'><button type='submit' class='danger small'>[[text:settings.clear]]</button></form>"
+                    )
+                )
                 if row["present"]
                 else ""
             )
-            group = ("Model and corpus downloads" if row["name"] == "HF_TOKEN" else
-                     "Campaign providers" if row["funded"] else "Additional providers")
+            group = (
+                _ui_text("settings.model_and_corpus_downloads")
+                if row["name"] == "HF_TOKEN"
+                else _ui_text("settings.campaign_providers")
+                if row["funded"]
+                else _ui_text("settings.additional_providers")
+            )
             groups[group].append(
                 "<article class='card provider-key-card'>"
                 "<div class='provider-key-heading'>"
@@ -386,69 +424,84 @@ class SettingsMixin:
                 f"<span class='badge {tone}'>{state}</span></div>"
                 "<code class='provider-key-variable'>" + html.escape(row["name"]) + "</code>"
                 "<details class='provider-key-editor'><summary>"
-                + ("Update key" if row["present"] else "Add key") + "</summary>"
-                f"<form id='setkey-{html.escape(row['name'])}' method='post' "
-                "action='/config/secrets'>"
-                f"<input type='hidden' name='name' value='{html.escape(row['name'])}'>"
-                "<input type='hidden' name='action' value='set'>"
-                f"<label for='key-{html.escape(row['name'])}'>New key</label>"
-                "<div class='provider-key-input-row'>"
-                f"<input id='key-{html.escape(row['name'])}' type='password' autocomplete='new-password' "
-                "name='value' placeholder='Paste a new key' required spellcheck='false'>"
-                "<button type='submit'>Save key</button></div></form>"
-                + clear + "</details></article>"
+                + (
+                    _ui_text("settings.update_key")
+                    if row["present"]
+                    else _ui_text("settings.add_key")
+                )
+                + (
+                    "</summary><form id='setkey-"
+                    + f"{html.escape(row['name'])}"
+                    + "' method='post' action='/config/secrets'><input type='hidden' name='name' value='"
+                    + f"{html.escape(row['name'])}"
+                    + "'><input type='hidden' name='action' value='set'><label for='key-"
+                    + f"{html.escape(row['name'])}"
+                    + _ui_template(
+                        "'>[[text:settings.new_key]]</label><div class='provider-key-input-row'><input id='key-"
+                    )
+                    + f"{html.escape(row['name'])}"
+                    + _ui_template(
+                        "' type='password' autocomplete='new-password' name='value' placeholder='Paste a new key' required spellcheck='false'><button type='submit'>[[text:settings.save_key]]</button></div></form>"
+                    )
+                )
+                + clear
+                + "</details></article>"
             )
         banner = ""
         if saved:
             storage_note = (
-                "Held only in this console process and supplied only to the "
-                "dedicated acquisition worker; it is never written to the "
-                "operator secrets file."
+                _ui_text(
+                    "settings.held_only_in_this_console_process_and_supplied_only_to_the_dedica"
+                )
                 if saved in self._EPHEMERAL_SECRET_NAMES
-                else "Written to the operator secrets file and applied to "
-                "this console's environment; new jobs use it immediately."
+                else _ui_text(
+                    "settings.written_to_the_operator_secrets_file_and_applied_to_this_console"
+                )
             )
             banner = (
-                "<div class='notice blue'><strong>Key "
+                _ui_template("<div class='notice blue'><strong>[[text:settings.key]] ")
                 + html.escape(saved)
                 + " updated.</strong><p class='note'>"
                 + storage_note
-                + " The value is "
-                "never displayed.</p></div>"
+                + _ui_template(" [[text:settings.the_value_is_never_displayed]]</p></div>")
             )
         if error:
             banner = (
-                "<div class='notice red'><strong>Not saved: "
+                _ui_template("<div class='notice red'><strong>[[text:settings.not_saved]] ")
                 + html.escape(error)
                 + "</strong></div>"
             )
         body = (
-            "<h1>" + _icon("sliders", size=22) + "Provider API keys</h1>"
-            "<p class='crumbs'><a href='/config'>Configuration</a>"
-            "<span class='sep'>/</span>secrets</p>"
+            "<h1>"
+            + _icon("sliders", size=22)
+            + _ui_template(
+                "[[text:settings.provider_api_keys]]</h1><p class='crumbs'><a href='/config'>[[text:settings.configuration]]</a><span class='sep'>/</span>[[text:settings.secrets]]</p>"
+            )
             + banner
-            + "<p class='note'>Manage access for new jobs. Stored keys stay hidden; "
-            "a saved key does not establish model access or available credit.</p>"
-            f"<p>{sum(row['present'] for row in statuses)} of {len(statuses)} credentials configured</p>"
-            "<style>.provider-key-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:16px}"
-            ".provider-key-card{min-width:0;margin:0}.provider-key-heading{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px}"
-            ".provider-key-heading h3{margin:0}.provider-key-variable{display:block;overflow-wrap:anywhere;margin:12px 0}"
-            ".provider-key-editor summary{cursor:pointer}.provider-key-editor form{margin-top:12px}.provider-key-editor label{display:block;margin-bottom:6px}"
-            ".provider-key-input-row{display:flex;flex-wrap:wrap;gap:12px;align-items:center}"
-            ".provider-key-input-row input{min-width:0;flex:1 1 180px;width:auto;font:inherit;min-height:2.65rem;"
-            "padding:.65rem .8rem;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}"
-            ".provider-key-input-row input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}"
-            ".provider-key-editor form.provider-key-clear{margin-top:16px}"
-            ".provider-key-input-row button{flex:0 0 auto}.provider-key-section{margin:24px 0}</style>"
-            + "".join("<section class='provider-key-section'><h2>" + heading + "</h2><div class='provider-key-grid'>"
-                      + "".join(cards) + "</div></section>" for heading, cards in groups.items())
-            + "<details><summary>Storage and job access</summary><p class='note'>"
-            "Hosted keys are stored in <code>~/.ura_env</code> (mode 600) and used by new jobs. "
-            "Only their last four characters are shown. Hugging Face access is process-only, "
-            "never saved to that file, and supplied only to model/corpus acquisition workers. "
-            "No key is written to the database, backups or logs. Configure budgets and model routes separately.</p></details>"
+            + (
+                _ui_template(
+                    "<p class='note'>[[text:settings.manage_access_for_new_jobs_stored_keys_stay_hidden_a_saved_key_do]]</p><p>"
+                )
+                + f"{sum((row['present'] for row in statuses))}"
+                + " of "
+                + f"{len(statuses)}"
+                + " credentials configured</p><style>.provider-key-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:16px}.provider-key-card{min-width:0;margin:0}.provider-key-heading{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px}.provider-key-heading h3{margin:0}.provider-key-variable{display:block;overflow-wrap:anywhere;margin:12px 0}.provider-key-editor summary{cursor:pointer}.provider-key-editor form{margin-top:12px}.provider-key-editor label{display:block;margin-bottom:6px}.provider-key-input-row{display:flex;flex-wrap:wrap;gap:12px;align-items:center}.provider-key-input-row input{min-width:0;flex:1 1 180px;width:auto;font:inherit;min-height:2.65rem;padding:.65rem .8rem;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}.provider-key-input-row input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.provider-key-editor form.provider-key-clear{margin-top:16px}.provider-key-input-row button{flex:0 0 auto}.provider-key-section{margin:24px 0}</style>"
+            )
+            + "".join(
+                "<section class='provider-key-section'><h2>"
+                + heading
+                + "</h2><div class='provider-key-grid'>"
+                + "".join(cards)
+                + "</div></section>"
+                for heading, cards in groups.items()
+            )
+            + _ui_template(
+                "<details><summary>[[text:settings.storage_and_job_access]]</summary><p class='note'>[[text:settings.hosted_keys_are_stored_in]] <code>~/.ura_env</code> [[text:settings.mode_600_and_used_by_new_jobs_only_their_last_four_characters_are]]</p></details>"
+            )
         )
-        return _page("Provider API keys", body, active="Config")
+        return _page(
+            _ui_text("settings.provider_api_keys"), body, active=_ui_text("settings.config")
+        )
 
     # -- config editor -----------------------------------------------------
 
@@ -461,7 +514,7 @@ class SettingsMixin:
 
         entry = _EDITABLE_CONFIGS.get(key)
         if entry is None:
-            raise ValueError(f"unknown config {key!r}")
+            raise ValueError((_ui_text("settings.unknown_config") + f"{key!r}"))
         relative, _example, description = entry
         return (self.repo_root / relative), description
 
@@ -489,9 +542,9 @@ class SettingsMixin:
         try:
             parsed = strict_json_loads(content)
         except (UnicodeError, ValueError, RecursionError) as exc:
-            raise ValueError(f"content is not valid JSON: {exc}") from exc
+            raise ValueError((_ui_text("settings.content_is_not_valid_json") + f"{exc}")) from exc
         if not isinstance(parsed, dict):
-            raise ValueError("config must be a JSON object")
+            raise ValueError(_ui_text("settings.config_must_be_a_json_object"))
         # The pricing table has a second writer (the fetcher); serialize this
         # write with it so an overlapping fetch cannot lose the operator's edit.
         lock = self._pricing_lock if key == "pricing" else contextlib.nullcontext()
@@ -507,21 +560,24 @@ class SettingsMixin:
                     on_disk = {}
                 except OSError as exc:
                     raise ValueError(
-                        "existing pricing config is unreadable; refusing to "
-                        "overwrite operator data"
+                        _ui_text(
+                            "settings.existing_pricing_config_is_unreadable_refusing_to_overwrite_opera"
+                        )
                     ) from exc
                 else:
                     try:
                         on_disk = strict_json_loads(on_disk_raw)
                     except (UnicodeError, ValueError, RecursionError) as exc:
                         raise ValueError(
-                            "existing pricing config is not strict JSON; "
-                            "refusing to overwrite operator data"
+                            _ui_text(
+                                "settings.existing_pricing_config_is_not_strict_json_refusing_to_overwrite"
+                            )
                         ) from exc
                     if not isinstance(on_disk, dict):
                         raise ValueError(
-                            "existing pricing config is not a JSON object; "
-                            "refusing to overwrite operator data"
+                            _ui_text(
+                                "settings.existing_pricing_config_is_not_a_json_object_refusing_to_overwrit"
+                            )
                         )
                 reconcile_pricing_ownership(parsed, on_disk)
             normalized = (
@@ -535,7 +591,7 @@ class SettingsMixin:
             )
             if path.exists():
                 if path.is_symlink() or not path.is_file():
-                    raise ValueError("config target is not a regular file")
+                    raise ValueError(_ui_text("settings.config_target_is_not_a_regular_file"))
                 backups = self.state_dir / "config-backups"
                 backups.mkdir(parents=True, exist_ok=True)
                 stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -558,36 +614,54 @@ class SettingsMixin:
             cards = []
             for token, (relative, _example, description) in _EDITABLE_CONFIGS.items():
                 path = self.repo_root / relative
-                state = "exists" if path.is_file() else "not created yet"
+                state = "exists" if path.is_file() else _ui_text("settings.not_created_yet")
                 cards.append(
-                    "<div class='card'><h2>" + _icon("sliders") + f"{html.escape(token)}</h2>"
-                    f"<p class='note'><code>{html.escape(relative)}</code> - "
-                    f"{html.escape(state)}</p>"
-                    f"<p>{html.escape(description)}</p>"
-                    f"<p><a href='/config?file={quote(token)}'>"
-                    "<button type='button'>Open editor</button></a></p></div>"
+                    "<div class='card'><h2>"
+                    + _icon("sliders")
+                    + (
+                        f"{html.escape(token)}"
+                        + "</h2><p class='note'><code>"
+                        + f"{html.escape(relative)}"
+                        + "</code> - "
+                        + f"{html.escape(state)}"
+                        + "</p><p>"
+                        + f"{html.escape(description)}"
+                        + "</p><p><a href='/config?file="
+                        + f"{quote(token)}"
+                        + _ui_template(
+                            "'><button type='button'>[[text:settings.open_editor]]</button></a></p></div>"
+                        )
+                    )
                 )
             # Provider API keys: presence + set/rotate, values never shown.
             statuses = self.secret_status()
             set_count = sum(1 for s in statuses if s["present"])
             cards.append(
-                "<div class='card'><h2>" + _icon("logo") + "Provider API keys"
-                "</h2><p class='note'>Set or rotate the hosted-provider keys "
-                f"(<code>~/.ura_env</code>, mode 600). {set_count} of "
-                f"{len(statuses)} set. The console never displays a stored "
-                "key.</p><p><a href='/config/secrets'>"
-                "<button type='button'>Manage keys</button></a></p></div>"
+                "<div class='card'><h2>"
+                + _icon("logo")
+                + (
+                    _ui_template(
+                        "[[text:settings.provider_api_keys]]</h2><p class='note'>[[text:settings.set_or_rotate_the_hosted_provider_keys]]<code>~/.ura_env</code>[[text:settings.mode_600]] "
+                    )
+                    + f"{set_count}"
+                    + " of "
+                    + f"{len(statuses)}"
+                    + _ui_template(
+                        " [[text:settings.set_the_console_never_displays_a_stored_key]]</p><p><a href='/config/secrets'><button type='button'>[[text:settings.manage_keys]]</button></a></p></div>"
+                    )
+                )
             )
             body = (
-                "<h1>" + _icon("sliders", size=22) + "Configuration</h1>"
-                "<p class='note'>Edit the operator-local registries in place. "
-                "Saves are JSON-validated and the prior version is backed up "
-                "under the console state directory. These files are read fresh "
-                "by each run, so an edit takes effect on the next job. Secret "
-                "API keys are managed separately (presence only, never "
-                "displayed); nothing here shows a stored key.</p>" + "".join(cards)
+                "<h1>"
+                + _icon("sliders", size=22)
+                + _ui_template(
+                    "[[text:settings.configuration]]</h1><p class='note'>Edit the operator-local registries in place. Saves are JSON-validated and the prior version is backed up under the console state directory. These files are read fresh by each run, so an edit takes effect on the next job. Secret API keys are managed separately (presence only, never displayed); nothing here shows a stored key.</p>"
+                )
+                + "".join(cards)
             )
-            return _page("Configuration", body, active="Config")
+            return _page(
+                _ui_text("settings.configuration"), body, active=_ui_text("settings.config")
+            )
         # Single-file editor.
         path, description = self._config_target(key)
         relative = _EDITABLE_CONFIGS[key][0]
@@ -605,22 +679,19 @@ class SettingsMixin:
                 # is never a blank page.
                 content = example_text
                 if example_text:
-                    seeded = (
-                        "<div class='notice blue'><strong>Prefilled from "
-                        "the checked-in example.</strong><p class='note'>"
-                        "Review and edit, then save to write the local "
-                        "registry.</p></div>"
+                    seeded = _ui_template(
+                        "<div class='notice blue'><strong>[[text:settings.prefilled_from_the_checked_in_example]]</strong><p class='note'>[[text:settings.review_and_edit_then_save_to_write_the_local_registry]]</p></div>"
                     )
         banner = seeded
         if saved:
-            banner = (
-                "<div class='notice blue'><strong>Saved.</strong>"
-                "<p class='note'>Prior version backed up under the "
-                "console state directory.</p></div>"
+            banner = _ui_template(
+                "<div class='notice blue'><strong>Saved.</strong><p class='note'>[[text:settings.prior_version_backed_up_under_the_console_state_directory]]</p></div>"
             )
         if error:
             banner = (
-                f"<div class='notice red'><strong>Not saved: {html.escape(error)}</strong></div>"
+                _ui_template("<div class='notice red'><strong>[[text:settings.not_saved]] ")
+                + f"{html.escape(error)}"
+                + "</strong></div>"
             )
         if fetched:
             banner = self._pricing_fetch_banner(fetched) + banner
@@ -628,16 +699,26 @@ class SettingsMixin:
         fetch_action = ""
         if key == "pricing":
             fetch_action = (
-                "<form class='inline' method='post' action='/pricing/fetch' "
-                "data-busy='Fetching provider pricing pages...'>"
-                "<button type='submit' class='ghost'>"
+                _ui_template(
+                    "<form class='inline' method='post' action='/pricing/fetch' data-busy='[[attr:settings.fetching_provider_pricing_pages]]'><button type='submit' class='ghost'>"
+                )
                 + _icon("coins", size=15)
-                + "Fetch from provider pricing pages</button></form> "
+                + _ui_template(
+                    "[[text:settings.fetch_from_provider_pricing_pages]]</button></form> "
+                )
             )
         body = (
-            "<h1>" + _icon("sliders", size=22) + f"Edit {html.escape(key)}</h1>"
-            f"<p class='crumbs'><a href='/config'>Configuration</a>"
-            f"<span class='sep'>/</span>{html.escape(relative)}</p>"
+            "<h1>"
+            + _icon("sliders", size=22)
+            + (
+                _ui_text("settings.edit")
+                + f"{html.escape(key)}"
+                + _ui_template(
+                    "</h1><p class='crumbs'><a href='/config'>[[text:settings.configuration]]</a><span class='sep'>/</span>"
+                )
+                + f"{html.escape(relative)}"
+                + "</p>"
+            )
             + banner
             + f"<p class='note'>{html.escape(description)}</p>"
             + fetch_action
@@ -654,28 +735,22 @@ class SettingsMixin:
             + "<div class='editor-actions'>"
             "<button type='submit'>"
             + _icon("save", size=15)
-            + "Validate &amp; save</button>"
+            + _ui_template("[[text:settings.validate_save]]</button>")
             + (
                 "<button type='button' class='ghost' id='cfg-prefill'>"
                 + _icon("box", size=15)
-                + "Prefill from example</button>"
+                + _ui_template("[[text:settings.prefill_from_example]]</button>")
                 if example_text
                 else ""
             )
-            + f"<a href='/config?file={quote(key)}'>"
-            "<button type='button' class='ghost'>Reload</button></a>"
-            "</div></form>"
-            "<p class='note'>Save is rejected unless the content parses as a "
-            "JSON object; on success it is normalized (sorted keys, 2-space "
-            "indent) and the prior bytes are backed up. 'Prefill from example' "
-            "loads the checked-in roster into the editor without saving.</p>"
-            "<script>(function(){"
-            "var btn=document.getElementById('cfg-prefill');"
-            "var ex=document.getElementById('cfg-example');"
-            "var ed=document.getElementById('cfg-editor');"
-            "if(btn&&ex&&ed){btn.addEventListener('click',function(){"
-            "if(!ed.value.trim()||confirm('Replace the editor contents with "
-            "the example roster?')){ed.value=ex.value;ed.focus();}});}"
-            "})();</script>"
+            + (
+                "<a href='/config?file="
+                + f"{quote(key)}"
+                + _ui_template(
+                    "'><button type='button' class='ghost'>[[text:settings.reload]]</button></a></div></form><p class='note'>[[text:settings.save_is_rejected_unless_the_content_parses_as_a_json_object_on_su]]</p><script>(function(){var btn=document.getElementById('cfg-prefill');var ex=document.getElementById('cfg-example');var ed=document.getElementById('cfg-editor');if(btn&&ex&&ed){btn.addEventListener('click',function(){if(!ed.value.trim()||confirm([[js:settings.replace_the_editor_contents_with_the_example_roster]])){ed.value=ex.value;ed.focus();}});}})();</script>"
+                )
+            )
         )
-        return _page(f"Edit {key}", body, active="Config")
+        return _page(
+            (_ui_text("settings.edit") + f"{key}"), body, active=_ui_text("settings.config")
+        )

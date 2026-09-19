@@ -8,6 +8,8 @@ is never stopped by the console.
 
 from __future__ import annotations
 
+from .i18n import text as _ui_text
+
 import errno
 import json
 import os
@@ -181,16 +183,18 @@ def validate_ollama_pull_storage(
         or not isinstance(required_bytes, int)
         or not 0 <= required_bytes <= 2**63 - 1
     ):
-        raise ValueError("Ollama pull required bytes are invalid")
+        raise ValueError(_ui_text("ollama_service.ollama_pull_required_bytes_are_invalid"))
     source = os.environ if environment is None else environment
     configured = str(source.get("OLLAMA_MODELS", "")).strip()
     if configured:
         if len(configured) > 4096 or any(ord(char) < 32 for char in configured):
-            raise OllamaUnavailable("Ollama model storage path is invalid")
+            raise OllamaUnavailable(_ui_text("ollama_service.ollama_model_storage_path_is_invalid"))
         storage = Path(configured)
         if not storage.is_absolute():
             raise OllamaUnavailable(
-                "OLLAMA_MODELS must be absolute so pull free space can be verified"
+                _ui_text(
+                    "ollama_service.ollama_models_must_be_absolute_so_pull_free_space_can_be_verified"
+                )
             )
     else:
         storage = Path.home() / ".ollama" / "models"
@@ -201,13 +205,14 @@ def validate_ollama_pull_storage(
         free = int(disk_usage(str(probe)).free)
     except (OSError, TypeError, ValueError) as exc:
         raise OllamaUnavailable(
-            "could not verify free space for Ollama model storage"
+            _ui_text("ollama_service.could_not_verify_free_space_for_ollama_model_storage")
         ) from exc
     minimum = _MIN_PULL_FREE_BYTES + required_bytes
     if free < minimum:
         raise OllamaUnavailable(
-            "Ollama pull requires five GiB of free model-storage headroom "
-            "plus the reported remaining download"
+            _ui_text(
+                "ollama_service.ollama_pull_requires_five_gib_of_free_model_storage_headroom_plus"
+            )
         )
     return {
         "free_bytes": free,
@@ -226,9 +231,11 @@ def validate_ollama_tag(value: str) -> str:
 
     tag = value.strip()
     if not tag or len(tag) > 256 or _TAG.fullmatch(tag) is None:
-        raise ValueError("model tag must be a valid Ollama name[:tag] (max 256 chars)")
+        raise ValueError(
+            _ui_text("ollama_service.model_tag_must_be_a_valid_ollama_name_tag_max_256_chars")
+        )
     if any(part in {".", ".."} for part in tag.split(":", 1)[0].split("/")):
-        raise ValueError("model tag must not contain dot path segments")
+        raise ValueError(_ui_text("ollama_service.model_tag_must_not_contain_dot_path_segments"))
     return tag
 
 
@@ -236,22 +243,22 @@ def normalize_ollama_digest(value: object) -> str:
     """Normalize the daemon's digest to the Runner's exact lowercase 64-hex form."""
 
     if not isinstance(value, str):
-        raise ValueError("model digest must be a string")
+        raise ValueError(_ui_text("ollama_service.model_digest_must_be_a_string"))
     match = _DIGEST.fullmatch(value.strip().lower())
     if match is None:
-        raise ValueError("model digest must be exact SHA-256")
+        raise ValueError(_ui_text("ollama_service.model_digest_must_be_exact_sha_256"))
     return match.group(1).lower()
 
 
 def _strict_json(raw: bytes, *, label: str) -> dict[str, Any]:
     def reject_constant(value: str) -> None:
-        raise ValueError(f"non-finite value {value!r}")
+        raise ValueError((_ui_text("ollama_service.non_finite_value") + f"{value!r}"))
 
     def reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
         result: dict[str, Any] = {}
         for key, value in pairs:
             if key in result:
-                raise ValueError(f"duplicate key {key!r}")
+                raise ValueError((_ui_text("ollama_service.duplicate_key") + f"{key!r}"))
             result[key] = value
         return result
 
@@ -262,16 +269,22 @@ def _strict_json(raw: bytes, *, label: str) -> dict[str, Any]:
             object_pairs_hook=reject_duplicates,
         )
     except (UnicodeError, ValueError, RecursionError) as exc:
-        raise OllamaProtocolError(f"{label} returned invalid UTF-8 JSON") from exc
+        raise OllamaProtocolError(
+            (f"{label}" + _ui_text("ollama_service.returned_invalid_utf_8_json"))
+        ) from exc
     if not isinstance(value, dict):
-        raise OllamaProtocolError(f"{label} must return one JSON object")
+        raise OllamaProtocolError(
+            (f"{label}" + _ui_text("ollama_service.must_return_one_json_object"))
+        )
     # json's parser already bounds recursion using Python's recursion limit;
     # this explicit walk gives the protocol a much tighter, deterministic cap.
     stack: list[tuple[object, int]] = [(value, 1)]
     while stack:
         item, depth = stack.pop()
         if depth > _MAX_JSON_DEPTH:
-            raise OllamaProtocolError(f"{label} JSON nesting exceeds the limit")
+            raise OllamaProtocolError(
+                (f"{label}" + _ui_text("ollama_service.json_nesting_exceeds_the_limit"))
+            )
         if isinstance(item, dict):
             stack.extend((child, depth + 1) for child in item.values())
         elif isinstance(item, list):
@@ -292,7 +305,9 @@ class OllamaAPI:
     ) -> None:
         self.base_url = validate_ollama_base_url(base_url)
         if not 0.1 <= float(timeout) <= 30.0:
-            raise ValueError("Ollama API timeout must be in [0.1, 30] seconds")
+            raise ValueError(
+                _ui_text("ollama_service.ollama_api_timeout_must_be_in_0_1_30_seconds")
+            )
         self.timeout = float(timeout)
         self._monotonic = monotonic
         if open_request is None:
@@ -313,15 +328,13 @@ class OllamaAPI:
         timeout: float | None = None,
     ) -> dict[str, Any]:
         if path not in {"/api/tags", "/api/ps", "/api/show"}:
-            raise ValueError("Ollama API path is not allowlisted")
+            raise ValueError(_ui_text("ollama_service.ollama_api_path_is_not_allowlisted"))
         body = None
         headers = {"Accept": "application/json", "User-Agent": "ura-rig-web/ollama"}
         if payload is not None:
-            body = json.dumps(
-                dict(payload), sort_keys=True, separators=(",", ":")
-            ).encode("utf-8")
+            body = json.dumps(dict(payload), sort_keys=True, separators=(",", ":")).encode("utf-8")
             if len(body) > 4096:
-                raise ValueError("Ollama request body exceeds the limit")
+                raise ValueError(_ui_text("ollama_service.ollama_request_body_exceeds_the_limit"))
             headers["Content-Type"] = "application/json"
         request = urllib.request.Request(
             self.base_url + path,
@@ -331,7 +344,9 @@ class OllamaAPI:
         )
         request_timeout = self.timeout if timeout is None else float(timeout)
         if not 0.05 <= request_timeout <= self.timeout:
-            raise ValueError("Ollama request timeout override is outside its bound")
+            raise ValueError(
+                _ui_text("ollama_service.ollama_request_timeout_override_is_outside_its_bound")
+            )
         try:
             deadline = self._monotonic() + request_timeout
             response = open_with_deadline(
@@ -340,7 +355,7 @@ class OllamaAPI:
                 deadline=deadline,
                 monotonic=self._monotonic,
                 maximum_timeout=request_timeout,
-                label=f"Ollama {path}",
+                label=(_ui_text("ollama_service.ollama") + f"{path}"),
             )
             with response:
                 raw = read_bounded_response(
@@ -348,18 +363,18 @@ class OllamaAPI:
                     maximum=max_bytes,
                     deadline=deadline,
                     monotonic=self._monotonic,
-                    label=f"Ollama {path}",
+                    label=(_ui_text("ollama_service.ollama") + f"{path}"),
                 )
         except ValueError as exc:
             raise OllamaProtocolError(str(exc)) from exc
         except (TimeoutError, OSError, urllib.error.URLError) as exc:
-            raise OllamaUnavailable(f"Ollama loopback API unavailable at {path}") from exc
+            raise OllamaUnavailable(
+                (_ui_text("ollama_service.ollama_loopback_api_unavailable_at") + f"{path}")
+            ) from exc
         return _strict_json(raw, label=path)
 
     def tags(self, *, timeout: float | None = None) -> dict[str, Any]:
-        return self._request_json(
-            "/api/tags", max_bytes=_MAX_TAGS_BYTES, timeout=timeout
-        )
+        return self._request_json("/api/tags", max_bytes=_MAX_TAGS_BYTES, timeout=timeout)
 
     def ps(self, *, timeout: float | None = None) -> dict[str, Any]:
         return self._request_json("/api/ps", max_bytes=_MAX_PS_BYTES, timeout=timeout)
@@ -384,7 +399,7 @@ def _bounded_text(value: object, *, maximum: int = 512) -> str:
 
 def _details(value: object) -> dict[str, object]:
     if not isinstance(value, dict):
-        raise ValueError("details must be an object")
+        raise ValueError(_ui_text("ollama_service.details_must_be_an_object"))
     output: dict[str, object] = {}
     for key in (
         "family",
@@ -397,19 +412,19 @@ def _details(value: object) -> dict[str, object]:
             continue
         text = _bounded_text(value[key], maximum=128)
         if not text:
-            raise ValueError(f"details {key} must be bounded text")
+            raise ValueError(
+                ("details " + f"{key}" + _ui_text("ollama_service.must_be_bounded_text"))
+            )
         output[key] = text
     families = value.get("families")
     if families is not None:
         if not isinstance(families, list) or len(families) > 32:
-            raise ValueError("details families must be a bounded list")
-        normalized = [
-            text
-            for item in families
-            if (text := _bounded_text(item, maximum=128))
-        ]
+            raise ValueError(_ui_text("ollama_service.details_families_must_be_a_bounded_list"))
+        normalized = [text for item in families if (text := _bounded_text(item, maximum=128))]
         if len(normalized) != len(families) or len(set(normalized)) != len(normalized):
-            raise ValueError("details families must contain unique bounded text")
+            raise ValueError(
+                _ui_text("ollama_service.details_families_must_contain_unique_bounded_text")
+            )
         output["families"] = normalized
     family = output.get("family")
     normalized_families = output.get("families")
@@ -417,7 +432,7 @@ def _details(value: object) -> dict[str, object]:
         if _credible_family_keys((family,)).isdisjoint(
             _credible_family_keys(tuple(str(value) for value in normalized_families))
         ):
-            raise ValueError("details family/families identity mismatch")
+            raise ValueError(_ui_text("ollama_service.details_family_families_identity_mismatch"))
     return output
 
 
@@ -428,15 +443,15 @@ def _show_architecture(document: Mapping[str, object]) -> str:
     if model_info is None:
         return ""
     if not isinstance(model_info, dict) or len(model_info) > 4096:
-        raise ValueError("model_info must be a bounded object")
+        raise ValueError(_ui_text("ollama_service.model_info_must_be_a_bounded_object"))
     if "general.architecture" not in model_info:
         return ""
-    architecture = _bounded_text(
-        model_info.get("general.architecture"), maximum=128
-    )
+    architecture = _bounded_text(model_info.get("general.architecture"), maximum=128)
     if not architecture:
         raise ValueError(
-            "model_info general.architecture must be bounded non-empty text"
+            _ui_text(
+                "ollama_service.model_info_general_architecture_must_be_bounded_non_empty_text"
+            )
         )
     return architecture
 
@@ -454,9 +469,7 @@ def _family_evidence(details: Mapping[str, object]) -> tuple[str, ...]:
 
 def _credible_family_keys(values: tuple[str, ...]) -> set[str]:
     return {
-        key
-        for key in model_identity_keys(*values)
-        if key.startswith(("base-family:", "family:"))
+        key for key in model_identity_keys(*values) if key.startswith(("base-family:", "family:"))
     }
 
 
@@ -478,18 +491,22 @@ def _validate_identity_evidence(
     if architecture:
         sources.append(("/api/show architecture", (architecture,)))
     if not sources:
-        raise ValueError("model has no credible upstream family identity evidence")
+        raise ValueError(
+            _ui_text("ollama_service.model_has_no_credible_upstream_family_identity_evidence")
+        )
 
     keyed: list[tuple[str, set[str]]] = []
     for label, values in sources:
         keys = _credible_family_keys(values)
         if not keys:
-            raise ValueError(f"{label} lacks a credible model-family identity")
+            raise ValueError(
+                (f"{label}" + _ui_text("ollama_service.lacks_a_credible_model_family_identity"))
+            )
         keyed.append((label, keys))
     common_keys = set.intersection(*(keys for _label, keys in keyed))
     if not common_keys:
         labels = "/".join(label for label, _keys in keyed)
-        raise ValueError(f"{labels} model-family identity mismatch")
+        raise ValueError((f"{labels}" + _ui_text("ollama_service.model_family_identity_mismatch")))
 
 
 def _identity_keys(*values: str) -> set[str]:
@@ -523,16 +540,24 @@ def _tag_rows(
     if not isinstance(raw_models, list) or len(raw_models) > maximum:
         if maximum == _MAX_DISCOVERY_MODELS:
             raise OllamaProtocolError(
-                "Ollama installed roster exceeds the 64-model live discovery limit"
+                _ui_text(
+                    "ollama_service.ollama_installed_roster_exceeds_the_64_model_live_discovery_limit"
+                )
             )
-        raise OllamaProtocolError("/api/tags models must be a bounded list")
+        raise OllamaProtocolError(_ui_text("ollama_service.api_tags_models_must_be_a_bounded_list"))
     rows: list[dict[str, object]] = []
     issues: list[str] = []
     seen: set[str] = set()
     ambiguous: set[str] = set()
     for index, raw in enumerate(raw_models):
         if not isinstance(raw, dict):
-            issues.append(f"tags row {index} is not an object")
+            issues.append(
+                (
+                    _ui_text("ollama_service.tags_row")
+                    + f"{index}"
+                    + _ui_text("ollama_service.is_not_an_object")
+                )
+            )
             continue
         name = _bounded_text(raw.get("name"))
         model = _bounded_text(raw.get("model"))
@@ -542,13 +567,26 @@ def _tag_rows(
             digest = normalize_ollama_digest(raw.get("digest"))
             details = _details(raw.get("details"))
         except ValueError as exc:
-            issues.append(f"tags row {index}: {exc}")
+            issues.append((_ui_text("ollama_service.tags_row") + f"{index}" + ": " + f"{exc}"))
             continue
         if name != model:
-            issues.append(f"tags row {index}: name/model mismatch")
+            issues.append(
+                (
+                    _ui_text("ollama_service.tags_row")
+                    + f"{index}"
+                    + _ui_text("ollama_service.name_model_mismatch")
+                )
+            )
             continue
         if name in seen:
-            issues.append(f"tags row {index}: duplicate model tag {name!r}")
+            issues.append(
+                (
+                    _ui_text("ollama_service.tags_row")
+                    + f"{index}"
+                    + _ui_text("ollama_service.duplicate_model_tag")
+                    + f"{name!r}"
+                )
+            )
             ambiguous.add(name)
             continue
         seen.add(name)
@@ -566,12 +604,18 @@ def _tag_rows(
 def _loaded_rows(document: Mapping[str, object]) -> tuple[set[tuple[str, str]], list[str]]:
     raw_models = document.get("models")
     if not isinstance(raw_models, list) or len(raw_models) > _MAX_MODELS:
-        raise OllamaProtocolError("/api/ps models must be a bounded list")
+        raise OllamaProtocolError(_ui_text("ollama_service.api_ps_models_must_be_a_bounded_list"))
     loaded: set[tuple[str, str]] = set()
     issues: list[str] = []
     for index, raw in enumerate(raw_models):
         if not isinstance(raw, dict):
-            issues.append(f"ps row {index} is not an object")
+            issues.append(
+                (
+                    _ui_text("ollama_service.ps_row")
+                    + f"{index}"
+                    + _ui_text("ollama_service.is_not_an_object")
+                )
+            )
             continue
         name = _bounded_text(raw.get("name"))
         model = _bounded_text(raw.get("model"))
@@ -580,10 +624,16 @@ def _loaded_rows(document: Mapping[str, object]) -> tuple[set[tuple[str, str]], 
             model = validate_ollama_tag(model)
             digest = normalize_ollama_digest(raw.get("digest"))
         except ValueError as exc:
-            issues.append(f"ps row {index}: {exc}")
+            issues.append((_ui_text("ollama_service.ps_row") + f"{index}" + ": " + f"{exc}"))
             continue
         if name != model:
-            issues.append(f"ps row {index}: name/model mismatch")
+            issues.append(
+                (
+                    _ui_text("ollama_service.ps_row")
+                    + f"{index}"
+                    + _ui_text("ollama_service.name_model_mismatch")
+                )
+            )
             continue
         loaded.add((name, digest))
     return loaded, issues
@@ -627,12 +677,16 @@ class OllamaService:
         self._listener_owner = listener_owner
         self._process_identity = process_identity
         if self._platform not in {"nt", "posix"}:
-            raise ValueError("unsupported Ollama service platform")
+            raise ValueError(_ui_text("ollama_service.unsupported_ollama_service_platform"))
         if not 0.1 <= float(start_timeout) <= 30.0:
-            raise ValueError("Ollama start timeout must be in [0.1, 30] seconds")
+            raise ValueError(
+                _ui_text("ollama_service.ollama_start_timeout_must_be_in_0_1_30_seconds")
+            )
         self.start_timeout = float(start_timeout)
         if not 0.5 <= float(discovery_timeout) <= 30.0:
-            raise ValueError("Ollama discovery timeout must be in [0.5, 30] seconds")
+            raise ValueError(
+                _ui_text("ollama_service.ollama_discovery_timeout_must_be_in_0_5_30_seconds")
+            )
         self.discovery_timeout = float(discovery_timeout)
         self._lock = threading.RLock()
         self._owned_process: Any | None = None
@@ -672,17 +726,25 @@ class OllamaService:
         path = Path(configured) if configured else daemon_directory / "models"
         if not path.is_absolute():
             raise OllamaUnavailable(
-                "OLLAMA_MODELS must be absolute for an owned daemon storage contract"
+                _ui_text(
+                    "ollama_service.ollama_models_must_be_absolute_for_an_owned_daemon_storage_contra"
+                )
             )
         try:
             path.mkdir(mode=0o700, parents=True, exist_ok=True)
             if path.is_symlink():
-                raise OllamaUnavailable("owned Ollama model storage must not be a symlink")
+                raise OllamaUnavailable(
+                    _ui_text("ollama_service.owned_ollama_model_storage_must_not_be_a_symlink")
+                )
             resolved = path.resolve(strict=True)
         except OSError as exc:
-            raise OllamaUnavailable("owned Ollama model storage is unavailable") from exc
+            raise OllamaUnavailable(
+                _ui_text("ollama_service.owned_ollama_model_storage_is_unavailable")
+            ) from exc
         if not resolved.is_dir() or resolved == Path(resolved.anchor):
-            raise OllamaUnavailable("owned Ollama model storage path is unsafe")
+            raise OllamaUnavailable(
+                _ui_text("ollama_service.owned_ollama_model_storage_path_is_unsafe")
+            )
         return resolved
 
     def validate_pull_storage(self) -> dict[str, object]:
@@ -702,7 +764,7 @@ class OllamaService:
             raise
         except (OSError, RuntimeError, TimeoutError) as exc:
             raise OllamaUnavailable(
-                "could not verify the owned Ollama storage contract"
+                _ui_text("ollama_service.could_not_verify_the_owned_ollama_storage_contract")
             ) from exc
 
     def _validate_pull_storage_locked(self, *, deadline: float) -> dict[str, object]:
@@ -717,13 +779,12 @@ class OllamaService:
                 or not self._owned_identity_matches()
             ):
                 raise OllamaUnavailable(
-                    "model pulls require a listener and storage path verified as owned "
-                    "by this console process; external/ambiguous daemons are read-only"
+                    _ui_text(
+                        "ollama_service.model_pulls_require_a_listener_and_storage_path_verified_as_owned"
+                    )
                 )
             result: dict[str, object] = dict(
-                validate_ollama_pull_storage(
-                    {"OLLAMA_MODELS": str(self._owned_models_path)}
-                )
+                validate_ollama_pull_storage({"OLLAMA_MODELS": str(self._owned_models_path)})
             )
             result["models_path"] = str(self._owned_models_path)
             result["base_url"] = self.base_url
@@ -770,8 +831,11 @@ class OllamaService:
 
     def _raise_cleanup_error(self, reason: str) -> None:
         message = (
-            "could not confirm cleanup of the console-owned Ollama process tree"
-            f" ({reason}); ownership is retained so Stop can retry"
+            _ui_text(
+                "ollama_service.could_not_confirm_cleanup_of_the_console_owned_ollama_process_tre"
+            )
+            + f"{reason}"
+            + _ui_text("ollama_service.ownership_is_retained_so_stop_can_retry")
         )
         self._owned_cleanup_error = message
         raise OllamaError(message)
@@ -786,12 +850,8 @@ class OllamaService:
                 # reclassify an unconfirmed descendant residue as external.
                 self._owned_cleanup_error = str(exc)
 
-    def _api_state(
-        self, *, deadline: float | None = None
-    ) -> tuple[bool, tuple[str, ...], str]:
-        deadline = deadline or (
-            self._monotonic() + min(5.0, max(0.2, self.api.timeout * 2.0))
-        )
+    def _api_state(self, *, deadline: float | None = None) -> tuple[bool, tuple[str, ...], str]:
+        deadline = deadline or (self._monotonic() + min(5.0, max(0.2, self.api.timeout * 2.0)))
 
         def remaining() -> float:
             budget = min(
@@ -799,7 +859,7 @@ class OllamaService:
                 remaining_seconds(
                     deadline,
                     self._monotonic,
-                    label="Ollama status",
+                    label=_ui_text("ollama_service.ollama_status"),
                 ),
             )
             # OllamaAPI deliberately rejects sub-50 ms overrides.  A slow tags
@@ -807,7 +867,9 @@ class OllamaService:
             # deadline; treat it as an exhausted optional sample instead of
             # leaking the API's argument ValueError into page rendering.
             if budget < 0.05:
-                raise TimeoutError("Ollama status request budget is exhausted")
+                raise TimeoutError(
+                    _ui_text("ollama_service.ollama_status_request_budget_is_exhausted")
+                )
             return budget
 
         try:
@@ -903,9 +965,7 @@ class OllamaService:
                     "last_error": cleanup_error or self._last_error,
                     "loaded_models": [],
                     "owned_by_console": bool(owned),
-                    "listener_owner_verified": bool(
-                        self._owned_listener_verified
-                    ),
+                    "listener_owner_verified": bool(self._owned_listener_verified),
                     "pid": int(self._owned_process.pid) if owned else None,
                     "state": "error" if cleanup_error else "busy",
                     "warning": str(exc),
@@ -914,15 +974,19 @@ class OllamaService:
     def _resolve_executable(self) -> str:
         candidate = self._which(self.executable)
         if not candidate:
-            raise OllamaUnavailable("ollama executable is not installed or not on PATH")
+            raise OllamaUnavailable(
+                _ui_text("ollama_service.ollama_executable_is_not_installed_or_not_on_path")
+            )
         try:
             path = Path(candidate).resolve(strict=True)
         except OSError as exc:
-            raise OllamaUnavailable("ollama executable could not be resolved") from exc
-        if not path.is_file() or (
-            self._platform != "nt" and not os.access(path, os.X_OK)
-        ):
-            raise OllamaUnavailable("ollama executable is not an executable file")
+            raise OllamaUnavailable(
+                _ui_text("ollama_service.ollama_executable_could_not_be_resolved")
+            ) from exc
+        if not path.is_file() or (self._platform != "nt" and not os.access(path, os.X_OK)):
+            raise OllamaUnavailable(
+                _ui_text("ollama_service.ollama_executable_is_not_an_executable_file")
+            )
         return str(path)
 
     def start(self) -> dict[str, object]:
@@ -964,7 +1028,9 @@ class OllamaService:
             directory = self.state_dir / "ollama"
             directory.mkdir(parents=True, exist_ok=True)
             if directory.is_symlink():
-                raise OllamaUnavailable("Ollama state directory must not be a symlink")
+                raise OllamaUnavailable(
+                    _ui_text("ollama_service.ollama_state_directory_must_not_be_a_symlink")
+                )
             models_path = self._prepare_owned_models_path(directory)
             parsed = urlsplit(self.base_url)
             host = parsed.hostname or "127.0.0.1"
@@ -991,13 +1057,13 @@ class OllamaService:
             try:
                 process = self._popen_factory([executable, "serve"], **kwargs)
             except OSError as exc:
-                raise OllamaUnavailable("could not start ollama serve") from exc
+                raise OllamaUnavailable(
+                    _ui_text("ollama_service.could_not_start_ollama_serve")
+                ) from exc
             self._owned_process = process
             self._owned_pgid = int(process.pid) if self._platform != "nt" else None
             self._owned_models_path = models_path
-            self._owned_process_identity = self._capture_process_identity(
-                int(process.pid)
-            )
+            self._owned_process_identity = self._capture_process_identity(int(process.pid))
             self._owned_listener_verified = False
             self._owned_cleanup_error = ""
             if self._platform == "nt":
@@ -1015,13 +1081,17 @@ class OllamaService:
                     self._reap_owned(deadline=deadline)
                     reachable, loaded, warning = self._api_state(deadline=deadline)
                     if reachable:
-                        self._last_error = "endpoint became externally owned during start"
+                        self._last_error = _ui_text(
+                            "ollama_service.endpoint_became_externally_owned_during_start"
+                        )
                         return self._status_document(
                             reachable=True,
                             loaded=loaded,
                             warning=warning,
                         )
-                    self._last_error = "ollama serve exited before the API became ready"
+                    self._last_error = _ui_text(
+                        "ollama_service.ollama_serve_exited_before_the_api_became_ready"
+                    )
                     raise OllamaUnavailable(self._last_error)
                 reachable, _loaded, _warning = self._api_state(deadline=deadline)
                 if reachable:
@@ -1034,9 +1104,7 @@ class OllamaService:
                         )
                     except (OSError, RuntimeError, ValueError):
                         ownership = None
-                    current_identity = self._capture_process_identity(
-                        int(process.pid)
-                    )
+                    current_identity = self._capture_process_identity(int(process.pid))
                     if (
                         ownership is True
                         and self._owned_process_identity is not None
@@ -1046,9 +1114,8 @@ class OllamaService:
                         self._last_error = ""
                         self.invalidate_roster()
                         return self._status_locked(deadline=deadline)
-                    self._last_error = (
-                        "Ollama endpoint is reachable but listener ownership is "
-                        "unverified; classified as ambiguous"
+                    self._last_error = _ui_text(
+                        "ollama_service.ollama_endpoint_is_reachable_but_listener_ownership_is_unverified"
                     )
                 self._sleep(0.1)
             if endpoint_reachable and process.poll() is None:
@@ -1059,7 +1126,9 @@ class OllamaService:
                     warning=self._last_error,
                 )
             self._terminate_owned_locked(deadline=deadline)
-            self._last_error = "ollama serve did not become ready before the timeout"
+            self._last_error = _ui_text(
+                "ollama_service.ollama_serve_did_not_become_ready_before_the_timeout"
+            )
             raise OllamaUnavailable(self._last_error)
 
     def _terminate_owned_locked(self, *, deadline: float | None = None) -> None:
@@ -1084,7 +1153,7 @@ class OllamaService:
                         stderr=subprocess.DEVNULL,
                         check=False,
                         shell=False,
-                    timeout=wait_bound(10.0),
+                        timeout=wait_bound(10.0),
                     )
                     descendants_confirmed = result.returncode == 0
                 except (OSError, subprocess.TimeoutExpired):
@@ -1107,8 +1176,9 @@ class OllamaService:
                 descendants_confirmed = True
             elif not self._posix_signal_ownership_proven(process, pgid):
                 self._raise_cleanup_error(
-                    "the recorded process group exists but its live leader identity "
-                    "is absent, changed, or unprovable"
+                    _ui_text(
+                        "ollama_service.the_recorded_process_group_exists_but_its_live_leader_identity_is"
+                    )
                 )
             else:
                 try:
@@ -1116,7 +1186,9 @@ class OllamaService:
                 except ProcessLookupError:
                     group_exists = False
                 except OSError as exc:
-                    self._raise_cleanup_error(f"SIGTERM failed: {exc}")
+                    self._raise_cleanup_error(
+                        (_ui_text("ollama_service.sigterm_failed") + f"{exc}")
+                    )
                 try:
                     process.wait(timeout=wait_bound(5.0))
                 except (OSError, subprocess.TimeoutExpired, TimeoutError):
@@ -1129,15 +1201,18 @@ class OllamaService:
                     # still positively proven immediately before SIGKILL.
                     if not self._posix_signal_ownership_proven(process, pgid):
                         self._raise_cleanup_error(
-                            "the process-group leader identity disappeared during "
-                            "cleanup"
+                            _ui_text(
+                                "ollama_service.the_process_group_leader_identity_disappeared_during_cleanup"
+                            )
                         )
                     try:
                         os.killpg(pgid, _SIGKILL)
                     except ProcessLookupError:
                         group_exists = False
                     except OSError as exc:
-                        self._raise_cleanup_error(f"SIGKILL failed: {exc}")
+                        self._raise_cleanup_error(
+                            (_ui_text("ollama_service.sigkill_failed") + f"{exc}")
+                        )
                     try:
                         process.wait(timeout=wait_bound(5.0))
                     except (OSError, subprocess.TimeoutExpired, TimeoutError):
@@ -1145,10 +1220,7 @@ class OllamaService:
                     cleanup_deadline = self._monotonic() + 2.0
                     if deadline is not None:
                         cleanup_deadline = min(cleanup_deadline, deadline)
-                    while (
-                        self._posix_group_exists(pgid)
-                        and self._monotonic() < cleanup_deadline
-                    ):
+                    while self._posix_group_exists(pgid) and self._monotonic() < cleanup_deadline:
                         self._sleep(0.05)
             descendants_confirmed = not self._posix_group_exists(pgid)
             # Reap the original child only after all possible group signals.
@@ -1158,7 +1230,9 @@ class OllamaService:
             except (OSError, subprocess.TimeoutExpired, TimeoutError):
                 pass
         if process.poll() is None or not descendants_confirmed:
-            self._raise_cleanup_error("process or process-group absence is unproven")
+            self._raise_cleanup_error(
+                _ui_text("ollama_service.process_or_process_group_absence_is_unproven")
+            )
         self._clear_owned()
 
     def stop(self) -> dict[str, object]:
@@ -1191,9 +1265,13 @@ class OllamaService:
                 reachable, _loaded, _warning = self._api_state(deadline=deadline)
                 if reachable:
                     raise OllamaError(
-                        "Ollama daemon is external; this console will not stop it"
+                        _ui_text(
+                            "ollama_service.ollama_daemon_is_external_this_console_will_not_stop_it"
+                        )
                     )
-                raise OllamaError("no console-owned Ollama daemon is running")
+                raise OllamaError(
+                    _ui_text("ollama_service.no_console_owned_ollama_daemon_is_running")
+                )
             self._terminate_owned_locked(deadline=deadline)
             self.invalidate_roster()
             self._last_error = ""
@@ -1270,18 +1348,17 @@ class OllamaService:
         with self._lock:
             del vllm_entries
             now = self._monotonic()
-            if (
-                not force
-                and self._roster_cache is not None
-                and now - self._roster_cache_at <= 2.0
-            ):
+            if not force and self._roster_cache is not None and now - self._roster_cache_at <= 2.0:
                 return json.loads(json.dumps(self._roster_cache))
             try:
+
                 def remaining() -> float:
                     value = deadline - self._monotonic()
                     if value < 0.05:
                         raise OllamaUnavailable(
-                            "Ollama capability discovery exceeded its aggregate timeout"
+                            _ui_text(
+                                "ollama_service.ollama_capability_discovery_exceeded_its_aggregate_timeout"
+                            )
                         )
                     return min(self.api.timeout, value)
 
@@ -1289,9 +1366,7 @@ class OllamaService:
                     self.api.tags(timeout=remaining()),
                     maximum=_MAX_DISCOVERY_MODELS,
                 )
-                loaded, ps_issues = _loaded_rows(
-                    self.api.ps(timeout=remaining())
-                )
+                loaded, ps_issues = _loaded_rows(self.api.ps(timeout=remaining()))
                 issues.extend(ps_issues)
                 candidates: list[dict[str, object]] = []
                 excluded: list[dict[str, object]] = []
@@ -1303,22 +1378,32 @@ class OllamaService:
                         not isinstance(capabilities, list)
                         or not capabilities
                         or len(capabilities) > 32
-                        or any(
-                            not _bounded_text(value, maximum=128)
-                            for value in capabilities
-                        )
+                        or any(not _bounded_text(value, maximum=128) for value in capabilities)
                     ):
-                        issues.append(f"{tag}: /api/show lacks explicit capabilities")
+                        issues.append(
+                            (
+                                f"{tag}"
+                                + _ui_text("ollama_service.api_show_lacks_explicit_capabilities")
+                            )
+                        )
                         continue
-                    normalized_capabilities = [
-                        str(value).strip().lower() for value in capabilities
-                    ]
+                    normalized_capabilities = [str(value).strip().lower() for value in capabilities]
                     if len(set(normalized_capabilities)) != len(normalized_capabilities):
-                        issues.append(f"{tag}: /api/show capabilities are duplicated")
+                        issues.append(
+                            (
+                                f"{tag}"
+                                + _ui_text("ollama_service.api_show_capabilities_are_duplicated")
+                            )
+                        )
                         continue
                     normalized_capabilities.sort()
                     if "completion" not in normalized_capabilities:
-                        issues.append(f"{tag}: model has no completion capability")
+                        issues.append(
+                            (
+                                f"{tag}"
+                                + _ui_text("ollama_service.model_has_no_completion_capability")
+                            )
+                        )
                         continue
                     try:
                         show_details = _details(show.get("details"))
@@ -1334,7 +1419,12 @@ class OllamaService:
                             and tag_details[identity_key] != show_details[identity_key]
                         ):
                             issues.append(
-                                f"{tag}: tags/show {identity_key} identity mismatch"
+                                (
+                                    f"{tag}"
+                                    + ": tags/show "
+                                    + f"{identity_key}"
+                                    + _ui_text("ollama_service.identity_mismatch")
+                                )
                             )
                             break
                     else:
@@ -1378,18 +1468,18 @@ class OllamaService:
                 )
                 if self._monotonic() > deadline:
                     raise OllamaUnavailable(
-                        "Ollama capability discovery exceeded its aggregate timeout"
+                        _ui_text(
+                            "ollama_service.ollama_capability_discovery_exceeded_its_aggregate_timeout"
+                        )
                     )
                 issues.extend(second_issues)
-                first_identity = {
-                    (str(row["name"]), str(row["digest"])) for row in first_rows
-                }
-                second_identity = {
-                    (str(row["name"]), str(row["digest"])) for row in second_rows
-                }
+                first_identity = {(str(row["name"]), str(row["digest"])) for row in first_rows}
+                second_identity = {(str(row["name"]), str(row["digest"])) for row in second_rows}
                 if first_identity != second_identity:
                     raise OllamaProtocolError(
-                        "Ollama tags changed during capability discovery; refresh again"
+                        _ui_text(
+                            "ollama_service.ollama_tags_changed_during_capability_discovery_refresh_again"
+                        )
                     )
                 result: dict[str, object] = {
                     "available": True,

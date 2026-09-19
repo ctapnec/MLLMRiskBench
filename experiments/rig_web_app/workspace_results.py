@@ -6,6 +6,9 @@ never reopen a corpus, reconstruct a campaign or choose the newest/best answer.
 
 from __future__ import annotations
 
+
+from .i18n import text as _ui_text
+
 import json
 import sqlite3
 import time
@@ -28,17 +31,26 @@ def _same_response_source(left: str, right: str) -> bool:
     # not a line number shared by two different physical files.
     a, a_sep, a_row = left.rpartition(":")
     b, b_sep, b_row = right.rpartition(":")
-    return bool(a_sep and b_sep and a_row.isdigit() and b_row.isdigit()
-                and a != b
-                and canonical_response_source_ref(a + ":1") == canonical_response_source_ref(b + ":1"))
+    return bool(
+        a_sep
+        and b_sep
+        and a_row.isdigit()
+        and b_row.isdigit()
+        and a != b
+        and canonical_response_source_ref(a + ":1") == canonical_response_source_ref(b + ":1")
+    )
 
 
 def _same_judgment_source(left: str, right: str) -> bool:
     a, _, a_row = left.rpartition(":")
     b, _, b_row = right.rpartition(":")
-    return left == right or bool(a_row.isdigit() and b_row.isdigit() and a != b
+    return left == right or bool(
+        a_row.isdigit()
+        and b_row.isdigit()
+        and a != b
         and a.removesuffix(".checkpoint.jsonl").removesuffix(".jsonl")
-        == b.removesuffix(".checkpoint.jsonl").removesuffix(".jsonl"))
+        == b.removesuffix(".checkpoint.jsonl").removesuffix(".jsonl")
+    )
 
 
 class WorkspaceResultsMixin:
@@ -92,63 +104,102 @@ class WorkspaceResultsMixin:
             "PRIMARY KEY(campaign_id,successor))"
         )
 
-    def link_workspace_recovery(self, campaign_id: str, *, predecessor: str, successor: str,
-                                reason: str, evidence_ref: str) -> None:
+    def link_workspace_recovery(
+        self, campaign_id: str, *, predecessor: str, successor: str, reason: str, evidence_ref: str
+    ) -> None:
         """Annotate an explicit saved recovery, without selecting or rewriting outputs."""
         self.require_workspace(campaign_id)
-        if predecessor == successor or any(not isinstance(v,str) or not v.strip() or len(v)>4096
-                                            for v in (predecessor,successor,reason,evidence_ref)):
-            raise ValueError('Recovery needs two distinct saved outputs and its evidence')
+        if predecessor == successor or any(
+            not isinstance(v, str) or not v.strip() or len(v) > 4096
+            for v in (predecessor, successor, reason, evidence_ref)
+        ):
+            raise ValueError(
+                _ui_text(
+                    "workspace_results.recovery_needs_two_distinct_saved_outputs_and_its_evidence"
+                )
+            )
         with self._lock, self._conn:
             rows = self._conn.execute(
-                'SELECT r.response_id,a.model,a.input_id,a.modality,a.framework,a.corpus,a.evidence_class '
-                'FROM campaign_responses r JOIN campaign_assignments a '
-                'ON a.campaign_id=r.campaign_id AND a.assignment_id=r.assignment_id '
-                'WHERE r.campaign_id=? AND r.response_id IN (?,?)',
-                (campaign_id,predecessor,successor)).fetchall()
-            if len(rows)!=2 or tuple(rows[0])[1:] != tuple(rows[1])[1:]:
-                raise ValueError('Recovery must refer to the same model, input and task in this campaign')
-            record=(campaign_id,predecessor,successor,reason,evidence_ref)
-            old=self._conn.execute('SELECT * FROM campaign_recoveries WHERE campaign_id=? AND successor=?',
-                                   (campaign_id,successor)).fetchone()
-            if old and tuple(old)!=record: raise ValueError('Retained recovery link cannot be changed')
-            if not old:self._conn.execute('INSERT INTO campaign_recoveries VALUES(?,?,?,?,?)',record)
+                "SELECT r.response_id,a.model,a.input_id,a.modality,a.framework,a.corpus,a.evidence_class "
+                "FROM campaign_responses r JOIN campaign_assignments a "
+                "ON a.campaign_id=r.campaign_id AND a.assignment_id=r.assignment_id "
+                "WHERE r.campaign_id=? AND r.response_id IN (?,?)",
+                (campaign_id, predecessor, successor),
+            ).fetchall()
+            if len(rows) != 2 or tuple(rows[0])[1:] != tuple(rows[1])[1:]:
+                raise ValueError(
+                    _ui_text(
+                        "workspace_results.recovery_must_refer_to_the_same_model_input_and_task_in_this_camp"
+                    )
+                )
+            record = (campaign_id, predecessor, successor, reason, evidence_ref)
+            old = self._conn.execute(
+                "SELECT * FROM campaign_recoveries WHERE campaign_id=? AND successor=?",
+                (campaign_id, successor),
+            ).fetchone()
+            if old and tuple(old) != record:
+                raise ValueError(
+                    _ui_text("workspace_results.retained_recovery_link_cannot_be_changed")
+                )
+            if not old:
+                self._conn.execute("INSERT INTO campaign_recoveries VALUES(?,?,?,?,?)", record)
 
-    def workspace_recovery_rows(self, campaign_id: str, *, model: str='', condition: str='', offset: int=0):
+    def workspace_recovery_rows(
+        self, campaign_id: str, *, model: str = "", condition: str = "", offset: int = 0
+    ):
         return self._query(
-            'SELECT l.*,a.model,a.input_id,a.corpus,a.modality,p.outcome AS old_outcome,'
-            's.outcome AS new_outcome,p.details AS old_details,s.details AS new_details,'
-            'p.condition_id AS old_condition,s.condition_id AS new_condition '
-            'FROM campaign_recoveries l JOIN campaign_responses p '
-            'ON p.campaign_id=l.campaign_id AND p.response_id=l.predecessor '
-            'JOIN campaign_responses s ON s.campaign_id=l.campaign_id AND s.response_id=l.successor '
-            'JOIN campaign_assignments a ON a.campaign_id=s.campaign_id AND a.assignment_id=s.assignment_id '
+            "SELECT l.*,a.model,a.input_id,a.corpus,a.modality,p.outcome AS old_outcome,"
+            "s.outcome AS new_outcome,p.details AS old_details,s.details AS new_details,"
+            "p.condition_id AS old_condition,s.condition_id AS new_condition "
+            "FROM campaign_recoveries l JOIN campaign_responses p "
+            "ON p.campaign_id=l.campaign_id AND p.response_id=l.predecessor "
+            "JOIN campaign_responses s ON s.campaign_id=l.campaign_id AND s.response_id=l.successor "
+            "JOIN campaign_assignments a ON a.campaign_id=s.campaign_id AND a.assignment_id=s.assignment_id "
             "WHERE l.campaign_id=? AND (?='' OR a.model=?) "
             "AND (?='' OR p.condition_id=? OR s.condition_id=?) ORDER BY a.model,l.successor LIMIT 51 OFFSET ?",
-            (campaign_id,model,model,condition,condition,condition,max(0,offset)))
+            (campaign_id, model, model, condition, condition, condition, max(0, offset)),
+        )
 
-    def publish_workspace_inputs(self, campaign_id: str, *, run_id: str, model: str,
-                                 condition_id: str, evidence_class: str, planned: int, reached: int) -> None:
+    def publish_workspace_inputs(
+        self,
+        campaign_id: str,
+        *,
+        run_id: str,
+        model: str,
+        condition_id: str,
+        evidence_class: str,
+        planned: int,
+        reached: int,
+    ) -> None:
         """Source rows per native run, not generated turns or finished assessments."""
         self.require_workspace(campaign_id)
-        if any(not isinstance(value, str) or not value.strip() or len(value) > 4096
-               for value in (run_id, model, condition_id)):
-            raise ValueError("Invalid input-plan identity")
+        if any(
+            not isinstance(value, str) or not value.strip() or len(value) > 4096
+            for value in (run_id, model, condition_id)
+        ):
+            raise ValueError(_ui_text("workspace_results.invalid_input_plan_identity"))
         if evidence_class not in {"measured", "diagnostic", "preflight", "unknown"}:
-            raise ValueError("Input plan needs its evidence class")
+            raise ValueError(_ui_text("workspace_results.input_plan_needs_its_evidence_class"))
         if type(planned) is not int or type(reached) is not int or not 0 <= reached <= planned:
-            raise ValueError("Invalid planned/reached source-row counts")
+            raise ValueError(
+                _ui_text("workspace_results.invalid_planned_reached_source_row_counts")
+            )
         row = (campaign_id, run_id, model, condition_id, evidence_class, planned)
         with self._lock:
             if self._conn is None:
-                raise ValueError("Campaign database is unavailable")
+                raise ValueError(_ui_text("workspace_results.campaign_database_is_unavailable"))
             with self._conn:
                 old = self._conn.execute(
-                    "SELECT * FROM campaign_input_progress WHERE campaign_id=? AND run_id=?", row[:2]
+                    "SELECT * FROM campaign_input_progress WHERE campaign_id=? AND run_id=?",
+                    row[:2],
                 ).fetchone()
                 if old:
                     if tuple(old)[:6] != row:
-                        raise ValueError("Native input plan changed; retain a separate run")
+                        raise ValueError(
+                            _ui_text(
+                                "workspace_results.native_input_plan_changed_retain_a_separate_run"
+                            )
+                        )
                     if old["reached"] >= reached:
                         return  # Resume can replay a smaller durable prefix while restoring.
                 self._conn.execute(
@@ -157,8 +208,9 @@ class WorkspaceResultsMixin:
                     (*row, reached, time.time()),
                 )
 
-    def workspace_input_totals(self, campaign_id: str, *, model: str = "", condition: str = "",
-                               offset: int = 0) -> list[sqlite3.Row] | None:
+    def workspace_input_totals(
+        self, campaign_id: str, *, model: str = "", condition: str = "", offset: int = 0
+    ) -> list[sqlite3.Row] | None:
         return self._query(
             "SELECT model,evidence_class,COUNT(*) AS runs,SUM(planned) AS planned,SUM(reached) AS reached,"
             "MAX(updated_at) AS updated_at FROM campaign_input_progress "
@@ -167,8 +219,14 @@ class WorkspaceResultsMixin:
             (campaign_id, model, model, condition, condition, max(0, offset)),
         )
 
-    def publish_workspace_results(self, campaign_id: str, *, assignments: list[dict],
-                                  responses: list[dict], judgments: list[dict]) -> None:
+    def publish_workspace_results(
+        self,
+        campaign_id: str,
+        *,
+        assignments: list[dict],
+        responses: list[dict],
+        judgments: list[dict],
+    ) -> None:
         """One publication transaction, retaining historical response references.
 
         ``response_id`` on each assignment explicitly selects its displayed
@@ -183,140 +241,253 @@ class WorkspaceResultsMixin:
         def text(row, key):
             value = row[key]
             if not isinstance(value, str) or not value.strip() or len(value) > 4096:
-                raise ValueError(f"Invalid campaign result {key}")
+                raise ValueError((_ui_text("workspace_results.invalid_campaign_result") + f"{key}"))
             return value
 
         prepared_assignments, prepared_responses, prepared_judgments = [], [], []
         judge_settings = {}
         for row in assignments:
             if row.get("evidence_class") not in {"measured", "diagnostic", "preflight", "unknown"}:
-                raise ValueError("Assignment needs its explicit evidence class")
-            identity = tuple(text(row, key) for key in (
-                "assignment_id", "model", "input_id", "condition_id", "modality", "framework", "corpus"))
+                raise ValueError(
+                    _ui_text("workspace_results.assignment_needs_its_explicit_evidence_class")
+                )
+            identity = tuple(
+                text(row, key)
+                for key in (
+                    "assignment_id",
+                    "model",
+                    "input_id",
+                    "condition_id",
+                    "modality",
+                    "framework",
+                    "corpus",
+                )
+            )
             selected = text(row, "response_id") if row.get("response_id") is not None else None
-            prepared_assignments.append((campaign_id, *identity, selected, time.time(), row["evidence_class"]))
+            prepared_assignments.append(
+                (campaign_id, *identity, selected, time.time(), row["evidence_class"])
+            )
         for row in responses:
             if row.get("outcome") not in {"usable", "policy", "missing", "retry_pending"}:
-                raise ValueError("Unknown campaign response outcome")
+                raise ValueError(_ui_text("workspace_results.unknown_campaign_response_outcome"))
             if row.get("truncated") is not None and type(row["truncated"]) is not bool:
-                raise ValueError("Truncation must be observed true/false or unknown")
+                raise ValueError(
+                    _ui_text("workspace_results.truncation_must_be_observed_true_false_or_unknown")
+                )
             # Metadata only. Source payloads and images remain in their artifacts.
-            details = {key: row.get(key) for key in (
-                "source_ref", "context_tokens", "output_allowance", "input_tokens",
-                "output_tokens", "reasoning_tokens", "finish_reason", "missing_category")}
-            for key in ("context_tokens", "output_allowance", "input_tokens", "output_tokens", "reasoning_tokens"):
+            details = {
+                key: row.get(key)
+                for key in (
+                    "source_ref",
+                    "context_tokens",
+                    "output_allowance",
+                    "input_tokens",
+                    "output_tokens",
+                    "reasoning_tokens",
+                    "finish_reason",
+                    "missing_category",
+                )
+            }
+            for key in (
+                "context_tokens",
+                "output_allowance",
+                "input_tokens",
+                "output_tokens",
+                "reasoning_tokens",
+            ):
                 if key == "output_allowance" and type(details[key]) is int and details[key] == -1:
                     continue  # Retained local-provider native-maximum policy, not negative usage.
                 if details[key] is not None and (type(details[key]) is not int or details[key] < 0):
-                    raise ValueError("Token metadata must be reported counts or unknown")
+                    raise ValueError(
+                        _ui_text(
+                            "workspace_results.token_metadata_must_be_reported_counts_or_unknown"
+                        )
+                    )
             details["source_ref"] = text(row, "source_ref")
             if row.get("outcome_basis") is not None:
                 if row["outcome"] != "policy" or row["outcome_basis"] not in LEGACY_POLICY_BASES:
-                    raise ValueError("Unknown retained policy classification basis")
+                    raise ValueError(
+                        _ui_text("workspace_results.unknown_retained_policy_classification_basis")
+                    )
                 details["outcome_basis"] = row["outcome_basis"]
             payload = json.dumps(details, sort_keys=True, allow_nan=False)
             if len(payload) > 16384:
-                raise ValueError("Response index metadata is too large")
-            prepared_responses.append((campaign_id, text(row, "response_id"), text(row, "assignment_id"), text(row, "condition_id"),
-                                       row["outcome"], row.get("truncated"), payload))
+                raise ValueError(_ui_text("workspace_results.response_index_metadata_is_too_large"))
+            prepared_responses.append(
+                (
+                    campaign_id,
+                    text(row, "response_id"),
+                    text(row, "assignment_id"),
+                    text(row, "condition_id"),
+                    row["outcome"],
+                    row.get("truncated"),
+                    payload,
+                )
+            )
         for row in judgments:
-            if row.get('judge_settings') is not None:
-                settings = json.dumps(row['judge_settings'], sort_keys=True, allow_nan=False)
-                if not isinstance(row['judge_settings'], dict) or len(settings) > 16384:
-                    raise ValueError('Invalid judging settings metadata')
-                identity = text(row, 'judge_id')
+            if row.get("judge_settings") is not None:
+                settings = json.dumps(row["judge_settings"], sort_keys=True, allow_nan=False)
+                if not isinstance(row["judge_settings"], dict) or len(settings) > 16384:
+                    raise ValueError(
+                        _ui_text("workspace_results.invalid_judging_settings_metadata")
+                    )
+                identity = text(row, "judge_id")
                 if identity in judge_settings and judge_settings[identity] != settings:
-                    raise ValueError('Conflicting judging settings for one condition')
+                    raise ValueError(
+                        _ui_text("workspace_results.conflicting_judging_settings_for_one_condition")
+                    )
                 judge_settings[identity] = settings
             if row.get("status") not in {"valid", "invalid", "missing", "pending"}:
-                raise ValueError("Unknown judgment status")
+                raise ValueError(_ui_text("workspace_results.unknown_judgment_status"))
             label = text(row, "label") if row.get("label") is not None else None
             if row["status"] != "valid" and label is not None:
-                raise ValueError("An invalid or pending verdict cannot carry a valid label")
-            prepared_judgments.append((campaign_id, text(row, "response_id"), text(row, "judge_id"),
-                                       row["status"], label, text(row, "source_ref")))
+                raise ValueError(
+                    _ui_text(
+                        "workspace_results.an_invalid_or_pending_verdict_cannot_carry_a_valid_label"
+                    )
+                )
+            prepared_judgments.append(
+                (
+                    campaign_id,
+                    text(row, "response_id"),
+                    text(row, "judge_id"),
+                    row["status"],
+                    label,
+                    text(row, "source_ref"),
+                )
+            )
         with self._lock:
             if self._conn is None:
-                raise ValueError("Campaign database is unavailable")
+                raise ValueError(_ui_text("workspace_results.campaign_database_is_unavailable"))
             try:
                 with self._conn:
                     for identity, settings in judge_settings.items():
-                        old = self._conn.execute('SELECT settings FROM campaign_judge_settings '
-                            'WHERE campaign_id=? AND judge_id=?', (campaign_id, identity)).fetchone()
-                        if old and old['settings'] != settings:
-                            raise ValueError('Retained judging settings changed; use a distinct judge condition')
-                        self._conn.execute('INSERT OR IGNORE INTO campaign_judge_settings VALUES(?,?,?)',
-                            (campaign_id, identity, settings))
+                        old = self._conn.execute(
+                            "SELECT settings FROM campaign_judge_settings "
+                            "WHERE campaign_id=? AND judge_id=?",
+                            (campaign_id, identity),
+                        ).fetchone()
+                        if old and old["settings"] != settings:
+                            raise ValueError(
+                                _ui_text(
+                                    "workspace_results.retained_judging_settings_changed_use_a_distinct_judge_condition"
+                                )
+                            )
+                        self._conn.execute(
+                            "INSERT OR IGNORE INTO campaign_judge_settings VALUES(?,?,?)",
+                            (campaign_id, identity, settings),
+                        )
                     for row in prepared_assignments:
                         old = self._conn.execute(
                             "SELECT model,input_id,condition_id,modality,framework,corpus,evidence_class "
-                            "FROM campaign_assignments WHERE campaign_id=? AND assignment_id=?", row[:2],
+                            "FROM campaign_assignments WHERE campaign_id=? AND assignment_id=?",
+                            row[:2],
                         ).fetchone()
                         if old and tuple(old) != (*row[2:8], row[10]):
-                            raise ValueError("Existing assignment identity changed")
+                            raise ValueError(
+                                _ui_text("workspace_results.existing_assignment_identity_changed")
+                            )
                         self._conn.execute(
                             "INSERT INTO campaign_assignments VALUES(?,?,?,?,?,?,?,?,?,?,?) "
                             "ON CONFLICT(campaign_id,assignment_id) DO UPDATE SET "
                             "response_id=excluded.response_id,updated_at=excluded.updated_at "
                             "WHERE excluded.response_id IS NOT NULL "
-                            "AND campaign_assignments.response_id IS NOT excluded.response_id", row,
+                            "AND campaign_assignments.response_id IS NOT excluded.response_id",
+                            row,
                         )
                     for row in prepared_responses:
                         if not self._conn.execute(
                             "SELECT 1 FROM campaign_assignments WHERE campaign_id=? AND assignment_id=?",
                             (campaign_id, row[2]),
                         ).fetchone():
-                            raise ValueError("Response has no campaign assignment")
+                            raise ValueError(
+                                _ui_text("workspace_results.response_has_no_campaign_assignment")
+                            )
                         old = self._conn.execute(
-                            "SELECT * FROM campaign_responses WHERE campaign_id=? AND response_id=?", row[:2],
+                            "SELECT * FROM campaign_responses WHERE campaign_id=? AND response_id=?",
+                            row[:2],
                         ).fetchone()
                         if old and tuple(old) != row:
                             previous = json.loads(old["details"])
                             current = json.loads(row[6])
                             if _same_response_source(previous["source_ref"], current["source_ref"]):
                                 previous["source_ref"] = current["source_ref"]
-                            correction = (old["outcome"] == "missing" and row[4] == "policy"
-                                and current.get("outcome_basis") in LEGACY_POLICY_BASES)
+                            correction = (
+                                old["outcome"] == "missing"
+                                and row[4] == "policy"
+                                and current.get("outcome_basis") in LEGACY_POLICY_BASES
+                            )
                             if correction:
                                 # The publisher resolved the native error code from
                                 # the unchanged response, not from the prompt topic.
                                 previous["outcome_basis"] = current["outcome_basis"]
                                 previous["missing_category"] = None
-                            comparable = (*tuple(old)[:4], "policy" if correction else old["outcome"],
-                                old["truncated"], json.dumps(previous, sort_keys=True, allow_nan=False))
+                            comparable = (
+                                *tuple(old)[:4],
+                                "policy" if correction else old["outcome"],
+                                old["truncated"],
+                                json.dumps(previous, sort_keys=True, allow_nan=False),
+                            )
                             if comparable != row:
-                                raise ValueError("Retained response metadata changed; retain a separate condition")
+                                raise ValueError(
+                                    _ui_text(
+                                        "workspace_results.retained_response_metadata_changed_retain_a_separate_condition"
+                                    )
+                                )
                             self._conn.execute(
                                 "UPDATE campaign_responses SET outcome=?,details=? WHERE campaign_id=? AND response_id=?",
                                 (row[4], row[6], row[0], row[1]),
                             )
-                        self._conn.execute("INSERT OR IGNORE INTO campaign_responses VALUES(?,?,?,?,?,?,?)", row)
+                        self._conn.execute(
+                            "INSERT OR IGNORE INTO campaign_responses VALUES(?,?,?,?,?,?,?)", row
+                        )
                     for row in prepared_assignments:
-                        if row[8] is not None and not self._conn.execute(
-                            "SELECT 1 FROM campaign_responses WHERE campaign_id=? AND response_id=? AND assignment_id=?",
-                            (campaign_id, row[8], row[1]),
-                        ).fetchone():
-                            raise ValueError("Selected response does not belong to this assignment")
+                        if (
+                            row[8] is not None
+                            and not self._conn.execute(
+                                "SELECT 1 FROM campaign_responses WHERE campaign_id=? AND response_id=? AND assignment_id=?",
+                                (campaign_id, row[8], row[1]),
+                            ).fetchone()
+                        ):
+                            raise ValueError(
+                                _ui_text(
+                                    "workspace_results.selected_response_does_not_belong_to_this_assignment"
+                                )
+                            )
                     for row in prepared_judgments:
                         if not self._conn.execute(
-                            "SELECT 1 FROM campaign_responses WHERE campaign_id=? AND response_id=?", row[:2],
+                            "SELECT 1 FROM campaign_responses WHERE campaign_id=? AND response_id=?",
+                            row[:2],
                         ).fetchone():
-                            raise ValueError("Judgment has no matching retained output")
+                            raise ValueError(
+                                _ui_text(
+                                    "workspace_results.judgment_has_no_matching_retained_output"
+                                )
+                            )
                         old = self._conn.execute(
                             "SELECT * FROM campaign_judgments WHERE campaign_id=? AND response_id=? AND judge_id=?",
                             row[:3],
                         ).fetchone()
                         if old and old["status"] in {"valid", "invalid"} and tuple(old) != row:
-                            if tuple(old)[:-1] != row[:-1] or not _same_judgment_source(old["source_ref"], row[-1]):
-                                raise ValueError("Retained judgment changed; use a distinct judge condition")
+                            if tuple(old)[:-1] != row[:-1] or not _same_judgment_source(
+                                old["source_ref"], row[-1]
+                            ):
+                                raise ValueError(
+                                    _ui_text(
+                                        "workspace_results.retained_judgment_changed_use_a_distinct_judge_condition"
+                                    )
+                                )
                         self._conn.execute(
                             "INSERT INTO campaign_judgments VALUES(?,?,?,?,?,?) "
                             "ON CONFLICT(campaign_id,response_id,judge_id) DO UPDATE SET "
-                            "status=excluded.status,label=excluded.label,source_ref=excluded.source_ref", row,
+                            "status=excluded.status,label=excluded.label,source_ref=excluded.source_ref",
+                            row,
                         )
             except sqlite3.Error as exc:
                 self._fail(exc)
-                raise ValueError("Campaign result index could not be saved") from exc
+                raise ValueError(
+                    _ui_text("workspace_results.campaign_result_index_could_not_be_saved")
+                ) from exc
 
     def workspace_result_models(self, campaign_id: str) -> list[sqlite3.Row] | None:
         return self._query(
@@ -325,8 +496,9 @@ class WorkspaceResultsMixin:
             (campaign_id, campaign_id),
         )
 
-    def workspace_result_conditions(self, campaign_id: str, *, model: str,
-                                    measured_only: bool = False) -> list[sqlite3.Row] | None:
+    def workspace_result_conditions(
+        self, campaign_id: str, *, model: str, measured_only: bool = False
+    ) -> list[sqlite3.Row] | None:
         """Settings for one selected model, read only from compact indexed metadata."""
         return self._query(
             "SELECT COALESCE(r.condition_id,a.condition_id) AS condition_id,COUNT(*) AS assigned, "
@@ -342,13 +514,14 @@ class WorkspaceResultsMixin:
             "FROM campaign_assignments a LEFT JOIN campaign_responses r "
             "ON r.campaign_id=a.campaign_id AND r.response_id=a.response_id AND r.assignment_id=a.assignment_id "
             "WHERE a.campaign_id=? AND a.model=? "
-            + ("AND a.evidence_class='measured' " if measured_only else "")
-            + "GROUP BY COALESCE(r.condition_id,a.condition_id) "
-            "ORDER BY condition_id", (campaign_id, model),
+            + (_ui_text("workspace_results.and_a_evidence_class_measured") if measured_only else "")
+            + "GROUP BY COALESCE(r.condition_id,a.condition_id) ORDER BY condition_id",
+            (campaign_id, model),
         )
 
-    def workspace_model_totals(self, campaign_id: str, *, offset: int = 0,
-                               model: str = "", condition: str = "") -> list[sqlite3.Row] | None:
+    def workspace_model_totals(
+        self, campaign_id: str, *, offset: int = 0, model: str = "", condition: str = ""
+    ) -> list[sqlite3.Row] | None:
         return self._query(
             "SELECT a.model,a.evidence_class,COUNT(*) AS assigned,COUNT(DISTINCT COALESCE(r.condition_id,a.condition_id)) AS conditions, "
             "SUM(r.outcome='usable') AS usable,SUM(r.outcome='policy') AS policy, "
@@ -364,8 +537,9 @@ class WorkspaceResultsMixin:
             (campaign_id, model, model, condition, condition, max(0, offset)),
         )
 
-    def workspace_result_rows(self, campaign_id: str, *, offset: int = 0, model: str = "",
-                              condition: str = "") -> list[sqlite3.Row] | None:
+    def workspace_result_rows(
+        self, campaign_id: str, *, offset: int = 0, model: str = "", condition: str = ""
+    ) -> list[sqlite3.Row] | None:
         return self._query(
             "SELECT a.*,r.outcome,r.truncated,r.details,r.condition_id AS response_condition FROM campaign_assignments a "
             "LEFT JOIN campaign_responses r ON r.campaign_id=a.campaign_id AND r.response_id=a.response_id "
@@ -375,8 +549,9 @@ class WorkspaceResultsMixin:
             (campaign_id, model, model, condition, condition, max(0, offset)),
         )
 
-    def workspace_judging_totals(self, campaign_id: str, *, model: str = "",
-                                condition: str = "") -> list[sqlite3.Row] | None:
+    def workspace_judging_totals(
+        self, campaign_id: str, *, model: str = "", condition: str = ""
+    ) -> list[sqlite3.Row] | None:
         return self._query(
             "SELECT j.judge_id,j.status,COUNT(*) AS count FROM campaign_judgments j "
             "JOIN campaign_responses r ON r.campaign_id=j.campaign_id AND r.response_id=j.response_id "
@@ -387,8 +562,15 @@ class WorkspaceResultsMixin:
             (campaign_id, model, model, condition, condition),
         )
 
-    def workspace_judgment_breakdown(self, campaign_id: str, *, offset: int = 0,
-                                     model: str = "", condition: str = "", judge: str = "") -> list[sqlite3.Row] | None:
+    def workspace_judgment_breakdown(
+        self,
+        campaign_id: str,
+        *,
+        offset: int = 0,
+        model: str = "",
+        condition: str = "",
+        judge: str = "",
+    ) -> list[sqlite3.Row] | None:
         """Page complete label distributions, keeping scientific conditions separate."""
         return self._query(
             "WITH counts AS (SELECT a.model,a.evidence_class,r.condition_id,a.modality,a.framework,a.corpus,"
@@ -403,5 +585,15 @@ class WorkspaceResultsMixin:
             "model,evidence_class,condition_id,modality,framework,corpus,judge_id) "
             "AS group_number FROM counts) SELECT * FROM ranked WHERE group_number>? AND group_number<=? "
             "ORDER BY group_number,status,label",
-            (campaign_id, model, model, condition, condition, judge, judge, max(0, offset), max(0, offset) + 13),
+            (
+                campaign_id,
+                model,
+                model,
+                condition,
+                condition,
+                judge,
+                judge,
+                max(0, offset),
+                max(0, offset) + 13,
+            ),
         )

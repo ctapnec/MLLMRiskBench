@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .i18n import text as _ui_text
+
 import json
 import sqlite3
 import time
@@ -10,31 +12,65 @@ from pathlib import Path
 from experiments.hosted_retained_inputs import _sha, retained_input_identity
 
 from .storage import ConsoleDB
-from .workspace_import import _jsonl, local_generation_condition, local_judge_condition, local_response_row
+from .workspace_import import (
+    _jsonl,
+    local_generation_condition,
+    local_judge_condition,
+    local_response_row,
+)
 
 
 class LocalCheckpointPublication:
-    def __init__(self, *, campaign_id, database, manifest, corpus, checkpoint, response_checkpoint, input_selections=None):
+    def __init__(
+        self,
+        *,
+        campaign_id,
+        database,
+        manifest,
+        corpus,
+        checkpoint,
+        response_checkpoint,
+        input_selections=None,
+    ):
         self.campaign_id, self.database = campaign_id, database
         self.manifest, self.run = manifest, manifest["config"]["run"]
         self.model, self.run_id = self.run["model_spec"], manifest["run_id"]
         self.input_selections = input_selections
         self.corpus_sha = manifest["dataset_hashes"]["corpus"]
         if self.run.get("recovery_selection"):
-            original_corpus = self.run.get("sampling_audit", {}).get("pre_recovery_converted_corpus_sha256")
+            original_corpus = self.run.get("sampling_audit", {}).get(
+                "pre_recovery_converted_corpus_sha256"
+            )
             if original_corpus:
                 # Runner already computed this before excluding completed rows.
                 # Keep its input identity without another corpus scan or hash.
                 self.corpus_sha = original_corpus
             elif input_selections is None:
-                raise ValueError("Recovery publication requires its original retained input selection")
-        self.condition, self.judge = local_generation_condition(self.run), local_judge_condition(self.run)
-        self.metadata = {dp.id: dict(source=dp.source, risk_category=dp.risk_category,
-            expected_behavior=dp.expected_behavior) for dp in corpus}
+                raise ValueError(
+                    _ui_text(
+                        "workspace_local.recovery_publication_requires_its_original_retained_input_selecti"
+                    )
+                )
+        self.condition, self.judge = (
+            local_generation_condition(self.run),
+            local_judge_condition(self.run),
+        )
+        self.metadata = {
+            dp.id: dict(
+                source=dp.source,
+                risk_category=dp.risk_category,
+                expected_behavior=dp.expected_behavior,
+            )
+            for dp in corpus
+        }
         self.reached_inputs = set()
         self.published_input_count = None
-        self.evidence = {"measured_run": "measured", "diagnostic_canary": "diagnostic",
-            "attestation_probe": "diagnostic", "preflight": "preflight"}.get(self.run.get("execution_purpose"), "unknown")
+        self.evidence = {
+            "measured_run": "measured",
+            "diagnostic_canary": "diagnostic",
+            "attestation_probe": "diagnostic",
+            "preflight": "preflight",
+        }.get(self.run.get("execution_purpose"), "unknown")
         self.paths = {"response": Path(response_checkpoint), "judgment": Path(checkpoint)}
         self.references, self.lines = {}, {}
         # One pass over the two exact checkpoint files at cell startup. No
@@ -52,38 +88,70 @@ class LocalCheckpointPublication:
     def _rows(self, record, role):
         attempt, response = record["attempt"], record["response"]
         aid = attempt["id"]
-        if (attempt["run_id"] != self.run_id or response["run_id"] != self.run_id
-                or response["attempt_id"] != aid or attempt["target"] != self.model
-                or response["target"] != self.model):
-            raise ValueError("Local checkpoint publication ownership differs")
-        choice = retained_input_identity(self.run, self.corpus_sha,
-            attempt, self.metadata[attempt["datapoint_id"]])
+        if (
+            attempt["run_id"] != self.run_id
+            or response["run_id"] != self.run_id
+            or response["attempt_id"] != aid
+            or attempt["target"] != self.model
+            or response["target"] != self.model
+        ):
+            raise ValueError(
+                _ui_text("workspace_local.local_checkpoint_publication_ownership_differs")
+            )
+        choice = retained_input_identity(
+            self.run, self.corpus_sha, attempt, self.metadata[attempt["datapoint_id"]]
+        )
         if self.input_selections is not None:
             selected = self.input_selections[aid]
             original = {key: selected[key] for key in choice}
-            if (_sha(original) != selected["input_identity_sha256"]
-                    or any(choice[key] != original[key] for key in choice if key != "converted_corpus_sha256")):
-                raise ValueError("Recovery output differs from its original retained input")
+            if _sha(original) != selected["input_identity_sha256"] or any(
+                choice[key] != original[key] for key in choice if key != "converted_corpus_sha256"
+            ):
+                raise ValueError(
+                    _ui_text(
+                        "workspace_local.recovery_output_differs_from_its_original_retained_input"
+                    )
+                )
             choice = original
         identity = self.run_id + ":" + aid
-        prefix='local-' if self.model.startswith(('ollama:','vllm:')) else 'direct-'
-        assignment = dict(assignment_id=prefix+identity, model=self.model,
-            input_id=_sha(choice), condition_id=self.condition, modality=choice["modality"],
-            framework=choice["framework"], corpus=choice["corpus"], response_id=identity,
-            evidence_class=self.evidence)
+        prefix = "local-" if self.model.startswith(("ollama:", "vllm:")) else "direct-"
+        assignment = dict(
+            assignment_id=prefix + identity,
+            model=self.model,
+            input_id=_sha(choice),
+            condition_id=self.condition,
+            modality=choice["modality"],
+            framework=choice["framework"],
+            corpus=choice["corpus"],
+            response_id=identity,
+            evidence_class=self.evidence,
+        )
         reference = self.references["response"].get(aid, self.references[role][aid])
         judgments = []
         if role == "judgment":
             judgment = record["judgment"]
             if judgment["run_id"] != self.run_id or judgment["attempt_id"] != aid:
-                raise ValueError("Local judgment does not belong to its output")
+                raise ValueError(
+                    _ui_text("workspace_local.local_judgment_does_not_belong_to_its_output")
+                )
             missing = (judgment.get("raw") or {}).get("policy_evaluation_status") in {
-                "model_nonresponse", "target_input_incompatible"}
-            judgments.append(dict(response_id=identity, judge_id=self.judge,
-                status="missing" if missing else "valid", label=None if missing else judgment["label"],
-                source_ref=self.references["judgment"][aid]))
-        return dict(assignments=[assignment], responses=[local_response_row(response, self.condition, reference)],
-            judgments=judgments)
+                "model_nonresponse",
+                "target_input_incompatible",
+            }
+            judgments.append(
+                dict(
+                    response_id=identity,
+                    judge_id=self.judge,
+                    status="missing" if missing else "valid",
+                    label=None if missing else judgment["label"],
+                    source_ref=self.references["judgment"][aid],
+                )
+            )
+        return dict(
+            assignments=[assignment],
+            responses=[local_response_row(response, self.condition, reference)],
+            judgments=judgments,
+        )
 
     def accept(self, record, role, *, restored=False):
         aid = record["attempt"]["id"]
@@ -104,23 +172,35 @@ class LocalCheckpointPublication:
                 self.published.add(key)
                 del self.pending[key]
             if self.published_input_count != len(self.reached_inputs):
-                self.db.publish_workspace_inputs(self.campaign_id, run_id=self.run_id, model=self.model,
-                    condition_id=self.condition, evidence_class=self.evidence,
-                    planned=len(self.metadata), reached=len(self.reached_inputs))
+                self.db.publish_workspace_inputs(
+                    self.campaign_id,
+                    run_id=self.run_id,
+                    model=self.model,
+                    condition_id=self.condition,
+                    evidence_class=self.evidence,
+                    planned=len(self.metadata),
+                    reached=len(self.reached_inputs),
+                )
                 self.published_input_count = len(self.reached_inputs)
         except (OSError, ValueError, KeyError, TypeError, RuntimeError, sqlite3.Error) as exc:
             error = type(exc).__name__
             if self.db is not None:
                 self.db.close()
                 self.db = None
-        status = dict(status="publication_pending" if self.pending or error else "published",
-            campaign_id=self.campaign_id, run_id=self.run_id, published_records=len(self.published),
-            pending_records=len(self.pending), error_type=error, updated_at=time.time())
+        status = dict(
+            status="publication_pending" if self.pending or error else "published",
+            campaign_id=self.campaign_id,
+            run_id=self.run_id,
+            published_records=len(self.published),
+            pending_records=len(self.pending),
+            error_type=error,
+            updated_at=time.time(),
+        )
         # Publication failure is not a generation failure. Its small retained
         # status is separate from the authoritative checkpoint and completion.
         try:
             temporary = self.status_path.with_suffix(".tmp")
-            temporary.write_text(json.dumps(status, sort_keys=True)+"\n", encoding="utf-8")
+            temporary.write_text(json.dumps(status, sort_keys=True) + "\n", encoding="utf-8")
             temporary.replace(self.status_path)
         except OSError:
             pass
@@ -131,20 +211,32 @@ class LocalCheckpointPublication:
             self.db.close()
 
 
-def run_with_workspace_publication(runner, corpus, *, campaign_id="", database=None,
-                                   checkpoint, response_checkpoint, **kwargs):
+def run_with_workspace_publication(
+    runner, corpus, *, campaign_id="", database=None, checkpoint, response_checkpoint, **kwargs
+):
     """Compose publication after existing durable callbacks; preserve resumes."""
     if not campaign_id:
         return runner.run(corpus, **kwargs)
     try:
-        publisher = LocalCheckpointPublication(campaign_id=campaign_id, database=database,
-            manifest=kwargs["manifest"].model_dump(mode="json"), corpus=corpus,
-            checkpoint=checkpoint, response_checkpoint=response_checkpoint)
+        publisher = LocalCheckpointPublication(
+            campaign_id=campaign_id,
+            database=database,
+            manifest=kwargs["manifest"].model_dump(mode="json"),
+            corpus=corpus,
+            checkpoint=checkpoint,
+            response_checkpoint=response_checkpoint,
+        )
     except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
-        status = dict(status="publication_pending", campaign_id=campaign_id,
-            error_type=type(exc).__name__, updated_at=time.time())
+        status = dict(
+            status="publication_pending",
+            campaign_id=campaign_id,
+            error_type=type(exc).__name__,
+            updated_at=time.time(),
+        )
         try:
-            Path(response_checkpoint).with_suffix(".publication.json").write_text(json.dumps(status)+"\n", encoding="utf-8")
+            Path(response_checkpoint).with_suffix(".publication.json").write_text(
+                json.dumps(status) + "\n", encoding="utf-8"
+            )
         except OSError:
             pass
         return runner.run(corpus, **kwargs)
@@ -159,9 +251,11 @@ def run_with_workspace_publication(runner, corpus, *, campaign_id="", database=N
         def after_durable(callback, role):
             if callback is None:
                 return None
+
             def publish(record):
                 callback(record)
                 publisher.accept(record, role)
+
             return publish
 
         kwargs["on_response"] = after_durable(kwargs.get("on_response"), "response")

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .i18n import template as _ui_template, text as _ui_text
+
 import html
 import json
 from urllib.parse import quote
@@ -90,9 +92,11 @@ nav a { display:flex; gap:.4rem; align-items:center; color:var(--muted);
   padding:.35rem .7rem; border-radius:8px; }
 nav a:hover { background:var(--soft); color:var(--ink); }
 nav a.active { background:var(--soft); color:var(--accent); }
-.theme-control { display:flex; align-items:center; gap:.5rem; margin-left:auto;
+.display-preferences { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem 1rem; margin-left:auto; }
+.theme-control, .language-control { display:flex; align-items:center; gap:.5rem;
   padding:.25rem 0; color:var(--muted); font-size:.82rem; font-weight:600; }
 .theme-control select { min-width:8rem; max-width:100%; font-size:.82rem; }
+.language-control select { min-width:5.5rem; max-width:100%; font-size:.82rem; }
 .review-theme-bar { max-width:960px; margin:.75rem auto 0; padding:0 1.2rem;
   display:flex; justify-content:flex-end; }
 h1 { font-size:1.3rem; margin:.4rem 0 1rem; display:flex; gap:.55rem;
@@ -785,7 +789,7 @@ button.is-busy { opacity:.6; pointer-events:none; }
 """
 
 
-_BUILDER_SCRIPT = """<script>(function(){
+_BUILDER_SCRIPT = _ui_template("""<script>(function(){
 var form=document.getElementById('builder');
 if(!form){return;}
 var picker=document.getElementById('model-picker');
@@ -860,20 +864,20 @@ if(pickerIsOpen()&&pickerRole==='judge'){
 applyTargetFilters({text:1},'judge');
 }else{applyTargetFilters(sc,'target');}}
 function updateUnknownPrecisionBadges(){
-var labels={none:'16-bit',fp8:'8-bit FP8',bitsandbytes:'4-bit BitsAndBytes',
-awq:'4-bit AWQ',gptq:'4-bit GPTQ'};
-form.querySelectorAll(".modelrow[data-compatible='unknown']").forEach(function(row){
-var badge=row.querySelector('.precision-badge');var select=row.querySelector('.modelquant select');
+var labels={none:'16-bit',fp8:[[js:ui.8_bit_fp8]],bitsandbytes:[[js:ui.4_bit_bitsandbytes]],
+awq:[[js:ui.4_bit_awq]],gptq:[[js:ui.4_bit_gptq]]};
+form.querySelectorAll(\".modelrow[data-compatible='unknown']\").forEach(function(row){
+var badge=row.querySelector('.precision-badge');var select=row.querySelector([[js:ui.modelquant_select]]);
 var label=badge&&badge.querySelector('.precision-label');
 var tip=badge&&badge.querySelector('.tiptext');
 if(!badge||!select||!label){return;}var value=select.value;
-label.textContent=value==='auto'?'fit unknown':
-(labels[value]||value)+' selected · fit unknown';
+label.textContent=value==='auto'?[[js:ui.fit_unknown]]:
+(labels[value]||value)+[[js:ui.selected_fit_unknown]];
 if(tip){tip.textContent=value==='auto'?
-'The operator must choose a per-model precision before a live run.':
-'Operator-selected precision; hardware fit remains unknown.';}});
-form.querySelectorAll(".modelrow[data-profile-overrides='true']").forEach(function(row){
-var select=row.querySelector('.modelquant select');if(!select){return;}
+[[js:ui.the_operator_must_choose_a_per_model_precision_before_a_live_run]]:
+[[js:ui.operator_selected_precision_hardware_fit_remains_unknown]];}});
+form.querySelectorAll(\".modelrow[data-profile-overrides='true']\").forEach(function(row){
+var select=row.querySelector([[js:ui.modelquant_select]]);if(!select){return;}
 var option=select.options[select.selectedIndex];var fit=option&&option.getAttribute('data-fit');
 if(!fit){return;}row.setAttribute('data-compatible',fit);
 var disabled=row.getAttribute('data-config-invalid')==='true'||fit==='false';
@@ -883,7 +887,7 @@ function applyPreparedFields(){
 var any=false;
 form.querySelectorAll('.prepared-fields').forEach(function(panel){
 var name=panel.getAttribute('data-prepared');
-var box=form.querySelector(".fwbox[data-fw='"+name+"']");
+var box=form.querySelector(\".fwbox[data-fw='\"+name+\"']\");
 var visible=!!(box&&box.checked);panel.hidden=!visible;
 panel.setAttribute('aria-hidden',visible?'false':'true');
 if(box){box.setAttribute('aria-expanded',visible?'true':'false');}
@@ -892,22 +896,22 @@ if(visible){any=true;}});
  if(group){group.hidden=!any;group.setAttribute('aria-hidden',any?'false':'true');}}
 function syncIdeatorPairLimit(){
  var status=document.getElementById('ideator-pair-status');
- var input=form.querySelector("[name='ideator_pair_limit']");
+ var input=form.querySelector(\"[name='ideator_pair_limit']\");
  if(!status||!input){return;}
  var available=parseInt(status.getAttribute('data-available')||'',10);
  var raw=input.value.trim();
  if(!Number.isFinite(available)){
- status.textContent='Available and selected pair counts appear after the complete manifest and image inventory validate.';return;}
+ status.textContent=[[js:ui.available_and_selected_pair_counts_appear_after_the_complete_mani]];return;}
  if(!/^[0-9]+$/.test(raw)){
- status.textContent='Enter 0 or a positive ordered-prefix pair count.';return;}
+ status.textContent=[[js:ui.enter_0_or_a_positive_ordered_prefix_pair_count]];return;}
  var requested=parseInt(raw,10);var selected=requested===0?available:Math.min(requested,available);
- status.textContent=selected+' selected of '+available+' verified pairs in manifest order'+
- (requested>available?' (requested limit exceeds the inventory)':'')+'.';}
+ status.textContent=selected+[[js:ui.selected_of]]+available+[[js:ui.verified_pairs_in_manifest_order]]+
+ (requested>available?[[js:ui.requested_limit_exceeds_the_inventory]]:'')+'.';}
 function syncHostedRetryPolicy(){
  var input=form.elements.namedItem('target_answer_retries');if(!input){return;}
  var hosted=checkedKind('api','data-model').length>0;
  if(hosted){input.value='0';input.readOnly=true;
- input.title='Paid hosted targets use no answer-quality retries.';}
+ input.title=[[js:ui.paid_hosted_targets_use_no_answer_quality_retries]];}
  else{input.readOnly=false;input.removeAttribute('title');}}
 var samplePanel=document.getElementById('sample-size-control');
 var sampleRange=document.getElementById('sample-limit-range');
@@ -938,7 +942,7 @@ if(sampleRange){sampleRange.disabled=!exact;}if(rangeField){rangeField.hidden=!e
 var inventory=document.getElementById('sample-arm-inventory');
 if(inventory&&countKeys.length){inventory.hidden=!exact;}
 var count=document.getElementById('sample-arm-count');
-if(count){count.textContent=drySynthetic?'Synthetic arm selected automatically':
+if(count){count.textContent=drySynthetic?[[js:ui.synthetic_arm_selected_automatically]]:
 arms.length+' arm'+(arms.length===1?'':'s')+' selected';}
 if(!sampleRange||!sampleNumber){return;}
 var raw=sampleNumber.value.trim();var valid=/^[0-9]+$/.test(raw);
@@ -946,7 +950,7 @@ if(mode==='diagnostic_canary'&&!raw){sampleNumber.value='1';raw='1';valid=true;}
 var api=checkedKind('api','data-model');var judges=checked('.judgebox','data-judge');
 var judgeModelValue=namedValue('judge_model','');
 var hostedJudge=judges.indexOf('llm')>=0&&Array.prototype.some.call(
-form.querySelectorAll(".modelbox[data-kind='api']"),
+form.querySelectorAll(\".modelbox[data-kind='api']\"),
 function(b){return (b.getAttribute('data-model')||'')===judgeModelValue;});
 var localOnlyMeasured=mode==='measured'&&!api.length&&!hostedJudge;
 var defaultValue=localOnlyMeasured?0:50;
@@ -955,13 +959,13 @@ if(exact){var exactMax=countKeys.reduce(function(maximum,key){
 return Math.max(maximum,parseInt(counts[key].total_clusters,10));},0);
 sampleRange.max=String(exactMax);sampleRange.value=String(Math.min(value,exactMax));}
 var status=document.getElementById('sample-limit-status');if(!status){return;}
-if(!enabled){status.textContent='Select one or more arms to configure sampling';}
-else if(!exact){status.textContent='Enter a non-negative cluster limit now. The exact slider range and per-arm record fanout appear after a matching no-call preflight.';}
+if(!enabled){status.textContent=[[js:ui.select_one_or_more_arms_to_configure_sampling]];}
+else if(!exact){status.textContent=[[js:ui.enter_a_non_negative_cluster_limit_now_the_exact_slider_range_and]];}
 else{var effective=countKeys.reduce(function(total,key){var available=parseInt(counts[key].total_clusters,10);
 return total+(value===0?available:Math.min(value,available));},0);
-status.textContent='Effective selection: '+effective+' clusters across '+effectiveCount+
-' independently capped arm'+(effectiveCount===1?'':'s')+
-'; converted-row fanout is fixed by the matching preflight.';}}
+status.textContent=[[js:ui.effective_selection]]+effective+[[js:ui.clusters_across]]+effectiveCount+
+[[js:ui.independently_capped_arm]]+(effectiveCount===1?'':'s')+
+[[js:ui.converted_row_fanout_is_fixed_by_the_matching_preflight]];}}
 if(sampleRange&&sampleNumber){
 sampleRange.addEventListener('input',function(){sampleNumber.value=this.value;});}
 function rememberPickerSelection(){
@@ -976,7 +980,7 @@ if(selected&&judgeInput){
 judgeInput.value=selected.getAttribute('data-model')||'';
 // Choosing a judge is an execution choice, not a dormant preference. Keep the
 // submitted stage inventory coherent with the model the operator just chose.
-var llmStage=form.querySelector(".judgebox[data-judge='llm']");
+var llmStage=form.querySelector(\".judgebox[data-judge='llm']\");
 if(llmStage){llmStage.checked=true;}}}
 function configurePickerInputs(){
 var judgeInput=document.getElementById('judge-model-input');
@@ -995,20 +999,20 @@ var targets=checkedKind('api','data-model').concat(
 checkedKind('local','data-model'));
 var targetOut=document.getElementById('target-model-summary');
 if(targetOut){targetOut.textContent=targets.length?
-targets.length+' selected: '+targets.join(', '):'No target models selected';}
+targets.length+' selected: '+targets.join(', '):[[js:ui.no_target_models_selected]];}
 var judgeInput=document.getElementById('judge-model-input');
 var judgeOut=document.getElementById('judge-model-summary');
 if(judgeOut){judgeOut.textContent=judgeInput&&judgeInput.value?
-judgeInput.value:'No LLM judge model selected';}}
+judgeInput.value:[[js:ui.no_llm_judge_model_selected]];}}
 function setPickerRole(role){
 pickerRole=role==='judge'?'judge':'target';
 if(!picker){return;}picker.setAttribute('data-role',pickerRole);
 var title=document.getElementById('model-picker-title');
-if(title){title.textContent=pickerRole==='judge'?'Choose LLM judge model':'Choose target models';}
+if(title){title.textContent=pickerRole==='judge'?[[js:ui.choose_llm_judge_model]]:[[js:ui.choose_target_models]];}
 var note=document.getElementById('model-picker-role-note');
 if(note){note.textContent=pickerRole==='judge'?
-'Choose exactly one judge. It must differ from every target model.':
-'Choose one or more hosted targets and at most one local target.';}
+[[js:ui.choose_exactly_one_judge_it_must_differ_from_every_target_model]]:
+[[js:ui.choose_one_or_more_hosted_targets_and_at_most_one_local_target]];}
 configurePickerInputs();}
 function showPickerRuntime(){
 var runtime=document.getElementById('model-picker-runtime');
@@ -1033,7 +1037,7 @@ step.disabled=false;step.classList.toggle('on',active);
 if(active){step.setAttribute('aria-current','step');}
 else{step.removeAttribute('aria-current');}});
 applyTargetFilters(pickerRole==='judge'?{text:1}:scopeSet(),pickerRole);
-var panel=document.querySelector(".picker-model-panel[data-picker-panel='"+pickerKind+"']");
+var panel=document.querySelector(\".picker-model-panel[data-picker-panel='\"+pickerKind+\"']\");
 if(panel){var first=panel.querySelector('select,input:not([hidden]),button');
 if(first){first.focus();}}}
 function openPicker(role,opener){
@@ -1067,7 +1071,7 @@ picker.addEventListener('keydown',function(event){
 if(event.key==='Escape'){event.preventDefault();closePicker();return;}
 if(event.key!=='Tab'){return;}
 var focusable=Array.prototype.filter.call(picker.querySelectorAll(
-'button:not([disabled]),input:not([disabled]):not([hidden]),select:not([disabled]),[tabindex]:not([tabindex="-1"])'),
+'button:not([disabled]),input:not([disabled]):not([hidden]),select:not([disabled]),[tabindex]:not([tabindex=\"-1\"])'),
 function(node){return !node.hidden&&node.offsetParent!==null;});
 if(!focusable.length){event.preventDefault();return;}
 var first=focusable[0];var last=focusable[focusable.length-1];
@@ -1079,14 +1083,14 @@ rememberPickerSelection();updateSelectionSummaries();});});
 function namedValue(name,fallback){var field=form.elements.namedItem(name);
 var value=field&&typeof field.value==='string'?field.value.trim():'';
 return value||fallback;}
-function checkedName(name){var field=form.querySelector("input[name='"+name+"']");
+function checkedName(name){var field=form.querySelector(\"input[name='\"+name+\"']\");
 return !!(field&&field.checked);}
-function selectionLabel(values){if(!values.length){return 'none selected';}
+function selectionLabel(values){if(!values.length){return [[js:ui.none_selected]];}
 var shown=values.slice(0,3).join(', ');return shown+(values.length>3?
 ' +'+(values.length-3)+' more':'');}
 function pairState(pathName,digestName){var path=namedValue(pathName,'');
 var digest=namedValue(digestName,'');if(path&&digest){return 'set';}
-if(path||digest){return 'incomplete';}return 'not set';}
+if(path||digest){return 'incomplete';}return [[js:ui.not_set]];}
 function setBuildSummary(id,value){var out=document.getElementById(id);
 if(out){out.textContent=value;}}
 function refresh(){rememberPickerSelection();updateUnknownPrecisionBadges();
@@ -1113,7 +1117,7 @@ var jg=checked('.judgebox','data-judge');if(jg.length){parts.push('--judges '+jg
 var lim=form.querySelector('input[name=limit]').value;
 var judgeModelValue=namedValue('judge_model','');
 var hostedJudge=jg.indexOf('llm')>=0&&Array.prototype.some.call(
-form.querySelectorAll(".modelbox[data-kind='api']"),
+form.querySelectorAll(\".modelbox[data-kind='api']\"),
 function(b){return (b.getAttribute('data-model')||'')===judgeModelValue;});
 // a blank limit composes --limit 0 (the complete release) only where
 // validation admits it: a measured lane with no hosted target and no hosted
@@ -1134,65 +1138,65 @@ var mods=checked('.modbox','data-mod');var targets=api.concat(loc);
 form.querySelector('input[name=modality_scope]').value=mods.join(',');
 setBuildSummary('build-summary-composition',mode+'; modalities: '+
 selectionLabel(mods)+'; targets: '+selectionLabel(drySynthetic?[]:targets)+
-'; corpora: '+selectionLabel(drySynthetic?['synth (automatic)']:arms)+
+'; corpora: '+selectionLabel(drySynthetic?[[[js:ui.synth_automatic]]]:arms)+
 '; attacks: '+selectionLabel(fw));
-var judgeModel=namedValue('judge_model','not selected');
+var judgeModel=namedValue('judge_model',[[js:ui.not_selected]]);
 var approx=checkedName('approximate_common_metrics')?'enabled':'off';
 var defense=namedValue('defense','none');var defenseGuard=namedValue('defense_guard','rules');
-var scoringGuard=namedValue('guardrail_model','')?'configured':'not set';
-var defenseGuardrail=namedValue('defense_guardrail_model','')?'configured':'not set';
+var scoringGuard=namedValue('guardrail_model','')?'configured':[[js:ui.not_set]];
+var defenseGuardrail=namedValue('defense_guardrail_model','')?'configured':[[js:ui.not_set]];
 var localJudge=jg.indexOf('llm')>=0&&Array.prototype.some.call(
-form.querySelectorAll(".modelbox[data-kind='local']"),
+form.querySelectorAll(\".modelbox[data-kind='local']\"),
 function(b){return (b.getAttribute('data-model')||'')===judgeModelValue;});
 var responseConditioned=fw.some(function(name){return name.toLowerCase()==='crescendo';});
 var deferredLocalJudge=loc.length&&!drySynthetic&&!responseConditioned&&
 (jg.indexOf('guardrail')>=0||localJudge)&&
 (mode==='measured'||mode==='diagnostic_canary'||mode==='attestation_probe');
-var judgeSchedule=deferredLocalJudge?'post-factum after target GPU release':'inline';
+var judgeSchedule=deferredLocalJudge?[[js:ui.post_factum_after_target_gpu_release]]:'inline';
 setBuildSummary('build-summary-evaluation','judges: '+selectionLabel(jg)+
- '; schedule: '+judgeSchedule+'; LLM model: '+judgeModel+
- '; approximate metrics: '+approx+'; defense: '+
-defense+' / '+defenseGuard+'; scoring guardrail: '+scoringGuard+
-'; defense guardrail: '+defenseGuardrail);
+ '; schedule: '+judgeSchedule+[[js:ui.llm_model]]+judgeModel+
+ [[js:ui.approximate_metrics]]+approx+'; defense: '+
+defense+' / '+defenseGuard+[[js:ui.scoring_guardrail]]+scoringGuard+
+[[js:ui.defense_guardrail]]+defenseGuardrail);
 var completeAtt=0;var incompleteAtt=0;
 form.querySelectorAll('.attrow').forEach(function(row){var fields=row.querySelectorAll('input');
 var path=(fields[0]&&fields[0].value.trim())||'';
 var digest=(fields[1]&&fields[1].value.trim())||'';
 if(path&&digest){completeAtt++;}else if(path||digest){incompleteAtt++;}});
-setBuildSummary('build-summary-admission','project receipt: '+
-pairState('project_revision','project_revision_sha')+'; source receipt: '+
+setBuildSummary('build-summary-admission',[[js:ui.project_receipt]]+
+pairState('project_revision','project_revision_sha')+[[js:ui.source_receipt]]+
 pairState('source_conformance','source_conformance_sha')+'; attestations: '+
 completeAtt+' complete'+(incompleteAtt?(', '+incompleteAtt+' incomplete'):'')+
-'; scope: '+namedValue('scope','not set')+'; max age: '+namedValue('max_age','not set'));
-setBuildSummary('build-summary-trajectory','per-arm limit: '+namedValue('limit',
-localOnlyMeasured?'0 (complete release)':'not set')+
- '; sampling policy: '+namedValue('sampling_policy','legacy seeded default')+
- '; sample seed: '+namedValue('sample_seed','not set')+'; seeds: '+
- namedValue('seeds','not set')+'; queries: '+namedValue('max_queries','not set')+
- '; turns: '+namedValue('max_turns','not set')+'; answer retries: '+
- namedValue('target_answer_retries','1')+'; hosted HTTP-error retries: '+
- (api.length?'3 (max 4 attempts)':'N/A')+'; group: '+namedValue('group','CLI default')+
- '; IDEATOR pair limit: '+namedValue('ideator_pair_limit','0 (all)')+
-'; exclude tool-conditioned: '+(checkedName('exclude_tool_conditioned')?'on':'off')+
-'; reset open circuits: '+(checkedName('reset_open_circuits')?'on':'off')+
-'; lock stale seconds: '+namedValue('lock_stale_seconds','CLI default'));
+'; scope: '+namedValue('scope',[[js:ui.not_set]])+[[js:ui.max_age]]+namedValue('max_age',[[js:ui.not_set]]));
+setBuildSummary('build-summary-trajectory',[[js:ui.per_arm_limit]]+namedValue('limit',
+localOnlyMeasured?[[js:ui.0_complete_release]]:[[js:ui.not_set]])+
+ [[js:ui.sampling_policy]]+namedValue('sampling_policy',[[js:ui.legacy_seeded_default]])+
+ [[js:ui.sample_seed]]+namedValue('sample_seed',[[js:ui.not_set]])+'; seeds: '+
+ namedValue('seeds',[[js:ui.not_set]])+'; queries: '+namedValue('max_queries',[[js:ui.not_set]])+
+ '; turns: '+namedValue('max_turns',[[js:ui.not_set]])+[[js:ui.answer_retries]]+
+ namedValue('target_answer_retries','1')+[[js:ui.hosted_http_error_retries]]+
+ (api.length?'3 (max 4 attempts)':'N/A')+'; group: '+namedValue('group',[[js:ui.cli_default]])+
+ [[js:ui.ideator_pair_limit]]+namedValue('ideator_pair_limit','0 (all)')+
+[[js:ui.exclude_tool_conditioned]]+(checkedName('exclude_tool_conditioned')?'on':'off')+
+[[js:ui.reset_open_circuits]]+(checkedName('reset_open_circuits')?'on':'off')+
+[[js:ui.lock_stale_seconds]]+namedValue('lock_stale_seconds',[[js:ui.cli_default]]));
 setBuildSummary('build-summary-budget','target / judge / HTTP: '+
-(checkedName('automatic_caps')?'calculated during review':
-namedValue('cap_target','not set')+' / '+namedValue('cap_judge','not set')+
- ' / '+namedValue('cap_http','not set'))+'; local process wall-time cap: '+
- namedValue('local_budget_hours','not set')+' h; independent call-start window: '+
-namedValue('deadline','not set')+' s (not a completion timeout)');
+(checkedName('automatic_caps')?[[js:ui.calculated_during_review]]:
+namedValue('cap_target',[[js:ui.not_set]])+' / '+namedValue('cap_judge',[[js:ui.not_set]])+
+ ' / '+namedValue('cap_http',[[js:ui.not_set]]))+[[js:ui.local_process_wall_time_cap]]+
+ namedValue('local_budget_hours',[[js:ui.not_set]])+[[js:ui.h_independent_call_start_window]]+
+namedValue('deadline',[[js:ui.not_set]])+[[js:ui.s_not_a_completion_timeout]]);
 var localPrecisions=[];
-form.querySelectorAll(".modelbox[data-kind='local'][data-target-selected='true']")
+form.querySelectorAll(\".modelbox[data-kind='local'][data-target-selected='true']\")
 .forEach(function(input){var row=input.closest('.modelrow');var precision=row&&
-row.querySelector('.modelquant select');if(precision){localPrecisions.push(
+row.querySelector([[js:ui.modelquant_select]]);if(precision){localPrecisions.push(
 (input.getAttribute('data-model')||'local')+': '+precision.value);}});
 setBuildSummary('build-summary-local','dtype: '+namedValue('dtype','auto')+
-'; model file checks: '+(checkedName('verify_model_sha256')?'full SHA (slow)':'metadata (no weight hashing)')+
-'; default quantization: '+namedValue('quantization','auto')+
-(localPrecisions.length?'; selected model: '+localPrecisions.join(', '):''));
+[[js:ui.model_file_checks]]+(checkedName('verify_model_sha256')?[[js:ui.full_sha_slow]]:[[js:ui.metadata_no_weight_hashing]])+
+[[js:ui.default_quantization]]+namedValue('quantization','auto')+
+(localPrecisions.length?[[js:ui.selected_model]]+localPrecisions.join(', '):''));
 setBuildSummary('build-summary-output',namedValue('setup_mode','')==='automatic'?
-'Assigned automatically on review':namedValue('out','not set'));
+[[js:ui.assigned_automatically_on_review]]:namedValue('out',[[js:ui.not_set]]));
 var prev=document.getElementById('buildpreview');
 if(prev){prev.textContent=parts.join(' ');}}
 form.addEventListener('change',refresh);
@@ -1202,16 +1206,16 @@ if(projectRefresh){projectRefresh.addEventListener('click',function(){
 form.querySelector('[name=project_revision]').value=this.getAttribute('data-path');
 form.querySelector('[name=project_revision_sha]').value=this.getAttribute('data-sha');
 document.getElementById('project-receipt-refresh-status').textContent=
-'Current project receipt selected. Save campaign, then Compose & review. '+
-'Repeat preparation for the new software revision; old jobs and results remain unchanged.';
+[[js:ui.current_project_receipt_selected_save_campaign_then_compose_revie]]+
+[[js:ui.repeat_preparation_for_the_new_software_revision_old_jobs_and_res]];
 refresh();});}
 // The tool-conditioned exclusion is an offline-smoke-only diagnostic.  It is
 // enabled and defaults ON only for a standalone dry run; evidence-bearing
 // preflight, probe, canary, and measured routes must retain whole clusters.
-function applyExclusionDefault(){var box=form.querySelector("input[name='exclude_tool_conditioned']");
+function applyExclusionDefault(){var box=form.querySelector(\"input[name='exclude_tool_conditioned']\");
 if(!box){return;}var m=(form.querySelector('input[name=mode]:checked')||{}).value||'measured';
 box.disabled=m!=='dry_run';box.checked=m==='dry_run';refresh();}
-form.querySelectorAll("input[name='mode'],input[name='canary_dry']").forEach(function(el){
+form.querySelectorAll(\"input[name='mode'],input[name='canary_dry']\").forEach(function(el){
 el.addEventListener('change',applyExclusionDefault);});
 // The two maximum-parameter controls are one filter, expressed in billions.
 var paramRange=document.getElementById('local-param-range');
@@ -1260,30 +1264,30 @@ var n=rows.querySelectorAll('.attrow').length+1;
 if(n>12){return;}
 var div=document.createElement('div');div.className='attrow';
 div.setAttribute('data-row',n);
-div.innerHTML="<input class='wide' type='text' name='att_path"+n+
-"' placeholder='runs/thesis/attest/receipt.live-attestation.json'>"+
-"<input class='wide' type='text' name='att_sha"+n+
-"' placeholder='exact 64-hex sha256'>";
+div.innerHTML=\"<input class='wide' type='text' name='att_path\"+n+
+\"' placeholder='runs/thesis/attest/receipt.live-attestation.json'>\"+
+\"<input class='wide' type='text' name='att_sha\"+n+
+("' placeholder='"+[[jshtml:ui.exact_64_hex_sha256]]+"'>");
 rows.appendChild(div);refresh();});}
 form.addEventListener('submit',function(){
-form.querySelector("input[name=corpora]").value=checked('.armbox','data-arm').join(',');
-form.querySelector("input[name=api]").value=checkedKind('api','data-model').join(',');
-form.querySelector("input[name=local]").value=checkedKind('local','data-model').join(',');
-form.querySelector("input[name=attackers]").value=checked('.fwbox','data-fw').join(',');
-form.querySelector("input[name=judges]").value=checked('.judgebox','data-judge').join(',');});
+form.querySelector(\"input[name=corpora]\").value=checked('.armbox','data-arm').join(',');
+form.querySelector(\"input[name=api]\").value=checkedKind('api','data-model').join(',');
+form.querySelector(\"input[name=local]\").value=checkedKind('local','data-model').join(',');
+form.querySelector(\"input[name=attackers]\").value=checked('.fwbox','data-fw').join(',');
+form.querySelector(\"input[name=judges]\").value=checked('.judgebox','data-judge').join(',');});
 refresh();
-})();</script>"""
+})();</script>""")
 
 
 _NAV_LINKS = (
-    ("/", "grid", "Dashboard"),
-    ("/build", "flask", "Build"),
-    ("/campaigns", "book", "Campaigns"),
-    ("/commands", "terminal", "Tools"),
-    ("/jobs?view=work", "pulse", "Jobs"),
-    ("/stats", "chart", "Stats"),
-    ("/config", "sliders", "Config"),
-    ("/artifacts", "folder", "Artifacts"),
+    ("/", "grid", _ui_text("ui.dashboard")),
+    ("/build", "flask", _ui_text("ui.build")),
+    ("/campaigns", "book", _ui_text("ui.campaigns")),
+    ("/commands", "terminal", _ui_text("ui.tools")),
+    ("/jobs?view=work", "pulse", _ui_text("ui.jobs")),
+    ("/stats", "chart", _ui_text("ui.stats")),
+    ("/config", "sliders", _ui_text("ui.config")),
+    ("/artifacts", "folder", _ui_text("ui.artifacts")),
 )
 
 
@@ -1308,9 +1312,7 @@ def _page_tablist(
         )
     return (
         "<div class='page-tablist' role='tablist' aria-orientation='horizontal' "
-        f"aria-label='{html.escape(label)}'>"
-        + "".join(buttons)
-        + "</div>"
+        f"aria-label='{html.escape(label)}'>" + "".join(buttons) + "</div>"
     )
 
 
@@ -1327,49 +1329,49 @@ def _page_tabpanel(panel_id: str, body: str) -> str:
 _PAGE_TABS_SCRIPT = """<script>(function(){
 function owned(root,selector){return Array.prototype.filter.call(
 root.querySelectorAll(selector),function(node){return node.closest(
-"[data-page-tabs]")===root;});}
+\"[data-page-tabs]\")===root;});}
 function hashPanel(root){var raw=window.location.hash.slice(1);if(!raw){return null;}
 var id;try{id=decodeURIComponent(raw);}catch(error){id=raw;}
 var target=document.getElementById(id);if(!target||!root.contains(target)){return null;}
-var panel=target.matches("[data-page-panel]")?target:
-target.closest("[data-page-panel]");
-return panel&&panel.closest("[data-page-tabs]")===root?panel:null;}
-function init(root){var tabs=owned(root,"[data-page-tab]");
-var panels=owned(root,"[data-page-panel]");if(!tabs.length||!panels.length){return;}
-var key="ura-page-tab:"+(root.getAttribute("data-tab-key")||window.location.pathname);
+var panel=target.matches(\"[data-page-panel]\")?target:
+target.closest(\"[data-page-panel]\");
+return panel&&panel.closest(\"[data-page-tabs]\")===root?panel:null;}
+function init(root){var tabs=owned(root,\"[data-page-tab]\");
+var panels=owned(root,\"[data-page-panel]\");if(!tabs.length||!panels.length){return;}
+var key=\"ura-page-tab:\"+(root.getAttribute(\"data-tab-key\")||window.location.pathname);
 function valid(id){return tabs.some(function(tab){return tab.getAttribute(
-"data-page-tab")===id;});}
+\"data-page-tab\")===id;});}
 function remember(id){try{window.sessionStorage.setItem(key,id);}catch(error){}}
 function activate(id,options){options=options||{};if(!valid(id)){return false;}
-tabs.forEach(function(tab){var on=tab.getAttribute("data-page-tab")===id;
-tab.setAttribute("aria-selected",on?"true":"false");tab.tabIndex=on?0:-1;
+tabs.forEach(function(tab){var on=tab.getAttribute(\"data-page-tab\")===id;
+tab.setAttribute(\"aria-selected\",on?\"true\":\"false\");tab.tabIndex=on?0:-1;
 if(on&&options.focus){tab.focus();}});
 panels.forEach(function(panel){panel.hidden=panel.getAttribute(
-"data-page-panel")!==id;});remember(id);
-if(options.hash){var next=window.location.pathname+window.location.search+"#"+
-encodeURIComponent(id);window.history.replaceState(window.history.state,"",next);}
+\"data-page-panel\")!==id;});remember(id);
+if(options.hash){var next=window.location.pathname+window.location.search+\"#\"+
+encodeURIComponent(id);window.history.replaceState(window.history.state,\"\",next);}
 return true;}
-root.classList.add("tabs-ready");
-tabs.forEach(function(tab,index){tab.addEventListener("click",function(){
-activate(tab.getAttribute("data-page-tab"),{hash:true});});
-tab.addEventListener("keydown",function(event){var next=index;
+root.classList.add(\"tabs-ready\");
+tabs.forEach(function(tab,index){tab.addEventListener(\"click\",function(){
+activate(tab.getAttribute(\"data-page-tab\"),{hash:true});});
+tab.addEventListener(\"keydown\",function(event){var next=index;
 if(event.key==="ArrowRight"){next=(index+1)%tabs.length;}
 else if(event.key==="ArrowLeft"){next=(index+tabs.length-1)%tabs.length;}
 else if(event.key==="Home"){next=0;}else if(event.key==="End"){next=tabs.length-1;}
 else{return;}event.preventDefault();activate(tabs[next].getAttribute(
-"data-page-tab"),{focus:true,hash:true});});});
+\"data-page-tab\"),{focus:true,hash:true});});});
 var initialPanel=hashPanel(root);var initial=initialPanel?
-initialPanel.getAttribute("data-page-panel"):"";
-if(!initial&&root.getAttribute("data-force-default")!=="true"){
-try{initial=window.sessionStorage.getItem(key)||"";}catch(error){initial="";}}
-if(!valid(initial)){initial=root.getAttribute("data-default-tab")||"";}
-if(!valid(initial)){initial=tabs[0].getAttribute("data-page-tab");}
+initialPanel.getAttribute(\"data-page-panel\"):\"\";
+if(!initial&&root.getAttribute(\"data-force-default\")!==\"true\"){
+try{initial=window.sessionStorage.getItem(key)||\"\";}catch(error){initial=\"\";}}
+if(!valid(initial)){initial=root.getAttribute(\"data-default-tab\")||\"\";}
+if(!valid(initial)){initial=tabs[0].getAttribute(\"data-page-tab\");}
 activate(initial);root._activatePageTab=activate;}
-var roots=Array.prototype.slice.call(document.querySelectorAll("[data-page-tabs]"));
+var roots=Array.prototype.slice.call(document.querySelectorAll(\"[data-page-tabs]\"));
 roots.forEach(init);
 function revealHash(){
 roots.forEach(function(root){var panel=hashPanel(root);if(panel&&root._activatePageTab){
-root._activatePageTab(panel.getAttribute("data-page-panel"));}});
+root._activatePageTab(panel.getAttribute(\"data-page-panel\"));}});
 requestAnimationFrame(function(){var id;try{id=decodeURIComponent(location.hash.slice(1));}catch(error){return;}
 var target=id&&document.getElementById(id);if(!target||!target.getClientRects().length){return;}
 var nav=document.querySelector('body > nav'),space=(nav?nav.getBoundingClientRect().height:0)+16;
@@ -1397,21 +1399,45 @@ _FAVICON_SVG = (
 ).encode("utf-8")
 
 
-_THEMES = (('slate', 'Slate'), ('parchment', 'Parchment'), ('midnight', 'Midnight'),
-           ('ash', 'Ash'), ('harbor', 'Harbor'))
+_THEMES = (
+    ("slate", _ui_text("ui.slate")),
+    ("parchment", _ui_text("ui.parchment")),
+    ("midnight", _ui_text("ui.midnight")),
+    ("ash", _ui_text("ui.ash")),
+    ("harbor", _ui_text("ui.harbor")),
+)
 _THEME_PICKER = (
-    "<label class='theme-control' for='theme-picker'>Theme "
-    "<select id='theme-picker' aria-label='Colour theme' "
-    "title='Harbor follows the system light/dark preference'>"
-    + ''.join("<option value='"+key+"'"+(' selected' if key=='harbor' else '')+'>'+label+'</option>'
-              for key,label in _THEMES) + '</select></label>'
+    _ui_template(
+        "<label class='theme-control' for='theme-picker'>[[text:ui.theme]] <select id='theme-picker' aria-label='[[attr:ui.colour_theme]]' title='[[attr:ui.harbor_follows_the_system_light_dark_preference]]'>"
+    )
+    + "".join(
+        "<option value='"
+        + key
+        + "'"
+        + (" selected" if key == "harbor" else "")
+        + ">"
+        + label
+        + "</option>"
+        for key, label in _THEMES
+    )
+    + "</select></label>"
 )
 _THEME_INIT = """<script>(function(){
 var allowed=THEME_IDS,value='harbor';
 try{var saved=localStorage.getItem('ura-theme');if(allowed.indexOf(saved)!==-1)value=saved;}catch(error){}
 document.documentElement.setAttribute('data-theme',value);
-})();</script>""".replace('THEME_IDS', json.dumps([key for key,_ in _THEMES]))
+})();</script>""".replace("THEME_IDS", json.dumps([key for key, _ in _THEMES]))
+_LANGUAGE_PICKER = _ui_template(
+    "<label class='language-control' for='language-picker'>[[text:language.label]] "
+    "<select id='language-picker' aria-label='[[attr:language.label]]' "
+    "title='[[attr:language.english_only]]'>"
+    "<option value='en' selected lang='en'>[[text:language.english_short]]</option>"
+    "</select></label>"
+)
 _THEME_SCRIPT = """<script>(function(){
+var language=document.getElementById('language-picker');
+if(language){language.value='en';language.addEventListener('change',function(){
+language.value='en';document.documentElement.lang='en';});}
 var picker=document.getElementById('theme-picker');if(!picker)return;
 picker.value=document.documentElement.getAttribute('data-theme')||'harbor';
 picker.addEventListener('change',function(){
@@ -1432,23 +1458,38 @@ def _page(title: str, body: str, active: str = "") -> bytes:
         for href, icon, label in _NAV_LINKS
     )
     return (
-        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
         f"<title>{html.escape(title)}</title>"
         "<link rel='icon' type='image/svg+xml' href='/static/favicon.svg'>"
-        + _THEME_INIT + "<link rel='stylesheet' href='/static/style.css'></head><body>" + _BUSY_OVERLAY +
-        f"<nav><span class='brand'>{_icon('logo', size=21)}URA rig console"
-        f"</span>{links}" + _THEME_PICKER + "</nav>"
-        f"<main>{body}"
-        "<footer class='note'>The CLI and filesystem artifacts remain "
-        "authoritative. This console never reinterprets experiment "
-        "semantics; diagnostic evidence never authorizes a campaign."
-        "</footer></main>" + _PAGE_TABS_SCRIPT + _THEME_SCRIPT + "</body></html>"
+        + _THEME_INIT
+        + "<link rel='stylesheet' href='/static/style.css'></head><body>"
+        + _BUSY_OVERLAY
+        + (
+            "<nav><span class='brand'>"
+            + f"{_icon('logo', size=21)}"
+            + _ui_template("[[text:ui.ura_rig_console]]</span>")
+            + f"{links}"
+        )
+        + "<div class='display-preferences'>"
+        + _THEME_PICKER
+        + _LANGUAGE_PICKER
+        + "</div>"
+        + (
+            "</nav><main>"
+            + f"{body}"
+            + _ui_template(
+                "<footer class='note'>[[text:ui.the_cli_and_filesystem_artifacts_remain_authoritative_this_consol]]</footer></main>"
+            )
+        )
+        + _PAGE_TABS_SCRIPT
+        + _THEME_SCRIPT
+        + "</body></html>"
     ).encode("utf-8")
 
 
 # Every backend wait uses one shared guard. Form data-busy only customizes text.
-_BUSY_SCRIPT = """(function(){
+_BUSY_SCRIPT = _ui_template("""(function(){
 var overlay=document.getElementById('busy-overlay'),message=document.getElementById('busy-msg');
 var pending=new Set(),blocked=[],lastFocus=null,navigationEnd=null;
 function busy(){return pending.size>0;}
@@ -1465,7 +1506,7 @@ blocked=Array.prototype.map.call(document.querySelectorAll('body > nav,body > ma
 function(node){var previous=Boolean(node.inert);node.inert=true;return {node:node,inert:previous};});
 overlay.classList.add('on');overlay.setAttribute('aria-hidden','false');
 document.documentElement.setAttribute('aria-busy','true');overlay.focus();}
-pending.add(token);message.textContent=text||'Loading...';
+pending.add(token);message.textContent=text||[[js:ui.loading]];
 return function(){if(!pending.delete(token)){return;}if(!busy()){restore();}};}
 function reset(){pending.clear();navigationEnd=null;restore();}
 function navigate(text){if(!navigationEnd){navigationEnd=begin(text);}}
@@ -1473,7 +1514,7 @@ function cancelled(event){setTimeout(function(){if(event.defaultPrevented&&navig
 var end=navigationEnd;navigationEnd=null;end();}},0);}
 function block(event){event.preventDefault();event.stopImmediatePropagation();}
 window.uraBusy={begin:begin,isBusy:busy,reset:reset,reload:function(){
-if(busy()){return false;}navigate('Refreshing...');window.location.reload();return true;}};
+if(busy()){return false;}navigate([[js:ui.refreshing]]);window.location.reload();return true;}};
 document.addEventListener('click',function(event){
 if(busy()){block(event);return;}
 if(event.defaultPrevented||event.button!==0||event.ctrlKey||event.metaKey||event.shiftKey||event.altKey){return;}
@@ -1484,27 +1525,26 @@ var raw=link.getAttribute('href');if(!raw||raw.charAt(0)==='#'){return;}
 var url=new URL(link.href,window.location.href);
 if(url.origin!==window.location.origin||!/^https?:$/.test(url.protocol)){return;}
 if(url.hash&&url.pathname===window.location.pathname&&url.search===window.location.search){return;}
-navigate(link.getAttribute('data-busy')||'Loading page...');cancelled(event);
+navigate(link.getAttribute('data-busy')||[[js:ui.loading_page]]);cancelled(event);
 },true);
 document.addEventListener('submit',function(event){
 if(busy()){block(event);return;}if(event.defaultPrevented){return;}
 var form=event.target,target=(event.submitter&&event.submitter.formTarget)||form.target;
 if((target&&target!=='_self')||form.method==='dialog'){return;}
-navigate(form.getAttribute('data-busy')||'Submitting...');cancelled(event);
+navigate(form.getAttribute('data-busy')||[[js:ui.submitting]]);cancelled(event);
 },true);
 ['keydown','change','input'].forEach(function(name){document.addEventListener(name,function(event){
 if(busy()){block(event);}},true);});
-window.addEventListener('beforeunload',function(event){navigate('Loading page...');cancelled(event);});
+window.addEventListener('beforeunload',function(event){navigate([[js:ui.loading_page]]);cancelled(event);});
 window.addEventListener('pageshow',reset);
-})();"""
+})();""")
 
 _BUSY_OVERLAY = (
-    "<div id='busy-overlay' role='status' aria-live='polite' aria-hidden='true' tabindex='-1'>"
-    "<div class='box'><div class='spin'></div>"
-    "<div class='msg' id='busy-msg'>Working...</div>"
-    "<div class='sub'>Waiting for the server. Please wait before trying again.</div>"
-    "</div></div>"
-    "<script>" + _BUSY_SCRIPT + "</script>"
+    _ui_template(
+        "<div id='busy-overlay' role='status' aria-live='polite' aria-hidden='true' tabindex='-1'><div class='box'><div class='spin'></div><div class='msg' id='busy-msg'>[[text:ui.working]]</div><div class='sub'>[[text:ui.waiting_for_the_server_please_wait_before_trying_again]]</div></div></div><script>"
+    )
+    + _BUSY_SCRIPT
+    + "</script>"
 )
 
 
@@ -1534,7 +1574,7 @@ def _human_duration(seconds: float) -> str:
 
 def _crumbs(relative: str) -> str:
     parts = [part for part in relative.replace("\\", "/").split("/") if part]
-    links = ["<a href='/artifacts'>runs</a>"]
+    links = [_ui_template("<a href='/artifacts'>[[text:ui.runs]]</a>")]
     so_far: list[str] = []
     for part in parts:
         so_far.append(part)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .i18n import text as _ui_text
+
 import argparse
 import json
 import re
@@ -30,7 +32,7 @@ def _parse_form_payload(payload: bytes) -> dict[str, str]:
     try:
         text = payload.decode("utf-8")
         if _INVALID_PERCENT_ESCAPE.search(text):
-            raise ValueError("malformed percent escape")
+            raise ValueError(_ui_text("server.malformed_percent_escape"))
         pairs = parse_qsl(
             text,
             keep_blank_values=True,
@@ -40,7 +42,7 @@ def _parse_form_payload(payload: bytes) -> dict[str, str]:
             max_num_fields=_MAX_FORM_FIELDS,
         )
     except (UnicodeDecodeError, ValueError) as exc:
-        raise ValueError("invalid URL-encoded form body") from exc
+        raise ValueError(_ui_text("server.invalid_url_encoded_form_body")) from exc
     form: dict[str, str] = {}
     seen: set[str] = set()
     for key, value in pairs:
@@ -49,9 +51,9 @@ def _parse_form_payload(payload: bytes) -> dict[str, str]:
             or len(key) > 4096
             or any(ord(character) < 32 or ord(character) == 127 for character in key)
         ):
-            raise ValueError("invalid URL-encoded form field name")
+            raise ValueError(_ui_text("server.invalid_url_encoded_form_field_name"))
         if key in seen:
-            raise ValueError("duplicate URL-encoded form field name")
+            raise ValueError(_ui_text("server.duplicate_url_encoded_form_field_name"))
         seen.add(key)
         # Preserve the prior request-core contract: empty controls are absent.
         if value:
@@ -75,7 +77,7 @@ def _make_server(app: RigWebApp, host: str, port: int):
         ) -> None:
             self.send_response(status)
             if location is not None:
-                self.send_header("Location", location)
+                self.send_header(_ui_text("server.location"), location)
             if content_type is not None:
                 self.send_header("Content-Type", content_type)
             # The console is a control surface. These headers apply even to
@@ -88,7 +90,11 @@ def _make_server(app: RigWebApp, host: str, port: int):
             self.send_header("X-Frame-Options", "DENY")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "no-referrer")
-            if content_type is None or content_type.startswith("text/html") or self.path.startswith('/review/'):
+            if (
+                content_type is None
+                or content_type.startswith("text/html")
+                or self.path.startswith("/review/")
+            ):
                 self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -103,9 +109,7 @@ def _make_server(app: RigWebApp, host: str, port: int):
                 raw_length = raw_lengths[0] if len(raw_lengths) == 1 else None
                 try:
                     length = (
-                        int(raw_length)
-                        if raw_length is not None and not transfer_encodings
-                        else -1
+                        int(raw_length) if raw_length is not None and not transfer_encodings else -1
                     )
                 except ValueError:
                     length = -1
@@ -183,47 +187,57 @@ def _serve(app: RigWebApp, host: str, port: int) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Rig-local web console over the maintained experiment CLIs "
-            "(single operator; artifacts stay authoritative)"
+            _ui_text("server.rig_local_web_console_over_the_maintained_experiment_clis_single")
         )
     )
     parser.add_argument("--results-root", type=Path, default=Path("runs"))
     parser.add_argument("--state-dir", type=Path, default=Path("runs") / "rig-web")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8642)
-    parser.add_argument('--runner-root', type=Path,
-                        help='Use this existing Runner checkout for jobs while the console is updated independently')
-    parser.add_argument("--check-database", action="store_true",
-                        help="headless: explicitly scan the existing SQLite database and exit (default: off)")
-    parser.add_argument("--verify-artifact-sha256", action="store_true",
-                        help="with --reindex: additionally hash retained files (default: off)")
+    parser.add_argument(
+        "--runner-root",
+        type=Path,
+        help=_ui_text("server.use_this_existing_runner_checkout_for_jobs_while_the_console_is_u"),
+    )
+    parser.add_argument(
+        "--check-database",
+        action="store_true",
+        help=_ui_text("server.headless_explicitly_scan_the_existing_sqlite_database_and_exit_de"),
+    )
+    parser.add_argument(
+        "--verify-artifact-sha256",
+        action="store_true",
+        help=_ui_text("server.with_reindex_additionally_hash_retained_files_default_off"),
+    )
     parser.add_argument(
         "--reindex",
         action="store_true",
-        help="headless: rebuild the usage/report indexes from retained "
-        "artifacts, print the JSON summary, and exit (same operation as "
-        "the dashboard Reindex button)",
+        help=_ui_text("server.headless_rebuild_the_usage_report_indexes_from_retained_artifacts"),
     )
     parser.add_argument(
         "--usage-report",
         action="store_true",
-        help="headless: print the recorded token usage and calculated cost "
-        "(the Stats spend table) as JSON and exit",
+        help=_ui_text("server.headless_print_the_recorded_token_usage_and_calculated_cost_the_s"),
     )
     parser.add_argument(
         "--selftest-sleep",
         type=float,
         default=None,
-        help="UI diagnostic only: sleep this many seconds and exit",
+        help=_ui_text("server.ui_diagnostic_only_sleep_this_many_seconds_and_exit"),
     )
     args = parser.parse_args(argv)
-    runner_options = {'repo_root': args.runner_root.resolve(strict=True)} if args.runner_root else {}
+    runner_options = (
+        {"repo_root": args.runner_root.resolve(strict=True)} if args.runner_root else {}
+    )
     if args.verify_artifact_sha256 and not args.reindex:
         parser.error("--verify-artifact-sha256 requires --reindex")
     if args.check_database:
         import sqlite3
+
         if args.reindex or args.usage_report or args.selftest_sleep is not None:
-            parser.error("--check-database cannot be combined with another headless action")
+            parser.error(
+                _ui_text("server.check_database_cannot_be_combined_with_another_headless_action")
+            )
         try:
             database = (args.state_dir / "console.db").resolve(strict=True)
             with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True) as connection:
@@ -236,7 +250,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
     if args.selftest_sleep is not None:
         time.sleep(args.selftest_sleep)
-        print("rig-web selftest complete")
+        print(_ui_text("server.rig_web_selftest_complete"))
         return 0
     # Headless operations make the console's usage/cost/reindex functions
     # available through the CLI too, without serving the interface.
@@ -249,7 +263,11 @@ def main(argv: list[str] | None = None) -> int:
         app.state_dir.mkdir(parents=True, exist_ok=True)
         try:
             if args.reindex:
-                print(json.dumps(app.reindex_all(verify_sha=args.verify_artifact_sha256), sort_keys=True))
+                print(
+                    json.dumps(
+                        app.reindex_all(verify_sha=args.verify_artifact_sha256), sort_keys=True
+                    )
+                )
             if args.usage_report:
                 totals = app.db.usage_totals() or {}
                 pricing = load_pricing(app.repo_root)

@@ -139,7 +139,7 @@ def test_page_and_export_match_and_use_existing_busy_guard(study):
     status, _, body = app.handle('GET', path)
     page = body.decode()
     assert status==200 and 'matched: 1' in page and '&lt;visible&gt;' in page
-    assert 'not pooled safety rates' in page and "window.uraBusy.begin('Preparing campaign export...')" in page
+    assert 'not pooled safety rates' in page and 'window.uraBusy.begin("Preparing campaign export...")' in page
     assert 'comparison.csv?' in page and "name='right_campaign'" in page
     status, _, body = app.handle('GET', f'/campaigns/{left}/figures/comparison.csv?'+urlencode(query))
     exported = list(csv.DictReader(io.StringIO(body.decode('utf-8-sig'))))

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .i18n import template as _ui_template, text as _ui_text
+
 import hashlib
 import html
 import math
@@ -17,138 +19,150 @@ from .ui import _page
 
 
 class BuilderCaptureMixin:
-    _BUILDER_FIELDS = frozenset({
-        "campaign_id",
-        "work_kind",
-        "campaign_name",
-        "campaign_guide",
-        "campaign_flow",
-        "campaign_inputs",
-        "campaign_local",
-        "campaign_haiku",
-        "campaign_judge_model",
-        "campaign_judge_cost",
-        "campaign_collection_cost",
-        "campaign_operation",
-        "modality_scope",
-        "setup_mode",
-        "automatic_caps",
-        "_caps_resolved",
-        "_setup_resolved",
-        "retained_source_campaign",
-        "retained_source_runs",
-        "retained_sources_job",
-        "retained_budget_caps",
-        "retained_pricing_date",
-        "retained_budget_job",
-        "retained_replays_job",
-        "retained_network_counts",
-        "retained_programs_job",
-        "retained_collection_workers",
-        "retained_native_judging_job",
-        "retained_native_verify_model",
-        "retained_native_verify_artifacts",
-        "retained_haiku_model",
-        "retained_haiku_limit",
-        "retained_haiku_seed",
-        "retained_haiku_cost",
-        "retained_haiku_job",
-        "retained_inventory_job",
-        "retained_inventory_items_job",
-        "retained_inventory_plan_job",
-        "retained_inventory_limit",
-        "retained_inventory_seed",
-        "mode",
-        "canary_dry",
-        "corpora",
-        "api",
-        "local",
-        "attackers",
-        "judges",
-        "judge_model",
-        "ack_hosted_judge_data_transfer",
-        "approximate_common_metrics",
-        "defense",
-        "defense_guard",
-        "guardrail_model",
-        "guardrail_revision",
-        "guardrail_device",
-        "defense_guardrail_model",
-        "defense_guardrail_revision",
-        "defense_guardrail_device",
-        "project_revision",
-        "project_revision_sha",
-        "source_conformance",
-        "source_conformance_sha",
-        "scope",
-        "max_age",
-        "limit",
-        "sample_seed",
-        "sampling_policy",
-        "seeds",
-        "max_queries",
-        "max_turns",
-        "target_answer_retries",
-        "group",
-        "exclude_tool_conditioned",
-        "reset_open_circuits",
-        "verify_model_sha256",
-        "lock_stale_seconds",
-        "cap_target",
-        "cap_judge",
-        "cap_http",
-        "local_budget_hours",
-        "deadline",
-        "dtype",
-        "quantization",
-        "out",
-        "t3_artifact",
-        "t3_artifact_sha",
-        "harm_config",
-        "ideator_manifest",
-        "ideator_manifest_sha",
-        "ideator_pair_limit",
-        "engine_runtime_config",
-        "engine_runtime_config_sha",
-        "nanogcg_model_id",
-        "nanogcg_model_revision",
-        "nanogcg_suffix",
-        "nanogcg_suffix_source",
-        "_api_config_snapshot_sha256",
-        "_local_config_snapshot_sha256",
-        "_source_config_snapshot_sha256",
-        "_attacker_config_snapshot_sha256",
-        "_engine_runtime_config_snapshot_sha256",
-        "_execution_config_bundle_sha256",
-        "_execution_snapshot_sha256",
-    })
-    _CAPTURE_FIELDS = frozenset({
-        "t3cap_corpus",
-        "t3cap_limit",
-        "t3cap_sample_seed",
-        "t3cap_endpoint",
-        "t3cap_revision",
-        "t3cap_provider",
-        "t3cap_model",
-        "t3cap_out",
-        "t3cap_timeout",
-        "hcap_repo",
-        "hcap_revision",
-        "hcap_source",
-        "hcap_corpus",
-        "hcap_methods",
-        "hcap_experiment",
-        "hcap_limit",
-        "hcap_sample_seed",
-        "hcap_cases",
-        "hcap_artifact_out",
-        "hcap_config_out",
-        "hcap_python",
-        "hcap_credentials",
-        "hcap_timeout",
-    })
-    _BUILDER_UI_ONLY_FIELDS = frozenset({"_judge_model_ui", "local_choice", "_refresh_setup",
-        "prepared_choice_t3mp3st", "prepared_choice_harmbench", "prepared_choice_ideator"})
+    _BUILDER_FIELDS = frozenset(
+        {
+            "campaign_id",
+            "work_kind",
+            "campaign_name",
+            "campaign_guide",
+            "campaign_flow",
+            "campaign_inputs",
+            "campaign_local",
+            "campaign_haiku",
+            "campaign_judge_model",
+            "campaign_judge_cost",
+            "campaign_collection_cost",
+            "campaign_operation",
+            "modality_scope",
+            "setup_mode",
+            "automatic_caps",
+            "_caps_resolved",
+            "_setup_resolved",
+            "retained_source_campaign",
+            "retained_source_runs",
+            "retained_sources_job",
+            "retained_budget_caps",
+            "retained_pricing_date",
+            "retained_budget_job",
+            "retained_replays_job",
+            "retained_network_counts",
+            "retained_programs_job",
+            "retained_collection_workers",
+            "retained_native_judging_job",
+            "retained_native_verify_model",
+            "retained_native_verify_artifacts",
+            "retained_haiku_model",
+            "retained_haiku_limit",
+            "retained_haiku_seed",
+            "retained_haiku_cost",
+            "retained_haiku_job",
+            "retained_inventory_job",
+            "retained_inventory_items_job",
+            "retained_inventory_plan_job",
+            "retained_inventory_limit",
+            "retained_inventory_seed",
+            "mode",
+            "canary_dry",
+            "corpora",
+            "api",
+            "local",
+            "attackers",
+            "judges",
+            "judge_model",
+            "ack_hosted_judge_data_transfer",
+            "approximate_common_metrics",
+            "defense",
+            "defense_guard",
+            "guardrail_model",
+            "guardrail_revision",
+            "guardrail_device",
+            "defense_guardrail_model",
+            "defense_guardrail_revision",
+            "defense_guardrail_device",
+            "project_revision",
+            "project_revision_sha",
+            "source_conformance",
+            "source_conformance_sha",
+            "scope",
+            "max_age",
+            "limit",
+            "sample_seed",
+            "sampling_policy",
+            "seeds",
+            "max_queries",
+            "max_turns",
+            "target_answer_retries",
+            "group",
+            "exclude_tool_conditioned",
+            "reset_open_circuits",
+            "verify_model_sha256",
+            "lock_stale_seconds",
+            "cap_target",
+            "cap_judge",
+            "cap_http",
+            "local_budget_hours",
+            "deadline",
+            "dtype",
+            "quantization",
+            "out",
+            "t3_artifact",
+            "t3_artifact_sha",
+            "harm_config",
+            "ideator_manifest",
+            "ideator_manifest_sha",
+            "ideator_pair_limit",
+            "engine_runtime_config",
+            "engine_runtime_config_sha",
+            "nanogcg_model_id",
+            "nanogcg_model_revision",
+            "nanogcg_suffix",
+            "nanogcg_suffix_source",
+            "_api_config_snapshot_sha256",
+            "_local_config_snapshot_sha256",
+            "_source_config_snapshot_sha256",
+            "_attacker_config_snapshot_sha256",
+            "_engine_runtime_config_snapshot_sha256",
+            "_execution_config_bundle_sha256",
+            "_execution_snapshot_sha256",
+        }
+    )
+    _CAPTURE_FIELDS = frozenset(
+        {
+            "t3cap_corpus",
+            "t3cap_limit",
+            "t3cap_sample_seed",
+            "t3cap_endpoint",
+            "t3cap_revision",
+            "t3cap_provider",
+            "t3cap_model",
+            "t3cap_out",
+            "t3cap_timeout",
+            "hcap_repo",
+            "hcap_revision",
+            "hcap_source",
+            "hcap_corpus",
+            "hcap_methods",
+            "hcap_experiment",
+            "hcap_limit",
+            "hcap_sample_seed",
+            "hcap_cases",
+            "hcap_artifact_out",
+            "hcap_config_out",
+            "hcap_python",
+            "hcap_credentials",
+            "hcap_timeout",
+        }
+    )
+    _BUILDER_UI_ONLY_FIELDS = frozenset(
+        {
+            "_judge_model_ui",
+            "local_choice",
+            "_refresh_setup",
+            "prepared_choice_t3mp3st",
+            "prepared_choice_harmbench",
+            "prepared_choice_ideator",
+        }
+    )
 
     def _validate_builder_form_keys(self, form: Mapping[str, str]) -> None:
         """Reject unknown or malformed builder keys before any composition."""
@@ -160,18 +174,18 @@ class BuilderCaptureMixin:
                 or len(key) > 4096
                 or any(ord(character) < 32 or ord(character) == 127 for character in key)
             ):
-                raise ValueError("builder form contains a malformed field name")
-            if key in (
-                self._BUILDER_FIELDS
-                | self._CAPTURE_FIELDS
-                | self._BUILDER_UI_ONLY_FIELDS
-            ):
+                raise ValueError(
+                    _ui_text("builder_capture.builder_form_contains_a_malformed_field_name")
+                )
+            if key in (self._BUILDER_FIELDS | self._CAPTURE_FIELDS | self._BUILDER_UI_ONLY_FIELDS):
                 continue
             if re.fullmatch(r"att_(?:path|sha)(?:[1-9]|1[0-2])", key):
                 continue
             if key.startswith("quantization::") and key != "quantization::":
                 continue
-            raise ValueError("builder form contains an unsupported field name")
+            raise ValueError(
+                _ui_text("builder_capture.builder_form_contains_an_unsupported_field_name")
+            )
 
     def _projection_params(self, params: Mapping[str, str]) -> dict[str, str]:
         """Normalized grid identity for safe preflight reuse."""
@@ -199,17 +213,19 @@ class BuilderCaptureMixin:
 
     def _capture_output(self, raw: str, *, label: str) -> Path:
         if not raw:
-            raise ValueError(f"{label} is required")
+            raise ValueError((f"{label}" + _ui_text("builder_capture.is_required")))
         candidate = Path(raw).expanduser()
         if not candidate.is_absolute():
             candidate = self.repo_root / candidate
         if candidate.is_symlink():
-            raise ValueError(f"{label} cannot be a symlink")
+            raise ValueError((f"{label}" + _ui_text("builder_capture.cannot_be_a_symlink")))
         try:
             resolved = candidate.resolve(strict=False)
             resolved.relative_to(self.results_root.resolve())
         except (OSError, ValueError) as exc:
-            raise ValueError(f"{label} must be under the configured results root") from exc
+            raise ValueError(
+                (f"{label}" + _ui_text("builder_capture.must_be_under_the_configured_results_root"))
+            ) from exc
         return resolved
 
     def _capture_values(
@@ -224,7 +240,7 @@ class BuilderCaptureMixin:
         def required(field_name: str, label: str) -> str:
             value = params.get(field_name, "").strip()
             if not value:
-                errors[field_name] = f"{label} is required"
+                errors[field_name] = f"{label}" + _ui_text("builder_capture.is_required")
             return value
 
         def integer(
@@ -239,30 +255,36 @@ class BuilderCaptureMixin:
             try:
                 value = int(raw)
             except ValueError:
-                errors[field_name] = "must be an integer"
+                errors[field_name] = _ui_text("builder_capture.must_be_an_integer")
             else:
                 if positive and value <= 0:
-                    errors[field_name] = "must be a positive integer"
+                    errors[field_name] = _ui_text("builder_capture.must_be_a_positive_integer")
                 elif nonnegative and value < 0:
-                    errors[field_name] = "must be a non-negative integer"
+                    errors[field_name] = _ui_text("builder_capture.must_be_a_non_negative_integer")
             return raw
 
         if kind == "t3mp3st":
-            corpus = required("t3cap_corpus", "corpus arm")
+            corpus = required("t3cap_corpus", _ui_text("builder_capture.corpus_arm"))
             limit = integer("t3cap_limit", nonnegative=True)
             seed = integer("t3cap_sample_seed")
-            endpoint = required("t3cap_endpoint", "loopback planning endpoint")
-            revision = required("t3cap_revision", "upstream revision")
-            provider = required("t3cap_provider", "source provider")
-            model = required("t3cap_model", "source model")
-            out = required("t3cap_out", "capture output directory")
+            endpoint = required(
+                "t3cap_endpoint", _ui_text("builder_capture.loopback_planning_endpoint")
+            )
+            revision = required("t3cap_revision", _ui_text("builder_capture.upstream_revision"))
+            provider = required("t3cap_provider", _ui_text("builder_capture.source_provider"))
+            model = required("t3cap_model", _ui_text("builder_capture.source_model"))
+            out = required("t3cap_out", _ui_text("builder_capture.capture_output_directory"))
             timeout = params.get("t3cap_timeout", "").strip()
             if corpus and corpus not in {
                 arm for arm, mods, reason in _ARM_CATALOG if mods == ("text",) and not reason
             }:
-                errors["t3cap_corpus"] = "select a runnable text corpus arm"
+                errors["t3cap_corpus"] = _ui_text(
+                    "builder_capture.select_a_runnable_text_corpus_arm"
+                )
             if revision and re.fullmatch(r"[0-9a-fA-F]{40}", revision) is None:
-                errors["t3cap_revision"] = "must be an exact 40-hex commit"
+                errors["t3cap_revision"] = _ui_text(
+                    "builder_capture.must_be_an_exact_40_hex_commit"
+                )
             if endpoint:
                 try:
                     parsed = urlparse(endpoint)
@@ -280,18 +302,19 @@ class BuilderCaptureMixin:
                     or parsed.query
                     or parsed.fragment
                 ):
-                    errors["t3cap_endpoint"] = (
-                        "must be the exact HTTP planning route on a literal "
-                        "loopback address with an explicit port"
+                    errors["t3cap_endpoint"] = _ui_text(
+                        "builder_capture.must_be_the_exact_http_planning_route_on_a_literal_loopback_addre"
                     )
             if out:
                 try:
                     out_path = self._capture_output(
                         out,
-                        label="capture output directory",
+                        label=_ui_text("builder_capture.capture_output_directory"),
                     )
                     if out_path.exists() and not out_path.is_dir():
-                        raise ValueError("capture output must be a directory")
+                        raise ValueError(
+                            _ui_text("builder_capture.capture_output_must_be_a_directory")
+                        )
                     out = str(out_path)
                 except ValueError as exc:
                     errors["t3cap_out"] = str(exc)
@@ -301,18 +324,16 @@ class BuilderCaptureMixin:
                 except ValueError:
                     timeout_value = 0
                 if not math.isfinite(timeout_value) or not 0 < timeout_value <= 3600:
-                    errors["t3cap_timeout"] = "must be in (0, 3600]"
+                    errors["t3cap_timeout"] = _ui_text("builder_capture.must_be_in_0_3600")
             framework_lock = framework_env_root = framework_state_root = ""
             try:
-                lock_path, env_root, state_root = (
-                    self.framework_runtimes.capture_binding_paths()
-                )
+                lock_path, env_root, state_root = self.framework_runtimes.capture_binding_paths()
                 framework_lock = str(lock_path)
                 framework_env_root = str(env_root)
                 framework_state_root = str(state_root)
             except (OSError, RuntimeError, TypeError, ValueError):
-                errors["t3cap_revision"] = (
-                    "verified T3MP3ST framework runtime paths are unavailable"
+                errors["t3cap_revision"] = _ui_text(
+                    "builder_capture.verified_t3mp3st_framework_runtime_paths_are_unavailable"
                 )
             values = {
                 "--corpus": corpus,
@@ -339,63 +360,75 @@ class BuilderCaptureMixin:
             )
 
         if kind != "harmbench":
-            raise ValueError(f"unknown prepared workflow {kind!r}")
-        repo_raw = required("hcap_repo", "HarmBench checkout")
-        revision = required("hcap_revision", "upstream revision")
-        source_raw = required("hcap_source", "official behavior CSV")
-        corpus = required("hcap_corpus", "logical corpus arm")
-        methods_raw = required("hcap_methods", "at least one method")
+            raise ValueError((_ui_text("builder_capture.unknown_prepared_workflow") + f"{kind!r}"))
+        repo_raw = required("hcap_repo", _ui_text("builder_capture.harmbench_checkout"))
+        revision = required("hcap_revision", _ui_text("builder_capture.upstream_revision"))
+        source_raw = required("hcap_source", _ui_text("builder_capture.official_behavior_csv"))
+        corpus = required("hcap_corpus", _ui_text("builder_capture.logical_corpus_arm"))
+        methods_raw = required("hcap_methods", _ui_text("builder_capture.at_least_one_method"))
         experiment = required("hcap_experiment", "experiment")
         limit = integer("hcap_limit", nonnegative=True)
         seed = integer("hcap_sample_seed")
         cases = integer("hcap_cases", positive=True)
-        artifact_raw = required("hcap_artifact_out", "capture artifact output")
-        config_raw = required("hcap_config_out", "attacker config output")
+        artifact_raw = required(
+            "hcap_artifact_out", _ui_text("builder_capture.capture_artifact_output")
+        )
+        config_raw = required("hcap_config_out", _ui_text("builder_capture.attacker_config_output"))
         if revision and re.fullmatch(r"[0-9a-fA-F]{40}", revision) is None:
-            errors["hcap_revision"] = "must be an exact 40-hex commit"
+            errors["hcap_revision"] = _ui_text("builder_capture.must_be_an_exact_40_hex_commit")
         if cases:
             try:
                 if int(cases) > 1000:
-                    errors["hcap_cases"] = "must be in [1, 1000]"
+                    errors["hcap_cases"] = _ui_text("builder_capture.must_be_in_1_1000")
             except ValueError:
                 pass
         if corpus and corpus not in {
             arm for arm, mods, reason in _ARM_CATALOG if mods == ("text",) and not reason
         }:
-            errors["hcap_corpus"] = "select a runnable text corpus arm"
+            errors["hcap_corpus"] = _ui_text("builder_capture.select_a_runnable_text_corpus_arm")
         methods = self._split_list(methods_raw)
         supported_methods = {
             "PEZ",
             "GBDA",
             "UAT",
-            "AutoPrompt",
+            _ui_text("builder_capture.autoprompt"),
             "PAP-top5",
             "GCG",
             "GCG-Multi",
             "GCG-Transfer",
-            "AutoDAN",
+            _ui_text("builder_capture.autodan"),
             "PAIR",
             "TAP",
-            "DirectRequest",
-            "HumanJailbreaks",
-            "ZeroShot",
+            _ui_text("builder_capture.directrequest"),
+            _ui_text("builder_capture.humanjailbreaks"),
+            _ui_text("builder_capture.zeroshot"),
         }
         if (
             not methods
             or len(methods) != len(set(methods))
             or any(method not in supported_methods for method in methods)
         ):
-            errors["hcap_methods"] = "use unique supported text methods separated by commas"
+            errors["hcap_methods"] = _ui_text(
+                "builder_capture.use_unique_supported_text_methods_separated_by_commas"
+            )
         repo = Path(repo_raw).expanduser() if repo_raw else Path()
         source = Path(source_raw).expanduser() if source_raw else Path()
         if repo_raw and (not repo.is_absolute() or not repo.is_dir() or repo.is_symlink()):
-            errors["hcap_repo"] = "must be an existing absolute non-symlink directory"
+            errors["hcap_repo"] = _ui_text(
+                "builder_capture.must_be_an_existing_absolute_non_symlink_directory"
+            )
         if source_raw and (not source.is_absolute() or not source.is_file() or source.is_symlink()):
-            errors["hcap_source"] = "must be an existing absolute non-symlink file"
+            errors["hcap_source"] = _ui_text(
+                "builder_capture.must_be_an_existing_absolute_non_symlink_file"
+            )
         artifact_out, config_out = artifact_raw, config_raw
         for field_name, raw, label in (
-            ("hcap_artifact_out", artifact_raw, "capture artifact output"),
-            ("hcap_config_out", config_raw, "attacker config output"),
+            (
+                "hcap_artifact_out",
+                artifact_raw,
+                _ui_text("builder_capture.capture_artifact_output"),
+            ),
+            ("hcap_config_out", config_raw, _ui_text("builder_capture.attacker_config_output")),
         ):
             if not raw:
                 continue
@@ -405,31 +438,41 @@ class BuilderCaptureMixin:
                 errors[field_name] = str(exc)
                 continue
             if resolved.suffix.lower() != ".json":
-                errors[field_name] = f"{label} must end in .json"
+                errors[field_name] = f"{label}" + _ui_text("builder_capture.must_end_in_json")
             elif resolved.exists():
-                errors[field_name] = f"{label} already exists; choose a new path"
+                errors[field_name] = f"{label}" + _ui_text(
+                    "builder_capture.already_exists_choose_a_new_path"
+                )
             if field_name == "hcap_artifact_out":
                 artifact_out = str(resolved)
             else:
                 config_out = str(resolved)
         if artifact_out and config_out and artifact_out == config_out:
-            errors["hcap_config_out"] = "artifact and config outputs must differ"
+            errors["hcap_config_out"] = _ui_text(
+                "builder_capture.artifact_and_config_outputs_must_differ"
+            )
         python = params.get("hcap_python", "").strip()
         timeout = params.get("hcap_timeout", "").strip()
         if python and (not Path(python).is_absolute() or not Path(python).is_file()):
-            errors["hcap_python"] = "must be an existing absolute executable path"
+            errors["hcap_python"] = _ui_text(
+                "builder_capture.must_be_an_existing_absolute_executable_path"
+            )
         if timeout:
             try:
                 timeout_value = float(timeout)
             except ValueError:
                 timeout_value = 0
             if not math.isfinite(timeout_value) or timeout_value <= 0:
-                errors["hcap_timeout"] = "must be a positive finite number"
+                errors["hcap_timeout"] = _ui_text(
+                    "builder_capture.must_be_a_positive_finite_number"
+                )
         credentials = self._split_list(params.get("hcap_credentials", ""))
         if len(credentials) != len(set(credentials)) or any(
             re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) is None for name in credentials
         ):
-            errors["hcap_credentials"] = "use unique environment variable names"
+            errors["hcap_credentials"] = _ui_text(
+                "builder_capture.use_unique_environment_variable_names"
+            )
         values = {
             "--repo": str(repo),
             "--revision": revision,
@@ -459,7 +502,11 @@ class BuilderCaptureMixin:
         values: Mapping[str, str],
         params: Mapping[str, str],
     ) -> bytes:
-        label = "T3MP3ST capture" if kind == "t3mp3st" else "HarmBench prepare"
+        label = (
+            _ui_text("builder_capture.t3mp3st_capture")
+            if kind == "t3mp3st"
+            else _ui_text("builder_capture.harmbench_prepare")
+        )
         argv = build_argv(command, values, commands=self.commands)
         chips = (
             "<div class='argv'>"
@@ -472,12 +519,17 @@ class BuilderCaptureMixin:
         )
         action = "/build/t3mp3st/capture" if kind == "t3mp3st" else "/build/harmbench/prepare"
         body = (
-            f"<h1>{_icon('flask', size=22)}Review {label}</h1>"
-            "<div class='notice amber'><strong>Out-of-band paid/compute step."
-            "</strong><p class='note'>Capture may invoke the configured source "
-            "model or generation scripts. It does not call the measured target "
-            "or judges. Review the exact command before starting.</p></div>"
-            "<div class='card'><h2>Exact command</h2>" + chips + "</div>"
+            (
+                "<h1>"
+                + f"{_icon('flask', size=22)}"
+                + _ui_text("builder_capture.review")
+                + f"{label}"
+                + _ui_template(
+                    "</h1><div class='notice amber'><strong>[[text:builder_capture.out_of_band_paid_compute_step]]</strong><p class='note'>[[text:builder_capture.capture_may_invoke_the_configured_source_model_or_generation_scri]]</p></div><div class='card'><h2>[[text:builder_capture.exact_command]]</h2>"
+                )
+            )
+            + chips
+            + "</div>"
             + self._campaign_banner(params.get("campaign_id", ""))
             + f"<form method='post' action='{action}'>"
             + "<input type='hidden' name='launch_ticket' value='"
@@ -486,11 +538,19 @@ class BuilderCaptureMixin:
             + "<input type='hidden' name='confirm' value='yes'>"
             "<div class='buildbar'><button type='submit'>"
             + _icon("play", size=15)
-            + f"Start {label}</button>"
-            "<a href='/build'><button type='button' class='ghost'>Back to "
-            "builder</button></a></div></form>"
+            + (
+                _ui_text("builder_capture.start")
+                + f"{label}"
+                + _ui_template(
+                    "</button><a href='/build'><button type='button' class='ghost'>[[text:builder_capture.back_to_builder]]</button></a></div></form>"
+                )
+            )
         )
-        return _page(f"Review {label}", body, active="Build")
+        return _page(
+            (_ui_text("builder_capture.review") + f"{label}"),
+            body,
+            active=_ui_text("builder_capture.build"),
+        )
 
     def _handle_capture(
         self,
@@ -510,8 +570,9 @@ class BuilderCaptureMixin:
                     prefill={"attackers": kind},
                     errors={
                         prefix + ("out" if kind == "t3mp3st" else "artifact_out"): (
-                            "the confirmation expired or was changed; review "
-                            "the capture command again"
+                            _ui_text(
+                                "builder_capture.the_confirmation_expired_or_was_changed_review_the_capture_comman"
+                            )
                         )
                     },
                 ),
@@ -542,12 +603,23 @@ class BuilderCaptureMixin:
             }
             confirmed = False
             from .prepared_inputs import capture_defaults
+
             try:
                 params = capture_defaults(self, kind, params)
             except (OSError, RuntimeError, ValueError, KeyError, StopIteration) as exc:
-                return 200, 'text/html; charset=utf-8', self._build_page(
-                    prefill={**params, 'attackers':kind},
-                    errors={prefix+'revision':'Installed capture settings are unavailable: '+str(exc)})
+                return (
+                    200,
+                    "text/html; charset=utf-8",
+                    self._build_page(
+                        prefill={**params, "attackers": kind},
+                        errors={
+                            prefix + "revision": _ui_text(
+                                "builder_capture.installed_capture_settings_are_unavailable"
+                            )
+                            + str(exc)
+                        },
+                    ),
+                )
         command, values, errors = self._capture_values(kind, params)
         if errors:
             return (
@@ -570,16 +642,19 @@ class BuilderCaptureMixin:
                 ),
             )
         job = self.start_job(command, values, campaign_id=params.get("campaign_id", ""))
-        owner=params.get('campaign_id','')
-        saved=self.db.workspace_definition(owner) if owner else {}
-        operation=self._start_operation('attack-capture', dict(saved, campaign_id=owner, capture_job=job.job_id))
-        return 303, '/operations/'+operation, b''
+        owner = params.get("campaign_id", "")
+        saved = self.db.workspace_definition(owner) if owner else {}
+        operation = self._start_operation(
+            "attack-capture", dict(saved, campaign_id=owner, capture_job=job.job_id)
+        )
+        return 303, "/operations/" + operation, b""
 
     def _builder_params(self, form: Mapping[str, str]) -> dict[str, str]:
         """Normalize builder fields without materializing runtime config."""
 
         self._validate_builder_form_keys(form)
         from .prepared_inputs import apply_choice
+
         form = apply_choice(self, form)
         if form.get("campaign_id"):
             self.db.require_workspace(str(form["campaign_id"]))
@@ -593,19 +668,19 @@ class BuilderCaptureMixin:
                 and str(value).strip()
             )
         }
-        if params.get('campaign_flow') == 'on':
-            params['campaign_local'] = 'on' if form.get('campaign_local') == 'on' else 'off'
-            params['campaign_haiku'] = 'on' if form.get('campaign_haiku') == 'on' else 'off'
+        if params.get("campaign_flow") == "on":
+            params["campaign_local"] = "on" if form.get("campaign_local") == "on" else "off"
+            params["campaign_haiku"] = "on" if form.get("campaign_haiku") == "on" else "off"
         # UI filter state is saved independently of the selected corpus/model
         # identities. An explicit empty scope must not become the legacy All.
         if "modality_scope" in form:
             modalities = set(self._split_list(str(form["modality_scope"])))
             if modalities - set(_MODALITIES):
-                raise ValueError("Unknown modality scope")
+                raise ValueError(_ui_text("builder_capture.unknown_modality_scope"))
             params["modality_scope"] = ",".join(m for m in _MODALITIES if m in modalities)
         work_kind = params.get("work_kind", "campaign" if params.get("campaign_id") else "run")
         if work_kind not in {"run", "campaign"}:
-            raise ValueError("Choose Campaign or Single run")
+            raise ValueError(_ui_text("builder_capture.choose_campaign_or_single_run"))
         if work_kind == "run":
             params.pop("campaign_id", None)
             params.pop("campaign_name", None)
@@ -613,9 +688,11 @@ class BuilderCaptureMixin:
         elif not params.get("campaign_id"):
             name = params.get("campaign_name", "")
             if not name or len(name) > 120 or any(ord(c) < 32 for c in name):
-                raise ValueError("Enter a campaign name or select an existing campaign")
+                raise ValueError(
+                    _ui_text("builder_capture.enter_a_campaign_name_or_select_an_existing_campaign")
+                )
         if params.get("campaign_guide") not in {None, "on"}:
-            raise ValueError("Invalid campaign guidance choice")
+            raise ValueError(_ui_text("builder_capture.invalid_campaign_guidance_choice"))
         attackers = set(self._split_list(params.get("attackers", "")))
         if "t3mp3st" not in attackers:
             params.pop("t3_artifact", None)
@@ -634,14 +711,14 @@ class BuilderCaptureMixin:
                 "nanogcg_suffix_source",
             ):
                 params.pop(field, None)
-        if params.get('setup_mode') not in {None, 'automatic', 'manual'}:
-            raise ValueError('Unknown campaign setup mode')
-        if params.get('automatic_caps') == 'on' and params.get('_caps_resolved') != 'yes':
+        if params.get("setup_mode") not in {None, "automatic", "manual"}:
+            raise ValueError(_ui_text("builder_capture.unknown_campaign_setup_mode"))
+        if params.get("automatic_caps") == "on" and params.get("_caps_resolved") != "yes":
             # Temporary no-call planning bounds only. The exact projection
             # replaces these before the execution acquisition plan is derived.
-            for field in ('cap_target', 'cap_judge', 'cap_http'):
-                params[field] = '1000000000'
-        return self._automatic_campaign_setup(params, refresh=form.get('_refresh_setup') == 'yes')
+            for field in ("cap_target", "cap_judge", "cap_http"):
+                params[field] = "1000000000"
+        return self._automatic_campaign_setup(params, refresh=form.get("_refresh_setup") == "yes")
 
     def _compose_from_builder(
         self,
@@ -659,8 +736,9 @@ class BuilderCaptureMixin:
         """
 
         params = self._builder_params(form)
-        if 'guardrail' in params.get('judges','').split(','):
+        if "guardrail" in params.get("judges", "").split(","):
             from ura.guardrail_setup import resolve_scoring_settings
+
             params = resolve_scoring_settings(params)
         mode = params.get("mode", "measured")
         dry = mode == "dry_run" or (
@@ -780,11 +858,7 @@ class BuilderCaptureMixin:
             # A dry lane must grade with the offline mock LLM - never a real,
             # metered judge - so a "no calls, no spend" mode cannot silently
             # issue a hosted or local model call.
-            values["--judge-model"] = (
-                "mock"
-                if dry
-                else params.get("judge_model", "")
-            )
+            values["--judge-model"] = "mock" if dry else params.get("judge_model", "")
         if params.get("ack_hosted_judge_data_transfer") == "on" and not dry:
             values["--ack-hosted-judge-data-transfer"] = "on"
         if params.get("approximate_common_metrics") == "on":
@@ -838,11 +912,9 @@ class BuilderCaptureMixin:
         # Bind the operator-local registries so a lane resolves its roster,
         # local target config, and source receipt as the runbook expects.
         # Reject a stale software receipt before creating other private configs.
-        project_receipt, project_receipt_sha256 = (
-            self._materialize_selected_project_revision(
-                params,
-                snapshot_payload=snapshot.get("project_revision"),
-            )
+        project_receipt, project_receipt_sha256 = self._materialize_selected_project_revision(
+            params,
+            snapshot_payload=snapshot.get("project_revision"),
         )
         if project_receipt is not None and project_receipt_sha256 is not None:
             values["--project-revision"] = str(project_receipt)
@@ -854,20 +926,16 @@ class BuilderCaptureMixin:
         if api_config is not None and api_config_sha256 is not None:
             values["--api-config"] = str(api_config)
             values["--api-config-sha256"] = api_config_sha256
-        source_config, source_config_sha256 = (
-            self._materialize_selected_source_config(
-                params,
-                snapshot_payload=snapshot.get("source_config"),
-            )
+        source_config, source_config_sha256 = self._materialize_selected_source_config(
+            params,
+            snapshot_payload=snapshot.get("source_config"),
         )
         if source_config is not None and source_config_sha256 is not None:
             values["--source-config"] = str(source_config)
             values["--source-config-sha256"] = source_config_sha256
-        source_receipt, source_receipt_sha256 = (
-            self._materialize_selected_source_conformance(
-                params,
-                snapshot_payload=snapshot.get("source_conformance"),
-            )
+        source_receipt, source_receipt_sha256 = self._materialize_selected_source_conformance(
+            params,
+            snapshot_payload=snapshot.get("source_conformance"),
         )
         if source_receipt is not None and source_receipt_sha256 is not None:
             values["--source-conformance"] = str(source_receipt)
@@ -884,11 +952,7 @@ class BuilderCaptureMixin:
             values[f"--live-attestation#{index}"] = str(attestation_path)
             values[f"--live-attestation-sha256#{index}"] = attestation_sha256
         judge_model = values.get("--judge-model", "")
-        judge_local = (
-            judge_model
-            if judge_model.startswith(("vllm:", "ollama:"))
-            else ""
-        )
+        judge_local = judge_model if judge_model.startswith(("vllm:", "ollama:")) else ""
         if not dry and (values.get("--local") or judge_local):
             selected = self._split_list(values.get("--local", ""))
             if judge_local and judge_local not in selected:
@@ -905,21 +969,20 @@ class BuilderCaptureMixin:
                 snapshot_payload=snapshot.get("local_config"),
             )
             values["--local-config"] = str(local_cfg)
-            values["--local-config-sha256"] = hashlib.sha256(
-                local_cfg.read_bytes()
-            ).hexdigest()
-            _identities, private_config, durable_digest = (
-                self._local_config_projection(values)
-            )
+            values["--local-config-sha256"] = hashlib.sha256(local_cfg.read_bytes()).hexdigest()
+            _identities, private_config, durable_digest = self._local_config_projection(values)
             if private_config != local_cfg or durable_digest is None:
                 self._unlink_transient_local_config(local_cfg)
-                raise ValueError("selected local config lacks a durable identity")
+                raise ValueError(
+                    _ui_text("builder_capture.selected_local_config_lacks_a_durable_identity")
+                )
             prior_digest = params.get("_local_config_snapshot_sha256", "")
             if prior_digest and prior_digest != durable_digest:
                 self._unlink_transient_local_config(local_cfg)
                 raise ValueError(
-                    "selected local registry/model changed after review; "
-                    "review the lane again"
+                    _ui_text(
+                        "builder_capture.selected_local_registry_model_changed_after_review_review_the_lan"
+                    )
                 )
             params["_local_config_snapshot_sha256"] = durable_digest
         engine_runtime_config, engine_runtime_config_sha256 = (
@@ -928,14 +991,9 @@ class BuilderCaptureMixin:
                 snapshot_payload=snapshot.get("engine_runtime_config"),
             )
         )
-        if (
-            engine_runtime_config is not None
-            and engine_runtime_config_sha256 is not None
-        ):
+        if engine_runtime_config is not None and engine_runtime_config_sha256 is not None:
             values["--engine-runtime-config"] = str(engine_runtime_config)
-            values["--engine-runtime-config-sha256"] = (
-                engine_runtime_config_sha256
-            )
+            values["--engine-runtime-config-sha256"] = engine_runtime_config_sha256
         params = self._bind_execution_config_bundle_identity(params)
         return "run_matrix", values, params
 

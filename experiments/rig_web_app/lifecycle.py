@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .i18n import template as _ui_template, text as _ui_text
+
 import hashlib
 import html
 import json
@@ -193,7 +195,7 @@ class LifecycleMixin:
         # OllamaService.close() never touches an endpoint it did not start.
         self.ollama.close()
         with self._app_lock:
-            if hasattr(self, '_human_reviews'):
+            if hasattr(self, "_human_reviews"):
                 self._human_reviews.close()
             self._reconcile_locked()
             for job in self.jobs.values():
@@ -237,16 +239,11 @@ class LifecycleMixin:
                 failure=(str(row["failure"]) if row["failure"] else None),
                 activity=(
                     str(row["activity"])
-                    if "activity" in row.keys()
-                    and row["activity"] == "model_download"
+                    if "activity" in row.keys() and row["activity"] == "model_download"
                     else None
                 ),
                 restored_state=restored,
-                restored_exit=(
-                    int(row["exit_code"])
-                    if row["exit_code"] is not None
-                    else None
-                ),
+                restored_exit=(int(row["exit_code"]) if row["exit_code"] is not None else None),
                 run_recorded=stored not in {"running", "orphaned"},
             ),
             stored,
@@ -265,7 +262,7 @@ class LifecycleMixin:
             job, stored = self._job_from_db_row(row)
             self.jobs[job_id] = job
             self._restore_job_execution(job)
-            if job.state() in {'complete','failed','stopped','interrupted'}:
+            if job.state() in {"complete", "failed", "stopped", "interrupted"}:
                 self._publish_direct_hosted_job(job)
             if job.restored_state == "orphaned" and stored != "orphaned":
                 self.db.upsert_job(job)  # persist orphaned across restarts
@@ -273,6 +270,7 @@ class LifecycleMixin:
     def _restore_job_execution(self, job: Job) -> None:
         """Recover process ownership or a command's durable terminal result."""
         from .job_runtime import RecoveredProcess, read_state
+
         record = read_state(job.directory)
         if record and record.get("supervisor"):
             job.process = RecoveredProcess(job.directory, record)
@@ -285,13 +283,18 @@ class LifecycleMixin:
         if launch.get("supervised") and job.restored_state in {"orphaned", "unknown"}:
             job.restored_state = "interrupted"
             job.restored_exit = None
-            job.failure = "Console launch was interrupted before its durable process handshake. No automatic relaunch was made."
+            job.failure = _ui_text(
+                "lifecycle.console_launch_was_interrupted_before_its_durable_process_handsha"
+            )
             job.ended_at = job.ended_at or time.time()
             self.db.upsert_job(job)
             return
         # Older hosted collections predate the supervisor. Their final result
         # is a CLI-owned terminal contract, not a guessed log sentinel.
-        if job.command != "hosted_campaign_execute" or job.restored_state not in {"orphaned", "unknown"}:
+        if job.command != "hosted_campaign_execute" or job.restored_state not in {
+            "orphaned",
+            "unknown",
+        }:
             return
         out = _argv_out_dir(job.argv)
         if not out:
@@ -300,7 +303,10 @@ class LifecycleMixin:
         try:
             result = json.loads(result_path.read_text())
             status = result.get("status")
-            if status not in {"responses_collected_awaiting_judging", "collection_needs_continuation"}:
+            if status not in {
+                "responses_collected_awaiting_judging",
+                "collection_needs_continuation",
+            }:
                 return
             rows = result.get("jobs")
             if not isinstance(rows, list) or not rows:
@@ -314,7 +320,13 @@ class LifecycleMixin:
             job.ended_at = result_path.stat().st_mtime
             if not complete:
                 tail = self._log_tail(job, "stderr").strip()
-                job.failure = tail[-500:] if tail else "Collection needs continuation; retained outputs are preserved."
+                job.failure = (
+                    tail[-500:]
+                    if tail
+                    else _ui_text(
+                        "lifecycle.collection_needs_continuation_retained_outputs_are_preserved"
+                    )
+                )
             self.db.upsert_job(job)
         except (OSError, ValueError, TypeError, AttributeError):
             return
@@ -339,9 +351,7 @@ class LifecycleMixin:
         )
         if rows is None:
             fallback = [
-                job
-                for job in self.jobs.values()
-                if started_from <= job.started_at <= started_to
+                job for job in self.jobs.values() if started_from <= job.started_at <= started_to
             ]
             return sorted(fallback, key=lambda job: job.started_at, reverse=True), False
         truncated = len(rows) > limit
@@ -503,12 +513,28 @@ class LifecycleMixin:
                 continue
             interrupted = bool(getattr(job.process, "interrupted", False))
             stopped = interrupted and (job.directory / "stop-request.json").exists()
-            state = "stopped" if stopped else "interrupted" if interrupted else "complete" if code == 0 else "failed"
+            state = (
+                "stopped"
+                if stopped
+                else "interrupted"
+                if interrupted
+                else "complete"
+                if code == 0
+                else "failed"
+            )
             if interrupted:
                 code = None
-                job.failure = ("Execution stopped by operator request. No child exit code was retained; saved outputs are preserved."
-                               if stopped else "Execution process disappeared without a terminal record. Saved outputs are preserved; review before continuing.")
+                job.failure = (
+                    _ui_text(
+                        "lifecycle.execution_stopped_by_operator_request_no_child_exit_code_was_reta"
+                    )
+                    if stopped
+                    else _ui_text(
+                        "lifecycle.execution_process_disappeared_without_a_terminal_record_saved_out"
+                    )
+                )
             from .job_runtime import read_state
+
             execution = getattr(job.process, "terminal", None) or read_state(job.directory)
             if execution and execution.get("ended_at"):
                 job.ended_at = execution["ended_at"]
@@ -517,12 +543,8 @@ class LifecycleMixin:
                 job.ended_at = time.time()
             self._finish_log_capture(job.job_id)
             self._close_handles(job)
-            self._unlink_transient_local_config(
-                self._transient_local_configs.pop(job.job_id, None)
-            )
-            self._unlink_transient_local_config(
-                self._transient_api_configs.pop(job.job_id, None)
-            )
+            self._unlink_transient_local_config(self._transient_local_configs.pop(job.job_id, None))
+            self._unlink_transient_local_config(self._transient_api_configs.pop(job.job_id, None))
             self._unlink_transient_local_config(
                 self._transient_source_configs.pop(job.job_id, None)
             )
@@ -562,26 +584,32 @@ class LifecycleMixin:
                 continue
 
     def _publish_direct_hosted_job(self, job):
-        if job.command!='run_matrix' or '--api' not in job.argv or '--preflight-only' in job.argv:
+        if job.command != "run_matrix" or "--api" not in job.argv or "--preflight-only" in job.argv:
             return
-        owner=self.db.workspace_for_job(job.job_id)
-        if not owner:return
-        marker=job.directory/'campaign-publication.json'
+        owner = self.db.workspace_for_job(job.job_id)
+        if not owner:
+            return
+        marker = job.directory / "campaign-publication.json"
         try:
-            if marker.exists() and json.loads(marker.read_text()).get('status')=='published':return
-        except (OSError,ValueError):pass
+            if marker.exists() and json.loads(marker.read_text()).get("status") == "published":
+                return
+        except (OSError, ValueError):
+            pass
         try:
             from .workspace_direct import publish
-            directory=self.repo_root/_argv_out_dir(job.argv)
-            models=set(job.argv[job.argv.index('--api')+1].split(','))
-            counts=publish(self.db,owner,directory,models)
-            result=dict(status='published',**counts)
-        except (OSError,ValueError,KeyError,TypeError) as exc:
-            result=dict(status='publication_pending',reason=str(exc)[:500])
+
+            directory = self.repo_root / _argv_out_dir(job.argv)
+            models = set(job.argv[job.argv.index("--api") + 1].split(","))
+            counts = publish(self.db, owner, directory, models)
+            result = dict(status="published", **counts)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            result = dict(status="publication_pending", reason=str(exc)[:500])
         try:
-            temporary=marker.with_suffix('.tmp')
-            temporary.write_text(json.dumps(result)+'\n');temporary.replace(marker)
-        except OSError:pass
+            temporary = marker.with_suffix(".tmp")
+            temporary.write_text(json.dumps(result) + "\n")
+            temporary.replace(marker)
+        except OSError:
+            pass
 
     def _start_automatic_ollama_readiness(self, parent: Job) -> Job | None:
         """Start exactly one readiness job after one successful Ollama pull."""
@@ -595,14 +623,12 @@ class LifecycleMixin:
         roster = self.ollama.roster({}, force=True)
         rows = roster.get("models")
         if roster.get("available") is not True or not isinstance(rows, list):
-            raise ValueError("Ollama readiness discovery is unavailable")
-        matches = [
-            row
-            for row in rows
-            if isinstance(row, Mapping) and row.get("tag") == tag
-        ]
+            raise ValueError(_ui_text("lifecycle.ollama_readiness_discovery_is_unavailable"))
+        matches = [row for row in rows if isinstance(row, Mapping) and row.get("tag") == tag]
         if len(matches) != 1:
-            raise ValueError("pulled Ollama model is absent or ambiguous in discovery")
+            raise ValueError(
+                _ui_text("lifecycle.pulled_ollama_model_is_absent_or_ambiguous_in_discovery")
+            )
         row = matches[0]
         spec = str(row.get("spec", ""))
         digest = str(row.get("digest", "")).lower()
@@ -615,15 +641,13 @@ class LifecycleMixin:
             or "text" not in modalities
             or any(item not in {"text", "image"} for item in modalities)
         ):
-            raise ValueError("pulled Ollama discovery identity is invalid")
+            raise ValueError(_ui_text("lifecycle.pulled_ollama_discovery_identity_is_invalid"))
         config = {
             spec: {
                 "digest": digest,
                 "modalities": list(modalities),
                 "num_ctx": "fit",
-                "think": self._default_ollama_think(
-                    spec, row.get("capabilities")
-                ),
+                "think": self._default_ollama_think(spec, row.get("capabilities")),
             }
         }
         payload = (
@@ -641,7 +665,7 @@ class LifecycleMixin:
         config_path = root / "local-config.json"
         if config_path.exists():
             if config_path.is_symlink() or config_path.read_bytes() != payload:
-                raise ValueError("automatic Ollama readiness config changed")
+                raise ValueError(_ui_text("lifecycle.automatic_ollama_readiness_config_changed"))
         else:
             with config_path.open("xb") as handle:
                 handle.write(payload)
@@ -694,7 +718,9 @@ class LifecycleMixin:
             ]
             if len(projected_specs) != len(set(projected_specs)):
                 raise ValueError(
-                    "local model selections collapse to a duplicate content identity"
+                    _ui_text(
+                        "lifecycle.local_model_selections_collapse_to_a_duplicate_content_identity"
+                    )
                 )
             projected[field] = ",".join(projected_specs)
         for field in ("judge_model", "--judge-model"):
@@ -712,7 +738,9 @@ class LifecycleMixin:
             durable_key = f"quantization::{durable_spec}"
             if durable_key in projected:
                 raise ValueError(
-                    "per-model precision fields collapse to a duplicate content identity"
+                    _ui_text(
+                        "lifecycle.per_model_precision_fields_collapse_to_a_duplicate_content_identi"
+                    )
                 )
             projected[durable_key] = value
         return projected
@@ -731,14 +759,14 @@ class LifecycleMixin:
                 for spec, entry in _models_map(load_roster(self.repo_root)).items()
                 if isinstance(entry, dict)
             }
-            configured = self._load_registry(
-                "local-targets.json", "rig/local-targets.example.json"
+            configured = self._load_registry("local-targets.json", "rig/local-targets.example.json")
+            catalog.update(
+                {
+                    str(spec): dict(entry)
+                    for spec, entry in configured.items()
+                    if isinstance(entry, dict)
+                }
             )
-            catalog.update({
-                str(spec): dict(entry)
-                for spec, entry in configured.items()
-                if isinstance(entry, dict)
-            })
         except (OSError, TypeError, ValueError):
             return {}
         from ura.targets.local import _is_explicit_local_path  # noqa: PLC0415
@@ -752,9 +780,7 @@ class LifecycleMixin:
                 continue
             digest = entry.get("digest") if isinstance(entry, Mapping) else None
             if isinstance(digest, str) and re.fullmatch(r"[0-9a-fA-F]{64}", digest):
-                identities[str(spec)] = (
-                    f"vllm:local-checkpoint@sha256:{digest.lower()}"
-                )
+                identities[str(spec)] = f"vllm:local-checkpoint@sha256:{digest.lower()}"
         return identities
 
     def _durable_builder_params(
@@ -778,9 +804,7 @@ class LifecycleMixin:
                 return
             digest = str(projected.get(digest_field, "")).strip().lower()
             projected[field] = (
-                f"{label}@sha256:{digest}"
-                if re.fullmatch(r"[0-9a-f]{64}", digest)
-                else label
+                f"{label}@sha256:{digest}" if re.fullmatch(r"[0-9a-f]{64}", digest) else label
             )
 
         bind_path("project_revision", "private-project-revision", "project_revision_sha")
@@ -801,9 +825,7 @@ class LifecycleMixin:
             "engine_runtime_config_sha",
         )
         if projected.get("harm_config"):
-            digest = str(
-                projected.get("_attacker_config_snapshot_sha256", "")
-            ).strip().lower()
+            digest = str(projected.get("_attacker_config_snapshot_sha256", "")).strip().lower()
             projected["harm_config"] = (
                 f"private-harmbench-config@sha256:{digest}"
                 if re.fullmatch(r"[0-9a-f]{64}", digest)
@@ -837,10 +859,20 @@ class LifecycleMixin:
         }
         runtime = self._project_local_specs(params, inverse)
         for field, digest_field, label, path_env, digest_env in (
-            ("source_conformance", "source_conformance_sha", "private-source-conformance",
-             "URA_SOURCE_CONFORMANCE_MANIFEST", "URA_SOURCE_CONFORMANCE_SHA256"),
-            ("project_revision", "project_revision_sha", "private-project-revision",
-             "URA_PROJECT_REVISION_MANIFEST", "URA_PROJECT_REVISION_SHA256"),
+            (
+                "source_conformance",
+                "source_conformance_sha",
+                "private-source-conformance",
+                "URA_SOURCE_CONFORMANCE_MANIFEST",
+                "URA_SOURCE_CONFORMANCE_SHA256",
+            ),
+            (
+                "project_revision",
+                "project_revision_sha",
+                "private-project-revision",
+                "URA_PROJECT_REVISION_MANIFEST",
+                "URA_PROJECT_REVISION_SHA256",
+            ),
         ):
             digest = str(runtime.get(digest_field, "")).strip().lower()
             configured_digest = os.environ.get(digest_env, "").strip().lower()
@@ -857,8 +889,10 @@ class LifecycleMixin:
         receipt_fields = {
             "source_conformance": ("source_conformance_sha", "private-source-conformance"),
             "project_revision": ("project_revision_sha", "private-project-revision"),
-            **{f"att_path{index}": (f"att_sha{index}", "private-live-attestation")
-               for index in range(1, self._MAX_ATT_ROWS + 1)},
+            **{
+                f"att_path{index}": (f"att_sha{index}", "private-live-attestation")
+                for index in range(1, self._MAX_ATT_ROWS + 1)
+            },
         }
         unresolved = {
             field: (label, str(runtime.get(digest_field, "")).strip().lower())
@@ -875,14 +909,17 @@ class LifecycleMixin:
                     if workflow.get("execution_config_bundle_sha256") != bundle:
                         continue
                     for name, entry in workflow.get("snapshot_manifest", {}).items():
-                        label = {"source_conformance": "private-source-conformance",
-                                 "project_revision": "private-project-revision"}.get(name)
+                        label = {
+                            "source_conformance": "private-source-conformance",
+                            "project_revision": "private-project-revision",
+                        }.get(name)
                         if re.fullmatch(r"live_attestation_\d{2}", name):
                             label = "private-live-attestation"
                         if label:
-                            candidates.setdefault((label, entry["sha256"]), str(
-                                Path(workflow["root"]) / f"snapshot-{name}.bin"
-                            ))
+                            candidates.setdefault(
+                                (label, entry["sha256"]),
+                                str(Path(workflow["root"]) / f"snapshot-{name}.bin"),
+                            )
             owner = runtime.get("campaign_id", "")
             if owner:
                 definition = self.db.workspace_definition(owner)
@@ -892,9 +929,11 @@ class LifecycleMixin:
                     if path and not path.startswith(label):
                         candidates.setdefault((label, digest), path)
             for field, (label, digest) in unresolved.items():
-                if (re.fullmatch(r"[0-9a-f]{64}", digest)
-                        and runtime[field] == f"{label}@sha256:{digest}"
-                        and (label, digest) in candidates):
+                if (
+                    re.fullmatch(r"[0-9a-f]{64}", digest)
+                    and runtime[field] == f"{label}@sha256:{digest}"
+                    and (label, digest) in candidates
+                ):
                     # Composition still checks the bytes, route and revision.
                     runtime[field] = candidates[(label, digest)]
         return runtime
@@ -912,9 +951,7 @@ class LifecycleMixin:
 
         path_value = str(values.get("--local-config", "")).strip()
         selected = [
-            item.strip()
-            for item in str(values.get("--local", "")).split(",")
-            if item.strip()
+            item.strip() for item in str(values.get("--local", "")).split(",") if item.strip()
         ]
         judge = str(values.get("--judge-model", "")).strip()
         if judge.startswith(("vllm:", "ollama:")) and judge not in selected:
@@ -926,62 +963,65 @@ class LifecycleMixin:
         explicit = [
             spec
             for spec in selected
-            if spec.startswith("vllm:")
-            and _is_explicit_local_path(spec.split(":", 1)[1])
+            if spec.startswith("vllm:") and _is_explicit_local_path(spec.split(":", 1)[1])
         ]
         if not path_value:
             if explicit:
                 raise ValueError(
-                    "an explicit local checkpoint requires a digest-bearing "
-                    "--local-config before its job can be retained"
+                    _ui_text(
+                        "lifecycle.an_explicit_local_checkpoint_requires_a_digest_bearing_local_conf"
+                    )
                 )
             return {}, None, None
         candidate = Path(path_value).expanduser()
         if not candidate.is_absolute():
             candidate = self.repo_root / candidate
         if candidate.is_symlink():
-            raise ValueError("--local-config must not be a symlink")
+            raise ValueError(_ui_text("lifecycle.local_config_must_not_be_a_symlink"))
         try:
             path = candidate.resolve(strict=True)
             size = path.stat().st_size
             if not path.is_file() or size <= 0 or size > 1024 * 1024:
-                raise ValueError("--local-config must be a regular <=1 MiB JSON file")
+                raise ValueError(
+                    _ui_text("lifecycle.local_config_must_be_a_regular_1_mib_json_file")
+                )
             payload = path.read_bytes()
         except OSError as exc:
             if explicit:
                 raise ValueError(
-                    "the digest-bearing --local-config must be readable before "
-                    "an explicit checkpoint job can be retained"
+                    _ui_text(
+                        "lifecycle.the_digest_bearing_local_config_must_be_readable_before_an_explic"
+                    )
                 ) from exc
             return {}, None, None
         if len(payload) != size:
-            raise ValueError("--local-config changed while its identity was read")
+            raise ValueError(_ui_text("lifecycle.local_config_changed_while_its_identity_was_read"))
         try:
             document = strict_json_loads(payload.decode("utf-8"))
         except (UnicodeDecodeError, ValueError, RecursionError) as exc:
-            raise ValueError("--local-config must contain a JSON object") from exc
+            raise ValueError(_ui_text("lifecycle.local_config_must_contain_a_json_object")) from exc
         if not isinstance(document, dict):
-            raise ValueError("--local-config must contain a JSON object")
+            raise ValueError(_ui_text("lifecycle.local_config_must_contain_a_json_object"))
         identities: dict[str, str] = {}
         for spec in explicit:
             entry = document.get(spec)
             digest = entry.get("digest") if isinstance(entry, dict) else None
-            if not isinstance(digest, str) or re.fullmatch(
-                r"[0-9a-fA-F]{64}", digest
-            ) is None:
+            if not isinstance(digest, str) or re.fullmatch(r"[0-9a-fA-F]{64}", digest) is None:
                 raise ValueError(
-                    "an explicit local checkpoint requires a 64-hex content "
-                    "digest before its job can be retained"
+                    _ui_text(
+                        "lifecycle.an_explicit_local_checkpoint_requires_a_64_hex_content_digest_bef"
+                    )
                 )
             identities[spec] = f"vllm:local-checkpoint@sha256:{digest.lower()}"
         private_path = self._private_local_config_path(values)
         durable_document = {
-            identities.get(str(spec), str(spec)): entry
-            for spec, entry in document.items()
+            identities.get(str(spec), str(spec)): entry for spec, entry in document.items()
         }
         if len(durable_document) != len(document):
             raise ValueError(
-                "selected local configs collapse to a duplicate content identity"
+                _ui_text(
+                    "lifecycle.selected_local_configs_collapse_to_a_duplicate_content_identity"
+                )
             )
         durable_payload = (
             json.dumps(
@@ -994,9 +1034,7 @@ class LifecycleMixin:
         ).encode("utf-8")
         return identities, private_path, hashlib.sha256(durable_payload).hexdigest()
 
-    def _private_local_config_path(
-        self, values: Mapping[str, str]
-    ) -> Path | None:
+    def _private_local_config_path(self, values: Mapping[str, str]) -> Path | None:
         """Resolve only a console-generated one-shot config path."""
 
         path_value = str(values.get("--local-config", "")).strip()
@@ -1027,9 +1065,7 @@ class LifecycleMixin:
             return None
         return path
 
-    def _private_api_config_path(
-        self, values: Mapping[str, str]
-    ) -> Path | None:
+    def _private_api_config_path(self, values: Mapping[str, str]) -> Path | None:
         """Resolve only a console-generated read-once hosted config path."""
 
         path_value = str(values.get("--api-config", "")).strip()
@@ -1085,9 +1121,7 @@ class LifecycleMixin:
             return None
         return path
 
-    def _private_source_config_path(
-        self, values: Mapping[str, str]
-    ) -> Path | None:
+    def _private_source_config_path(self, values: Mapping[str, str]) -> Path | None:
         return self._private_selected_config_path(
             values,
             flag="--source-config",
@@ -1095,9 +1129,7 @@ class LifecycleMixin:
             filename_prefix="source",
         )
 
-    def _private_attacker_config_path(
-        self, values: Mapping[str, str]
-    ) -> Path | None:
+    def _private_attacker_config_path(self, values: Mapping[str, str]) -> Path | None:
         return self._private_selected_config_path(
             values,
             flag="--attacker-config",
@@ -1105,9 +1137,7 @@ class LifecycleMixin:
             filename_prefix="attacker",
         )
 
-    def _private_engine_runtime_config_path(
-        self, values: Mapping[str, str]
-    ) -> Path | None:
+    def _private_engine_runtime_config_path(self, values: Mapping[str, str]) -> Path | None:
         return self._private_selected_config_path(
             values,
             flag="--engine-runtime-config",
@@ -1115,9 +1145,7 @@ class LifecycleMixin:
             filename_prefix="engine-runtime",
         )
 
-    def _private_source_conformance_path(
-        self, values: Mapping[str, str]
-    ) -> Path | None:
+    def _private_source_conformance_path(self, values: Mapping[str, str]) -> Path | None:
         return self._private_selected_config_path(
             values,
             flag="--source-conformance",
@@ -1125,9 +1153,7 @@ class LifecycleMixin:
             filename_prefix="source-conformance",
         )
 
-    def _private_project_revision_path(
-        self, values: Mapping[str, str]
-    ) -> Path | None:
+    def _private_project_revision_path(self, values: Mapping[str, str]) -> Path | None:
         return self._private_selected_config_path(
             values,
             flag="--project-revision",
@@ -1169,9 +1195,7 @@ class LifecycleMixin:
             selected.append((str(key), digest_key, path))
         return tuple(selected)
 
-    def _private_attacker_artifact_paths(
-        self, values: Mapping[str, str]
-    ) -> tuple[Path, ...]:
+    def _private_attacker_artifact_paths(self, values: Mapping[str, str]) -> tuple[Path, ...]:
         config = self._private_attacker_config_path(values)
         if config is None or not config.exists():
             return ()
@@ -1207,11 +1231,7 @@ class LifecycleMixin:
             seed_pairs = entry.get("seed_pairs")
             if isinstance(seed_pairs, list):
                 for pair in seed_pairs:
-                    if (
-                        not isinstance(pair, list)
-                        or len(pair) != 2
-                        or not isinstance(pair[1], str)
-                    ):
+                    if not isinstance(pair, list) or len(pair) != 2 or not isinstance(pair[1], str):
                         continue
                     candidate = Path(pair[1]).expanduser()
                     if candidate.is_symlink() or candidate.is_junction():
@@ -1228,9 +1248,7 @@ class LifecycleMixin:
                         found.append(path)
         return tuple(found)
 
-    def _private_evidence_paths(
-        self, values: Mapping[str, str]
-    ) -> tuple[Path, ...]:
+    def _private_evidence_paths(self, values: Mapping[str, str]) -> tuple[Path, ...]:
         paths = [
             path
             for path in (
@@ -1262,9 +1280,7 @@ class LifecycleMixin:
         """Build the retained command without changing the execution command."""
 
         if command != "run_matrix":
-            durable_values = self._project_private_runtime_locators(
-                command, values
-            )
+            durable_values = self._project_private_runtime_locators(command, values)
             return (
                 build_argv(command, durable_values, commands=self.commands),
                 self._durable_builder_params(builder_params) if builder_params else None,
@@ -1280,48 +1296,43 @@ class LifecycleMixin:
             raw_digest = str(values.get("--local-config-sha256", "")).strip()
             if re.fullmatch(r"[0-9a-f]{64}", raw_digest) is None:
                 raise ValueError(
-                    "private --local-config requires an exact lowercase byte SHA-256"
+                    _ui_text(
+                        "lifecycle.private_local_config_requires_an_exact_lowercase_byte_sha_256"
+                    )
                 )
             if builder_params is None or (
-                builder_params.get("_local_config_snapshot_sha256", "")
-                != config_digest
+                builder_params.get("_local_config_snapshot_sha256", "") != config_digest
             ):
                 raise ValueError(
-                    "selected local config differs from the reviewed snapshot"
+                    _ui_text("lifecycle.selected_local_config_differs_from_the_reviewed_snapshot")
                 )
         durable_values = self._project_local_specs(values, identities)
         if private_config is not None and config_digest is not None:
-            durable_values["--local-config"] = (
-                f"private-local-config@sha256:{config_digest}"
-            )
+            durable_values["--local-config"] = f"private-local-config@sha256:{config_digest}"
         private_api_config = self._private_api_config_path(values)
         if private_api_config is not None:
             api_digest = str(values.get("--api-config-sha256", "")).strip()
             if re.fullmatch(r"[0-9a-f]{64}", api_digest) is None:
                 raise ValueError(
-                    "private --api-config requires an exact lowercase SHA-256"
+                    _ui_text("lifecycle.private_api_config_requires_an_exact_lowercase_sha_256")
                 )
-            durable_values["--api-config"] = (
-                f"private-api-config@sha256:{api_digest}"
-            )
+            durable_values["--api-config"] = f"private-api-config@sha256:{api_digest}"
         private_source_config = self._private_source_config_path(values)
         if private_source_config is not None:
             source_digest = str(values.get("--source-config-sha256", "")).strip()
             if re.fullmatch(r"[0-9a-f]{64}", source_digest) is None:
                 raise ValueError(
-                    "private --source-config requires an exact lowercase SHA-256"
+                    _ui_text("lifecycle.private_source_config_requires_an_exact_lowercase_sha_256")
                 )
-            durable_values["--source-config"] = (
-                f"private-source-config@sha256:{source_digest}"
-            )
+            durable_values["--source-config"] = f"private-source-config@sha256:{source_digest}"
         private_attacker_config = self._private_attacker_config_path(values)
         if private_attacker_config is not None:
-            attacker_digest = str(
-                values.get("--attacker-config-sha256", "")
-            ).strip()
+            attacker_digest = str(values.get("--attacker-config-sha256", "")).strip()
             if re.fullmatch(r"[0-9a-f]{64}", attacker_digest) is None:
                 raise ValueError(
-                    "private --attacker-config requires an exact lowercase SHA-256"
+                    _ui_text(
+                        "lifecycle.private_attacker_config_requires_an_exact_lowercase_sha_256"
+                    )
                 )
             durable_values["--attacker-config"] = (
                 f"private-attacker-config@sha256:{attacker_digest}"
@@ -1334,30 +1345,24 @@ class LifecycleMixin:
             }
             & RUNTIME_REQUIRED_ATTACKERS
         )
-        private_engine_runtime_config = (
-            self._private_engine_runtime_config_path(values)
-        )
+        private_engine_runtime_config = self._private_engine_runtime_config_path(values)
         if selected_runtime_attackers:
             if private_engine_runtime_config is None or builder_params is None:
                 raise ValueError(
-                    "selected third-party frameworks require a reviewed private "
-                    "engine runtime config"
+                    _ui_text(
+                        "lifecycle.selected_third_party_frameworks_require_a_reviewed_private_engine"
+                    )
                 )
-            engine_digest = str(
-                values.get("--engine-runtime-config-sha256", "")
-            ).strip()
+            engine_digest = str(values.get("--engine-runtime-config-sha256", "")).strip()
             if re.fullmatch(r"[0-9a-f]{64}", engine_digest) is None:
                 raise ValueError(
-                    "private --engine-runtime-config requires an exact lowercase "
-                    "SHA-256"
+                    _ui_text(
+                        "lifecycle.private_engine_runtime_config_requires_an_exact_lowercase_sha_256"
+                    )
                 )
-            runtime_params = {
-                key: str(value) for key, value in builder_params.items()
-            }
+            runtime_params = {key: str(value) for key, value in builder_params.items()}
             runtime_params["attackers"] = ",".join(selected_runtime_attackers)
-            runtime_params["engine_runtime_config"] = str(
-                private_engine_runtime_config
-            )
+            runtime_params["engine_runtime_config"] = str(private_engine_runtime_config)
             runtime_params["engine_runtime_config_sha"] = engine_digest
             _projection, runtime_binding, _raw, _actual = (
                 self._selected_engine_runtime_config_snapshot(runtime_params)
@@ -1366,58 +1371,55 @@ class LifecycleMixin:
                 builder_params.get("_engine_runtime_config_snapshot_sha256", "")
             ):
                 raise ValueError(
-                    "selected engine runtime config differs from the reviewed snapshot"
+                    _ui_text(
+                        "lifecycle.selected_engine_runtime_config_differs_from_the_reviewed_snapshot"
+                    )
                 )
             durable_values["--engine-runtime-config"] = (
                 f"private-engine-runtime-config@sha256:{engine_digest}"
             )
         elif values.get("--engine-runtime-config"):
             raise ValueError(
-                "engine runtime config is not allowed without a selected "
-                "third-party framework"
+                _ui_text(
+                    "lifecycle.engine_runtime_config_is_not_allowed_without_a_selected_third_par"
+                )
             )
         private_source_conformance = self._private_source_conformance_path(values)
         if private_source_conformance is not None:
-            conformance_digest = str(
-                values.get("--source-conformance-sha256", "")
-            ).strip()
+            conformance_digest = str(values.get("--source-conformance-sha256", "")).strip()
             if re.fullmatch(r"[0-9a-f]{64}", conformance_digest) is None:
                 raise ValueError(
-                    "private --source-conformance requires an exact lowercase SHA-256"
+                    _ui_text(
+                        "lifecycle.private_source_conformance_requires_an_exact_lowercase_sha_256"
+                    )
                 )
             durable_values["--source-conformance"] = (
                 f"private-source-conformance@sha256:{conformance_digest}"
             )
         private_project_revision = self._private_project_revision_path(values)
         if private_project_revision is not None:
-            revision_digest = str(
-                values.get("--project-revision-sha256", "")
-            ).strip()
+            revision_digest = str(values.get("--project-revision-sha256", "")).strip()
             if re.fullmatch(r"[0-9a-f]{64}", revision_digest) is None:
                 raise ValueError(
-                    "private --project-revision requires an exact lowercase SHA-256"
+                    _ui_text(
+                        "lifecycle.private_project_revision_requires_an_exact_lowercase_sha_256"
+                    )
                 )
             durable_values["--project-revision"] = (
                 f"private-project-revision@sha256:{revision_digest}"
             )
-        for path_flag, digest_flag, _path in self._private_live_attestation_paths(
-            values
-        ):
+        for path_flag, digest_flag, _path in self._private_live_attestation_paths(values):
             attestation_digest = str(values.get(digest_flag, "")).strip()
             if re.fullmatch(r"[0-9a-f]{64}", attestation_digest) is None:
                 raise ValueError(
-                    "private --live-attestation requires an exact lowercase SHA-256"
+                    _ui_text(
+                        "lifecycle.private_live_attestation_requires_an_exact_lowercase_sha_256"
+                    )
                 )
-            durable_values[path_flag] = (
-                f"private-live-attestation@sha256:{attestation_digest}"
-            )
-        durable_values = self._project_private_runtime_locators(
-            command, durable_values
-        )
+            durable_values[path_flag] = f"private-live-attestation@sha256:{attestation_digest}"
+        durable_values = self._project_private_runtime_locators(command, durable_values)
         durable_params = (
-            self._durable_builder_params(builder_params, identities)
-            if builder_params
-            else None
+            self._durable_builder_params(builder_params, identities) if builder_params else None
         )
         return (
             build_argv(command, durable_values, commands=self.commands),
@@ -1452,9 +1454,7 @@ class LifecycleMixin:
                 ),
             )
             opaque = {
-                "--model-acquisition-plan-dir": (
-                    "private-model-acquisition-plan-dir"
-                ),
+                "--model-acquisition-plan-dir": ("private-model-acquisition-plan-dir"),
                 "--model-acquisition-store": "private-model-acquisition-store",
             }
         elif command == "model_acquire":
@@ -1472,9 +1472,7 @@ class LifecycleMixin:
                 continue
             digest = projected.get(digest_flag, "").strip().lower()
             projected[path_flag] = (
-                f"{label}@sha256:{digest}"
-                if re.fullmatch(r"[0-9a-f]{64}", digest)
-                else label
+                f"{label}@sha256:{digest}" if re.fullmatch(r"[0-9a-f]{64}", digest) else label
             )
         for flag, label in opaque.items():
             if projected.get(flag):
@@ -1491,15 +1489,15 @@ class LifecycleMixin:
         """Keep exact confirmation inputs in bounded, expiring process memory."""
 
         if not re.fullmatch(r"[a-z][a-z0-9:_-]{0,63}", purpose):
-            raise ValueError("invalid launch-ticket purpose")
+            raise ValueError(_ui_text("lifecycle.invalid_launch_ticket_purpose"))
 
         raw_params = dict(params)
         acquisition_next = raw_params.pop("_model_acquisition_next", "")
         snapshot: dict[str, bytes] = {}
         if purpose in {"build", "acquisition_plan", "automatic-preparation"}:
             if execution_snapshot is None:
-                bound_params, snapshot, _snapshot_sha256 = (
-                    self._capture_execution_config_snapshot(raw_params)
+                bound_params, snapshot, _snapshot_sha256 = self._capture_execution_config_snapshot(
+                    raw_params
                 )
             else:
                 bound_params = {key: str(value) for key, value in raw_params.items()}
@@ -1510,14 +1508,20 @@ class LifecycleMixin:
             bound_params = self._bind_execution_config_bundle_identity(bound_params)
         else:
             if execution_snapshot:
-                raise ValueError("this launch-ticket purpose cannot carry execution bytes")
+                raise ValueError(
+                    _ui_text("lifecycle.this_launch_ticket_purpose_cannot_carry_execution_bytes")
+                )
             bound_params = raw_params
         if purpose == "acquisition_plan":
             if acquisition_next not in {"preflight", "run"}:
-                raise ValueError("model acquisition ticket lacks an exact next stage")
+                raise ValueError(
+                    _ui_text("lifecycle.model_acquisition_ticket_lacks_an_exact_next_stage")
+                )
             bound_params["_model_acquisition_next"] = acquisition_next
         elif acquisition_next:
-            raise ValueError("model acquisition stage marker is invalid for this ticket")
+            raise ValueError(
+                _ui_text("lifecycle.model_acquisition_stage_marker_is_invalid_for_this_ticket")
+            )
         now = time.time()
         with self._app_lock:
             self._launch_tickets = {
@@ -1561,9 +1565,7 @@ class LifecycleMixin:
             snapshot = dict(item[3])
         if purpose in {"build", "acquisition_plan", "automatic-preparation"}:
             try:
-                rebound, _current, _digest = self._capture_execution_config_snapshot(
-                    params
-                )
+                rebound, _current, _digest = self._capture_execution_config_snapshot(params)
                 self._validate_execution_snapshot(rebound, snapshot)
                 rebound = self._bind_execution_config_bundle_identity(rebound)
             except (KeyError, OSError, TypeError, ValueError):
@@ -1599,47 +1601,47 @@ class LifecycleMixin:
         self._unlink_transient_local_config(self._private_api_config_path(values))
         self._unlink_transient_local_config(self._private_source_config_path(values))
         self._unlink_transient_local_config(self._private_attacker_config_path(values))
-        self._unlink_transient_local_config(
-            self._private_source_conformance_path(values)
-        )
+        self._unlink_transient_local_config(self._private_source_conformance_path(values))
         for path in evidence_paths:
             self._unlink_transient_local_config(path)
 
-    _MATRIX_BASE_ENV = frozenset({
-        "APPDATA",
-        "COMSPEC",
-        "CUDA_DEVICE_ORDER",
-        "CUDA_HOME",
-        "CUDA_PATH",
-        "CUDA_VISIBLE_DEVICES",
-        "HF_HOME",
-        "HF_HUB_CACHE",
-        "HOME",
-        "LANG",
-        "LC_ALL",
-        "LC_CTYPE",
-        "LD_LIBRARY_PATH",
-        "LOCALAPPDATA",
-        "MKL_NUM_THREADS",
-        "NVIDIA_DRIVER_CAPABILITIES",
-        "NVIDIA_VISIBLE_DEVICES",
-        "OMP_NUM_THREADS",
-        "OPENBLAS_NUM_THREADS",
-        "PATH",
-        "PATHEXT",
-        "PROGRAMDATA",
-        "SYSTEMROOT",
-        "TEMP",
-        "TMP",
-        "TMPDIR",
-        "TOKENIZERS_PARALLELISM",
-        "TORCH_HOME",
-        "TRANSFORMERS_CACHE",
-        "TZ",
-        "USERPROFILE",
-        "WINDIR",
-        "XDG_CACHE_HOME",
-    })
+    _MATRIX_BASE_ENV = frozenset(
+        {
+            "APPDATA",
+            "COMSPEC",
+            "CUDA_DEVICE_ORDER",
+            "CUDA_HOME",
+            "CUDA_PATH",
+            "CUDA_VISIBLE_DEVICES",
+            "HF_HOME",
+            "HF_HUB_CACHE",
+            "HOME",
+            "LANG",
+            "LC_ALL",
+            "LC_CTYPE",
+            "LD_LIBRARY_PATH",
+            "LOCALAPPDATA",
+            "MKL_NUM_THREADS",
+            "NVIDIA_DRIVER_CAPABILITIES",
+            "NVIDIA_VISIBLE_DEVICES",
+            "OMP_NUM_THREADS",
+            "OPENBLAS_NUM_THREADS",
+            "PATH",
+            "PATHEXT",
+            "PROGRAMDATA",
+            "SYSTEMROOT",
+            "TEMP",
+            "TMP",
+            "TMPDIR",
+            "TOKENIZERS_PARALLELISM",
+            "TORCH_HOME",
+            "TRANSFORMERS_CACHE",
+            "TZ",
+            "USERPROFILE",
+            "WINDIR",
+            "XDG_CACHE_HOME",
+        }
+    )
     _PROVIDER_CHILD_ENV = {
         "anthropic": ("ANTHROPIC_API_KEY",),
         "openai": ("OPENAI_API_KEY",),
@@ -1657,25 +1659,29 @@ class LifecycleMixin:
     #: on read. Dropping it silently pinned every console bridge lane to the
     #: 300 s default while the same lane honoured the operator's bound from the
     #: CLI, so the two surfaces ran different lanes under one name.
-    _MATRIX_OPTIONAL_ENV = frozenset({
-        "URA_MEDIA_ROOTS",
-        "URA_ENGINE_TIMEOUT_SECONDS",
-        # Build and its Runner child must resolve the same already-approved
-        # local profiles; omission falls back to an unrelated repository file.
-        "URA_LOCAL_MODEL_PROFILE_REGISTRY",
-    })
+    _MATRIX_OPTIONAL_ENV = frozenset(
+        {
+            "URA_MEDIA_ROOTS",
+            "URA_ENGINE_TIMEOUT_SECONDS",
+            # Build and its Runner child must resolve the same already-approved
+            # local profiles; omission falls back to an unrelated repository file.
+            "URA_LOCAL_MODEL_PROFILE_REGISTRY",
+        }
+    )
     #: Non-secret receipt locators the CLI reads as argparse defaults
     #: (run_matrix/rig_check --project-revision / --source-conformance and their
     #: SHA-256 pairs).  Forwarded to a NON-dry matrix child when set in the
     #: console process so a Run-page rig_check with blank receipt fields admits
     #: exactly like the same command in the exported campaign shell; dry lanes
     #: still launch with them scrubbed (``_DRY_SCRUB_ENV``).
-    _MATRIX_RECEIPT_ENV = frozenset({
-        "URA_PROJECT_REVISION_MANIFEST",
-        "URA_PROJECT_REVISION_SHA256",
-        "URA_SOURCE_CONFORMANCE_MANIFEST",
-        "URA_SOURCE_CONFORMANCE_SHA256",
-    })
+    _MATRIX_RECEIPT_ENV = frozenset(
+        {
+            "URA_PROJECT_REVISION_MANIFEST",
+            "URA_PROJECT_REVISION_SHA256",
+            "URA_SOURCE_CONFORMANCE_MANIFEST",
+            "URA_SOURCE_CONFORMANCE_SHA256",
+        }
+    )
 
     def _strict_config_document(
         self,
@@ -1686,17 +1692,19 @@ class LifecycleMixin:
         raw = self._bounded_private_bytes(
             path,
             max_bytes=1024 * 1024,
-            label="selected child config",
+            label=_ui_text("lifecycle.selected_child_config"),
         )
         expected = str(expected_sha256).strip().lower()
         if expected:
             if re.fullmatch(r"[0-9a-f]{64}", expected) is None:
-                raise ValueError("selected child config SHA-256 must be exact lowercase hex")
+                raise ValueError(
+                    _ui_text("lifecycle.selected_child_config_sha_256_must_be_exact_lowercase_hex")
+                )
             if not secrets.compare_digest(hashlib.sha256(raw).hexdigest(), expected):
-                raise ValueError("selected child config SHA-256 does not match")
+                raise ValueError(_ui_text("lifecycle.selected_child_config_sha_256_does_not_match"))
         value = strict_json_loads(raw.decode("utf-8"))
         if not isinstance(value, dict):
-            raise ValueError("selected child config must contain a JSON object")
+            raise ValueError(_ui_text("lifecycle.selected_child_config_must_contain_a_json_object"))
         return value
 
     def _declared_matrix_environment(
@@ -1713,9 +1721,7 @@ class LifecycleMixin:
                 str(values.get("--api-config-sha256", "")),
             )
             selected_api = {
-                item.strip()
-                for item in str(values.get("--api", "")).split(",")
-                if item.strip()
+                item.strip() for item in str(values.get("--api", "")).split(",") if item.strip()
             }
             judge_model = str(values.get("--judge-model", "")).strip()
             if judge_model and not judge_model.startswith(("vllm:", "ollama:")):
@@ -1725,9 +1731,7 @@ class LifecycleMixin:
                 if not isinstance(entry, Mapping):
                     continue
                 key_env = entry.get("key_env")
-                if isinstance(key_env, str) and re.fullmatch(
-                    r"[A-Za-z_][A-Za-z0-9_]*", key_env
-                ):
+                if isinstance(key_env, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key_env):
                     declared.add(key_env)
         source_path = str(values.get("--source-config", "")).strip()
         if source_path:
@@ -1736,18 +1740,14 @@ class LifecycleMixin:
                 str(values.get("--source-config-sha256", "")),
             )
             selected = {
-                item.strip()
-                for item in str(values.get("--corpora", "")).split(",")
-                if item.strip()
+                item.strip() for item in str(values.get("--corpora", "")).split(",") if item.strip()
             }
             for arm in selected:
                 entry = document.get(arm)
                 if not isinstance(entry, Mapping):
                     continue
                 path_env = entry.get("path_env")
-                if isinstance(path_env, str) and re.fullmatch(
-                    r"[A-Za-z_][A-Za-z0-9_]*", path_env
-                ):
+                if isinstance(path_env, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", path_env):
                     declared.add(path_env)
         attacker_path = str(values.get("--attacker-config", "")).strip()
         if attacker_path:
@@ -1762,12 +1762,14 @@ class LifecycleMixin:
                         if key == "credential_env":
                             names = child if isinstance(child, list) else [child]
                             for name in names:
-                                if not isinstance(name, str) or re.fullmatch(
-                                    r"[A-Za-z_][A-Za-z0-9_]*", name
-                                ) is None:
+                                if (
+                                    not isinstance(name, str)
+                                    or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) is None
+                                ):
                                     raise ValueError(
-                                        "attacker credential_env must name explicit "
-                                        "environment variables"
+                                        _ui_text(
+                                            "lifecycle.attacker_credential_env_must_name_explicit_environment_variables"
+                                        )
                                     )
                                 declared.add(name)
                         else:
@@ -1803,9 +1805,7 @@ class LifecycleMixin:
                 if not isinstance(raw_spec, str) or not isinstance(entry, Mapping):
                     continue
                 key_env = entry.get("key_env")
-                if isinstance(key_env, str) and re.fullmatch(
-                    r"[A-Za-z_][A-Za-z0-9_]*", key_env
-                ):
+                if isinstance(key_env, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key_env):
                     configured_key_env[raw_spec] = key_env
         selected_specs = {
             item.strip()
@@ -1814,9 +1814,7 @@ class LifecycleMixin:
             if item.strip()
         }
         judges = {
-            item.strip()
-            for item in str(values.get("--judges", "")).split(",")
-            if item.strip()
+            item.strip() for item in str(values.get("--judges", "")).split(",") if item.strip()
         }
         judge_model = str(values.get("--judge-model", "")).strip()
         if (
@@ -1859,9 +1857,7 @@ class LifecycleMixin:
         allowed.update(self._selected_matrix_environment_names(values))
         # CUDA installations commonly expose a versioned CUDA_PATH_Vx_y key.
         allowed.update(
-            name
-            for name in os.environ
-            if re.fullmatch(r"CUDA_PATH_V\d+_\d+", name.upper())
+            name for name in os.environ if re.fullmatch(r"CUDA_PATH_V\d+_\d+", name.upper())
         )
         return self._selected_child_environment(allowed)
 
@@ -1871,11 +1867,7 @@ class LifecycleMixin:
         child: dict[str, str] = {}
         for requested in sorted(allowed):
             found = source_by_upper.get(requested.upper())
-            if (
-                isinstance(found, str)
-                and "\0" not in found
-                and len(found) <= 32 * 1024
-            ):
+            if isinstance(found, str) and "\0" not in found and len(found) <= 32 * 1024:
                 # Preserve the declared spelling on POSIX; Windows treats keys
                 # case-insensitively but likewise receives one unique entry.
                 child[requested] = found
@@ -1890,13 +1882,22 @@ class LifecycleMixin:
         """Minimal environment for every non-matrix allowlisted command."""
 
         allowed = set(self._MATRIX_BASE_ENV)
-        if command in {"hosted_retained_inputs", "hosted_selected_replays",
-                       "retained_judge_inventory", "retained_inventory_judge_items",
-                       "retained_inventory_judging", "retained_response_judge_pair",
-                       "retained_response_judge_pair_execute", "human_review_campaign", "human_audit"}:
+        if command in {
+            "hosted_retained_inputs",
+            "hosted_selected_replays",
+            "retained_judge_inventory",
+            "retained_inventory_judge_items",
+            "retained_inventory_judging",
+            "retained_response_judge_pair",
+            "retained_response_judge_pair_execute",
+            "human_review_campaign",
+            "human_audit",
+        }:
             # Original conversion needs the operator-configured corpus locators,
             # not provider keys or the contents of the credentials file.
-            sources = self._load_registry("source-instances.json", "rig/source-instances.example.json")
+            sources = self._load_registry(
+                "source-instances.json", "rig/source-instances.example.json"
+            )
             for source in sources.values():
                 name = source.get("path_env") if isinstance(source, Mapping) else None
                 if isinstance(name, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
@@ -1906,15 +1907,30 @@ class LifecycleMixin:
         # Counting permission controls provider keys, not local media access.
         if command == "hosted_campaign_prepare":
             allowed.add("URA_MEDIA_ROOTS")
-        if command == "hosted_campaign_prepare" and values.get("--allow-network-counts") in {"on", "true", "1", "yes"}:
-            request = self._strict_config_document(str(values.get("--request", "")),
-                str(values.get("--request-sha256", "")))
+        if command == "hosted_campaign_prepare" and values.get("--allow-network-counts") in {
+            "on",
+            "true",
+            "1",
+            "yes",
+        }:
+            request = self._strict_config_document(
+                str(values.get("--request", "")), str(values.get("--request-sha256", ""))
+            )
             api = request["sources"]["api_config"]
-            allowed.update(self._selected_matrix_environment_names({
-                "--api": ",".join(route["target"] for route in request["routes"]),
-                "--api-config": api["path"], "--api-config-sha256": api["sha256"],
-            }))
-        if command in {"hosted_campaign_execute", "retained_native_judge_prepare", "hosted_program_runtime"}:
+            allowed.update(
+                self._selected_matrix_environment_names(
+                    {
+                        "--api": ",".join(route["target"] for route in request["routes"]),
+                        "--api-config": api["path"],
+                        "--api-config-sha256": api["sha256"],
+                    }
+                )
+            )
+        if command in {
+            "hosted_campaign_execute",
+            "retained_native_judge_prepare",
+            "hosted_program_runtime",
+        }:
             from .catalog import _param_values
 
             if command == "hosted_campaign_execute":
@@ -1924,66 +1940,112 @@ class LifecycleMixin:
             paths = _param_values(parameters["--program"], values)
             digests = _param_values(parameters["--program-sha256"], values)
             if len(paths) != len(digests):
-                raise ValueError("Each selected hosted program needs its matching digest")
+                raise ValueError(
+                    _ui_text("lifecycle.each_selected_hosted_program_needs_its_matching_digest")
+                )
             for path, digest in zip(paths, digests):
                 program = self._strict_config_document(path, digest)
                 for job in program["jobs"]:
                     argv = job["argv"]
-                    selected = {flag: argv[index + 1] for index, flag in enumerate(argv[:-1])
-                        if flag.startswith("--") and not argv[index + 1].startswith("--")}
+                    selected = {
+                        flag: argv[index + 1]
+                        for index, flag in enumerate(argv[:-1])
+                        if flag.startswith("--") and not argv[index + 1].startswith("--")
+                    }
                     if command in {"retained_native_judge_prepare", "hosted_program_runtime"}:
                         # Source locators are needed, provider/capture credentials
                         # are not: this command constructs no callable target.
-                        selected = {key:value for key,value in selected.items()
-                            if key in {"--source-config", "--source-config-sha256", "--corpora"}}
+                        selected = {
+                            key: value
+                            for key, value in selected.items()
+                            if key in {"--source-config", "--source-config-sha256", "--corpora"}
+                        }
                         allowed.update(self._declared_matrix_environment(selected))
                     else:
                         allowed.update(self._selected_matrix_environment_names(selected))
             allowed.update(self._MATRIX_OPTIONAL_ENV)
             allowed.update(self._MATRIX_RECEIPT_ENV)
         if command == "retained_native_judge_execute":
-            prepared = self._strict_config_document(str(values.get("--preparation", "")),
-                str(values.get("--preparation-sha256", "")))
+            prepared = self._strict_config_document(
+                str(values.get("--preparation", "")), str(values.get("--preparation-sha256", ""))
+            )
             for source in prepared["units"]:
                 argv = source["runner_argv"]
-                selected = {flag:argv[index+1] for index,flag in enumerate(argv[:-1])
-                    if flag in {"--source-config", "--source-config-sha256", "--corpora"}}
+                selected = {
+                    flag: argv[index + 1]
+                    for index, flag in enumerate(argv[:-1])
+                    if flag in {"--source-config", "--source-config-sha256", "--corpora"}
+                }
                 allowed.update(self._declared_matrix_environment(selected))
             allowed.update(self._MATRIX_OPTIONAL_ENV)
             allowed.update(self._MATRIX_RECEIPT_ENV)
-        if command == 'campaign_assess':
+        if command == "campaign_assess":
             allowed.update(self._MATRIX_OPTIONAL_ENV)
-            allowed.add('URA_MODEL_STORE')
-            if values.get('--execute'):
-                root = Path(str(values['--out']))
-                preparation = self._strict_config_document(str(root/'result.json'))
-                if preparation['kind'] == 'haiku':
-                    api_path = root/'api.json'
-                    allowed.update(self._selected_matrix_environment_names({
-                        '--judges':'llm','--judge-model':preparation['judge_model'],
-                        '--api-config':str(api_path),'--api-config-sha256':hashlib.sha256(api_path.read_bytes()).hexdigest()}))
+            allowed.add("URA_MODEL_STORE")
+            if values.get("--execute"):
+                root = Path(str(values["--out"]))
+                preparation = self._strict_config_document(str(root / "result.json"))
+                if preparation["kind"] == "haiku":
+                    api_path = root / "api.json"
+                    allowed.update(
+                        self._selected_matrix_environment_names(
+                            {
+                                "--judges": "llm",
+                                "--judge-model": preparation["judge_model"],
+                                "--api-config": str(api_path),
+                                "--api-config-sha256": hashlib.sha256(
+                                    api_path.read_bytes()
+                                ).hexdigest(),
+                            }
+                        )
+                    )
         if command == "retained_inventory_judging":
             from experiments.hosted_retained_inputs import _descriptor
-            if values.get('--execute'):
-                ready = self._strict_config_document(str(Path(str(values['--preparation'])) / 'result.json'))
-                request = ready['request']
-                model, api_path, api_sha = request['judge_model'], request['api']['path'], request['api']['sha256']
+
+            if values.get("--execute"):
+                ready = self._strict_config_document(
+                    str(Path(str(values["--preparation"])) / "result.json")
+                )
+                request = ready["request"]
+                model, api_path, api_sha = (
+                    request["judge_model"],
+                    request["api"]["path"],
+                    request["api"]["sha256"],
+                )
             else:
-                model, api_path = str(values.get('--judge-model', '')), str(values.get('--api-config', ''))
-                api_sha = _descriptor(Path(api_path))['sha256']
-            allowed.update(self._selected_matrix_environment_names({
-                '--judges': 'llm', '--judge-model': model, '--api-config': api_path, '--api-config-sha256': api_sha}))
+                model, api_path = (
+                    str(values.get("--judge-model", "")),
+                    str(values.get("--api-config", "")),
+                )
+                api_sha = _descriptor(Path(api_path))["sha256"]
+            allowed.update(
+                self._selected_matrix_environment_names(
+                    {
+                        "--judges": "llm",
+                        "--judge-model": model,
+                        "--api-config": api_path,
+                        "--api-config-sha256": api_sha,
+                    }
+                )
+            )
             allowed.update(self._MATRIX_OPTIONAL_ENV)
         if command == "retained_response_judge_pair_execute":
             plan = self._strict_config_document(str(values.get("--plan", "")))
             condition = plan.get("judge_condition")
             if not isinstance(condition, Mapping) or not isinstance(condition.get("model"), str):
-                raise ValueError("retained judging plan must identify its judge model")
-            allowed.update(self._selected_matrix_environment_names({
-                "--judges": "llm", "--judge-model": condition["model"],
-                "--api-config": str(values.get("--api-config", "")),
-                "--api-config-sha256": str(condition.get("api_config_sha256", "")),
-            }))
+                raise ValueError(
+                    _ui_text("lifecycle.retained_judging_plan_must_identify_its_judge_model")
+                )
+            allowed.update(
+                self._selected_matrix_environment_names(
+                    {
+                        "--judges": "llm",
+                        "--judge-model": condition["model"],
+                        "--api-config": str(values.get("--api-config", "")),
+                        "--api-config-sha256": str(condition.get("api_config_sha256", "")),
+                    }
+                )
+            )
             allowed.update(self._MATRIX_OPTIONAL_ENV)
         if command == "harmbench_capture":
             # The capture drives the same isolated runtime and resolves the
@@ -1994,7 +2056,9 @@ class LifecycleMixin:
                     continue
                 name = str(value).strip()
                 if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) is None:
-                    raise ValueError("HarmBench credential env names must be explicit")
+                    raise ValueError(
+                        _ui_text("lifecycle.harmbench_credential_env_names_must_be_explicit")
+                    )
                 allowed.add(name)
         if command in {"capture_t3mp3st", "source_conformance"}:
             source_path = str(values.get("--source-config", "")).strip()
@@ -2028,8 +2092,9 @@ class LifecycleMixin:
         child = self._selected_child_environment(allowed)
         # A console may dispatch from a different checkout than the editable
         # installation of its Python interpreter. Honor the selected project.
-        child["PYTHONPATH"] = os.pathsep.join((str(self.repo_root.resolve()),
-                                              str(self.repo_root.resolve() / "src")))
+        child["PYTHONPATH"] = os.pathsep.join(
+            (str(self.repo_root.resolve()), str(self.repo_root.resolve() / "src"))
+        )
         if command in {"response_svm", "campaign_assess"}:
             child.update(OPENBLAS_NUM_THREADS="2", OMP_NUM_THREADS="2", MKL_NUM_THREADS="2")
         if command == "export_aggregators":
@@ -2043,40 +2108,44 @@ class LifecycleMixin:
                 child["HF_TOKEN"] = token
         return child
 
-    _PRIVATE_LOG_LOCATOR_FLAGS = frozenset({
-        "--api-config",
-        "--attacker-config",
-        "--engine-runtime-config",
-        "--local-config",
-        "--project-revision",
-        "--source-config",
-        "--source-conformance",
-        "--model-acquisition-plan-dir",
-        "--model-acquisition-plan",
-        "--model-acquisition-receipt",
-        "--model-acquisition-store",
-        "--plan",
-        "--store",
-        "--receipts-dir",
-        "--transport-cache",
-        "--activity-event",
-    })
-    _LOG_SECRET_ENV_NAMES = frozenset({
-        "ANTHROPIC_API_KEY",
-        "ARK_API_KEY",
-        "AWS_ACCESS_KEY_ID",
-        "AWS_SECRET_ACCESS_KEY",
-        "DASHSCOPE_API_KEY",
-        "DEEPSEEK_API_KEY",
-        "GEMINI_API_KEY",
-        "GOOGLE_API_KEY",
-        "HF_TOKEN",
-        "HUGGING_FACE_HUB_TOKEN",
-        "URA_MODEL_ACQUISITION_ACTIVITY_TOKEN",
-        "MOONSHOT_API_KEY",
-        "OPENAI_API_KEY",
-        "ZHIPU_API_KEY",
-    })
+    _PRIVATE_LOG_LOCATOR_FLAGS = frozenset(
+        {
+            "--api-config",
+            "--attacker-config",
+            "--engine-runtime-config",
+            "--local-config",
+            "--project-revision",
+            "--source-config",
+            "--source-conformance",
+            "--model-acquisition-plan-dir",
+            "--model-acquisition-plan",
+            "--model-acquisition-receipt",
+            "--model-acquisition-store",
+            "--plan",
+            "--store",
+            "--receipts-dir",
+            "--transport-cache",
+            "--activity-event",
+        }
+    )
+    _LOG_SECRET_ENV_NAMES = frozenset(
+        {
+            "ANTHROPIC_API_KEY",
+            "ARK_API_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "DASHSCOPE_API_KEY",
+            "DEEPSEEK_API_KEY",
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+            "HF_TOKEN",
+            "HUGGING_FACE_HUB_TOKEN",
+            "URA_MODEL_ACQUISITION_ACTIVITY_TOKEN",
+            "MOONSHOT_API_KEY",
+            "OPENAI_API_KEY",
+            "ZHIPU_API_KEY",
+        }
+    )
 
     @staticmethod
     def _locator_text_variants(raw: str) -> set[str]:
@@ -2092,11 +2161,13 @@ class LifecycleMixin:
         except (OSError, RuntimeError, ValueError):
             resolved = ""
         if resolved:
-            variants.update({
-                resolved,
-                resolved.replace("\\", "/"),
-                resolved.replace("/", "\\"),
-            })
+            variants.update(
+                {
+                    resolved,
+                    resolved.replace("\\", "/"),
+                    resolved.replace("/", "\\"),
+                }
+            )
             try:
                 variants.add(Path(resolved).as_uri())
             except ValueError:
@@ -2193,10 +2264,12 @@ class LifecycleMixin:
             if not raw:
                 continue
             try:
-                strings.update(self._private_strings_from_config(
-                    raw,
-                    str(values.get(f"{flag}-sha256", "")),
-                ))
+                strings.update(
+                    self._private_strings_from_config(
+                        raw,
+                        str(values.get(f"{flag}-sha256", "")),
+                    )
+                )
             except (OSError, TypeError, ValueError):
                 # Config admission remains authoritative elsewhere.  Failure
                 # to inspect for EXTRA redactions must not erase the exact argv
@@ -2225,9 +2298,7 @@ class LifecycleMixin:
                         if part
                     }
                 for component in components:
-                    if Path(component).is_absolute() or re.match(
-                        r"^[A-Za-z]:[\\/]", component
-                    ):
+                    if Path(component).is_absolute() or re.match(r"^[A-Za-z]:[\\/]", component):
                         strings.update(self._locator_text_variants(component))
         encoded: set[bytes] = set()
         for value in strings:
@@ -2351,22 +2422,22 @@ class LifecycleMixin:
     @staticmethod
     def _prepare_private_acquisition_directory(path: Path, *, label: str) -> Path:
         if not path.is_absolute() or path.is_symlink() or path.is_junction():
-            raise ValueError(f"{label} must be an absolute non-link directory")
+            raise ValueError(
+                (f"{label}" + _ui_text("lifecycle.must_be_an_absolute_non_link_directory"))
+            )
         try:
             prospective = path.resolve(strict=False)
         except OSError as exc:
-            raise ValueError(f"{label} cannot be resolved safely") from exc
+            raise ValueError(
+                (f"{label}" + _ui_text("lifecycle.cannot_be_resolved_safely"))
+            ) from exc
         if prospective != path:
-            raise ValueError(f"{label} must already be a resolved path")
+            raise ValueError((f"{label}" + _ui_text("lifecycle.must_already_be_a_resolved_path")))
         path.mkdir(parents=True, exist_ok=True)
         resolved = path.resolve(strict=True)
         info = path.lstat()
-        if (
-            resolved != path
-            or path.is_symlink()
-            or not stat.S_ISDIR(info.st_mode)
-        ):
-            raise ValueError(f"{label} must be one resolved directory")
+        if resolved != path or path.is_symlink() or not stat.S_ISDIR(info.st_mode):
+            raise ValueError((f"{label}" + _ui_text("lifecycle.must_be_one_resolved_directory")))
         try:
             os.chmod(path, 0o700)
         except OSError:
@@ -2381,44 +2452,54 @@ class LifecycleMixin:
     ) -> dict[str, Path]:
         root = self._prepare_private_acquisition_directory(
             (self.state_dir.resolve() / ".private-model-acquisition" / workflow_id),
-            label="private model-acquisition workflow directory",
+            label=_ui_text("lifecycle.private_model_acquisition_workflow_directory"),
         )
         plan_dir = self._prepare_private_acquisition_directory(
             root / "plans",
-            label="private model-acquisition plan directory",
+            label=_ui_text("lifecycle.private_model_acquisition_plan_directory"),
         )
         receipts_dir = self._prepare_private_acquisition_directory(
             root / "receipts",
-            label="private model-acquisition receipt directory",
+            label=_ui_text("lifecycle.private_model_acquisition_receipt_directory"),
         )
         # Reuse the operator's installed store. Retain the resolved locator
         # privately so a later environment change cannot redirect this job.
         # Older workflows without a locator keep their original UI-only store.
         locator = root / "model-store.json"
         if locator.exists() or locator.is_symlink():
-            stored = strict_json_loads(self._bounded_private_bytes(
-                locator, max_bytes=16 * 1024, label="model store locator",
-            ).decode("utf-8"))
+            stored = strict_json_loads(
+                self._bounded_private_bytes(
+                    locator,
+                    max_bytes=16 * 1024,
+                    label=_ui_text("lifecycle.model_store_locator"),
+                ).decode("utf-8")
+            )
             if not isinstance(stored, str):
-                raise ValueError("model store locator must contain a path")
+                raise ValueError(_ui_text("lifecycle.model_store_locator_must_contain_a_path"))
             store = Path(stored)
             if not store.is_absolute() or not store.is_dir() or store.resolve(strict=True) != store:
-                raise ValueError("retained model store is unavailable or unresolved")
+                raise ValueError(
+                    _ui_text("lifecycle.retained_model_store_is_unavailable_or_unresolved")
+                )
         else:
             configured = "" if restoring else os.environ.get("URA_MODEL_STORE", "").strip()
             if configured:
                 store = Path(configured).expanduser().resolve(strict=True)
                 if not store.is_dir():
-                    raise ValueError("configured model store must be an existing directory")
+                    raise ValueError(
+                        _ui_text("lifecycle.configured_model_store_must_be_an_existing_directory")
+                    )
             else:
                 store = self._prepare_private_acquisition_directory(
                     self.state_dir.resolve() / ".managed-model-store",
-                    label="managed model store",
+                    label=_ui_text("lifecycle.managed_model_store"),
                 )
-            self._write_private_workflow_file(locator, (json.dumps(str(store)) + "\n").encode("utf-8"))
+            self._write_private_workflow_file(
+                locator, (json.dumps(str(store)) + "\n").encode("utf-8")
+            )
         plan_output = self._prepare_private_acquisition_directory(
             self.results_root.resolve() / ".acquisition-planning" / workflow_id,
-            label="acquisition planning output directory",
+            label=_ui_text("lifecycle.acquisition_planning_output_directory"),
         )
         return {
             "root": root,
@@ -2446,13 +2527,13 @@ class LifecycleMixin:
             name,
         ):
             return name
-        raise ValueError("private workflow snapshot component is unsupported")
+        raise ValueError(_ui_text("lifecycle.private_workflow_snapshot_component_is_unsupported"))
 
     def _write_private_workflow_file(self, path: Path, payload: bytes) -> None:
         """Atomically replace one operator-private direct child."""
 
         if not path.is_absolute() or not payload:
-            raise ValueError("private workflow file input is invalid")
+            raise ValueError(_ui_text("lifecycle.private_workflow_file_input_is_invalid"))
         parent = path.parent
         parent_info = parent.lstat()
         if (
@@ -2461,7 +2542,7 @@ class LifecycleMixin:
             or not stat.S_ISDIR(parent_info.st_mode)
             or parent.resolve(strict=True) != parent
         ):
-            raise ValueError("private workflow file parent is unsafe")
+            raise ValueError(_ui_text("lifecycle.private_workflow_file_parent_is_unsafe"))
         try:
             existing = path.lstat()
         except FileNotFoundError:
@@ -2473,7 +2554,7 @@ class LifecycleMixin:
             or existing.st_nlink != 1
             or path.resolve(strict=True) != path
         ):
-            raise ValueError("private workflow file target is unsafe")
+            raise ValueError(_ui_text("lifecycle.private_workflow_file_target_is_unsafe"))
         temporary = parent / f".{path.name}.{secrets.token_hex(16)}.tmp"
         descriptor: int | None = None
         try:
@@ -2493,7 +2574,9 @@ class LifecycleMixin:
             except OSError:
                 pass
         except OSError as exc:
-            raise ValueError("private workflow file cannot be written safely") from exc
+            raise ValueError(
+                _ui_text("lifecycle.private_workflow_file_cannot_be_written_safely")
+            ) from exc
         finally:
             if descriptor is not None:
                 os.close(descriptor)
@@ -2507,22 +2590,24 @@ class LifecycleMixin:
 
         workflow_id = str(workflow.get("workflow_id", ""))
         if re.fullmatch(r"[0-9a-f]{32}", workflow_id) is None:
-            raise ValueError("private workflow id is invalid")
+            raise ValueError(_ui_text("lifecycle.private_workflow_id_is_invalid"))
         root = Path(workflow["root"])
         if root.name != workflow_id:
-            raise ValueError("private workflow root does not match its id")
+            raise ValueError(_ui_text("lifecycle.private_workflow_root_does_not_match_its_id"))
         snapshot = self._workflow_execution_snapshot(workflow)
         manifest: dict[str, dict[str, object]] = {}
         for raw_name, payload in sorted(snapshot.items()):
             name = self._workflow_component_name(raw_name)
             if not 0 < len(payload) <= _MODEL_ACQUISITION_SNAPSHOT_BYTES:
-                raise ValueError("private workflow snapshot component is oversized")
+                raise ValueError(
+                    _ui_text("lifecycle.private_workflow_snapshot_component_is_oversized")
+                )
             path = root / f"snapshot-{name}.bin"
             try:
                 existing = self._bounded_private_bytes(
                     path,
                     max_bytes=_MODEL_ACQUISITION_SNAPSHOT_BYTES,
-                    label="private workflow snapshot component",
+                    label=_ui_text("lifecycle.private_workflow_snapshot_component"),
                 )
             except ValueError:
                 if path.exists() or path.is_symlink() or path.is_junction():
@@ -2539,11 +2624,11 @@ class LifecycleMixin:
                 except OSError as exc:
                     path.unlink(missing_ok=True)
                     raise ValueError(
-                        "private workflow snapshot cannot be persisted"
+                        _ui_text("lifecycle.private_workflow_snapshot_cannot_be_persisted")
                     ) from exc
             else:
                 if existing != payload:
-                    raise ValueError("private workflow snapshot bytes changed")
+                    raise ValueError(_ui_text("lifecycle.private_workflow_snapshot_bytes_changed"))
             manifest[name] = {
                 "bytes": len(payload),
                 "sha256": hashlib.sha256(payload).hexdigest(),
@@ -2551,15 +2636,13 @@ class LifecycleMixin:
         params = self._durable_builder_params(workflow["params"])
         assert_durable_job_state_path_free([], params)
         snapshot_sha256 = str(params.get("_execution_snapshot_sha256", ""))
-        bundle_sha256 = str(
-            workflow.get("execution_config_bundle_sha256", "")
-        )
+        bundle_sha256 = str(workflow.get("execution_config_bundle_sha256", ""))
         if (
             re.fullmatch(r"[0-9a-f]{64}", snapshot_sha256) is None
             or re.fullmatch(r"[0-9a-f]{64}", bundle_sha256) is None
             or params.get("_execution_config_bundle_sha256") != bundle_sha256
         ):
-            raise ValueError("private workflow execution identity is invalid")
+            raise ValueError(_ui_text("lifecycle.private_workflow_execution_identity_is_invalid"))
         document = {
             "acquisition_job_id": str(workflow.get("acquisition_job_id", "")),
             "consumed": workflow.get("consumed") is True,
@@ -2573,13 +2656,11 @@ class LifecycleMixin:
             "workflow_id": workflow_id,
         }
         if document["next_stage"] not in {"preflight", "run"}:
-            raise ValueError("private workflow next stage is invalid")
+            raise ValueError(_ui_text("lifecycle.private_workflow_next_stage_is_invalid"))
         for field in ("plan_job_id", "acquisition_job_id"):
             value = str(document[field])
-            if value and re.fullmatch(
-                r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", value
-            ) is None:
-                raise ValueError("private workflow job id is invalid")
+            if value and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", value) is None:
+                raise ValueError(_ui_text("lifecycle.private_workflow_job_id_is_invalid"))
         raw = (
             json.dumps(
                 document,
@@ -2591,7 +2672,7 @@ class LifecycleMixin:
             + "\n"
         ).encode("utf-8")
         if len(raw) > _MODEL_ACQUISITION_WORKFLOW_BYTES:
-            raise ValueError("private workflow metadata is oversized")
+            raise ValueError(_ui_text("lifecycle.private_workflow_metadata_is_oversized"))
         self._write_private_workflow_file(root / "workflow.json", raw)
         workflow["snapshot_manifest"] = manifest
 
@@ -2603,14 +2684,14 @@ class LifecycleMixin:
 
         params = workflow.get("params")
         if not isinstance(params, Mapping):
-            raise ValueError("private workflow parameters are invalid")
+            raise ValueError(_ui_text("lifecycle.private_workflow_parameters_are_invalid"))
         held = workflow.get("execution_snapshot")
         if isinstance(held, Mapping):
             return self._validate_execution_snapshot(params, held)
         root = Path(workflow["root"])
         manifest = workflow.get("snapshot_manifest")
         if not isinstance(manifest, Mapping) or not manifest:
-            raise ValueError("private workflow snapshot manifest is missing")
+            raise ValueError(_ui_text("lifecycle.private_workflow_snapshot_manifest_is_missing"))
         snapshot: dict[str, bytes] = {}
         for raw_name, raw_row in sorted(manifest.items()):
             name = self._workflow_component_name(str(raw_name))
@@ -2618,7 +2699,7 @@ class LifecycleMixin:
                 "bytes",
                 "sha256",
             }:
-                raise ValueError("private workflow snapshot row is invalid")
+                raise ValueError(_ui_text("lifecycle.private_workflow_snapshot_row_is_invalid"))
             size = raw_row.get("bytes")
             digest = raw_row.get("sha256")
             if (
@@ -2628,16 +2709,16 @@ class LifecycleMixin:
                 or not isinstance(digest, str)
                 or re.fullmatch(r"[0-9a-f]{64}", digest) is None
             ):
-                raise ValueError("private workflow snapshot row is invalid")
+                raise ValueError(_ui_text("lifecycle.private_workflow_snapshot_row_is_invalid"))
             payload = self._bounded_private_bytes(
                 root / f"snapshot-{name}.bin",
                 max_bytes=size,
-                label="private workflow snapshot component",
+                label=_ui_text("lifecycle.private_workflow_snapshot_component"),
             )
             if len(payload) != size or not secrets.compare_digest(
                 hashlib.sha256(payload).hexdigest(), digest
             ):
-                raise ValueError("private workflow snapshot component changed")
+                raise ValueError(_ui_text("lifecycle.private_workflow_snapshot_component_changed"))
             snapshot[name] = payload
         return self._validate_execution_snapshot(params, snapshot)
 
@@ -2651,7 +2732,7 @@ class LifecycleMixin:
         token: str,
     ) -> None:
         if re.fullmatch(r"[0-9a-f]{64}", token) is None:
-            raise ValueError("private workflow activity token is invalid")
+            raise ValueError(_ui_text("lifecycle.private_workflow_activity_token_is_invalid"))
         self._write_private_workflow_file(
             self._workflow_activity_token_path(workflow),
             token.encode("ascii"),
@@ -2666,7 +2747,7 @@ class LifecycleMixin:
             raw = self._bounded_private_bytes(
                 path,
                 max_bytes=64,
-                label="private workflow activity token",
+                label=_ui_text("lifecycle.private_workflow_activity_token"),
             )
         except ValueError:
             return None
@@ -2682,9 +2763,7 @@ class LifecycleMixin:
     ) -> None:
         if workflow is None:
             return
-        self._unlink_transient_local_config(
-            self._workflow_activity_token_path(workflow)
-        )
+        self._unlink_transient_local_config(self._workflow_activity_token_path(workflow))
 
     def _restore_model_acquisition_workflows(self) -> None:
         """Recover strict private staged workflows after a console restart."""
@@ -2718,7 +2797,7 @@ class LifecycleMixin:
                 raw = self._bounded_private_bytes(
                     root / "workflow.json",
                     max_bytes=_MODEL_ACQUISITION_WORKFLOW_BYTES,
-                    label="private acquisition workflow metadata",
+                    label=_ui_text("lifecycle.private_acquisition_workflow_metadata"),
                 )
                 document = strict_json_loads(raw.decode("utf-8"))
                 if not isinstance(document, dict) or set(document) != {
@@ -2747,29 +2826,22 @@ class LifecycleMixin:
                 ):
                     continue
                 params = dict(document["params"])
-                if (
-                    params.get("_execution_snapshot_sha256")
-                    != document.get("execution_snapshot_sha256")
-                    or params.get("_execution_config_bundle_sha256")
-                    != document.get("execution_config_bundle_sha256")
+                if params.get("_execution_snapshot_sha256") != document.get(
+                    "execution_snapshot_sha256"
+                ) or params.get("_execution_config_bundle_sha256") != document.get(
+                    "execution_config_bundle_sha256"
                 ):
                     continue
                 assert_durable_job_state_path_free([], params)
                 plan_job_id = str(document.get("plan_job_id", ""))
                 acquisition_job_id = str(document.get("acquisition_job_id", ""))
-                if (
-                    re.fullmatch(
-                        r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", plan_job_id
+                if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", plan_job_id) is None or (
+                    acquisition_job_id
+                    and re.fullmatch(
+                        r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}",
+                        acquisition_job_id,
                     )
                     is None
-                    or (
-                        acquisition_job_id
-                        and re.fullmatch(
-                            r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}",
-                            acquisition_job_id,
-                        )
-                        is None
-                    )
                 ):
                     continue
                 paths = self._new_model_acquisition_workflow_paths(root.name, restoring=True)
@@ -2829,7 +2901,7 @@ class LifecycleMixin:
         """Read one private direct-child file without link/race traversal."""
 
         if not path.is_absolute() or max_bytes <= 0:
-            raise ValueError(f"{label} path or byte bound is invalid")
+            raise ValueError((f"{label}" + _ui_text("lifecycle.path_or_byte_bound_is_invalid")))
         parent = path.parent
         descriptor: int | None = None
         try:
@@ -2840,7 +2912,12 @@ class LifecycleMixin:
                 or not stat.S_ISDIR(parent_info.st_mode)
                 or parent.resolve(strict=True) != parent
             ):
-                raise ValueError(f"{label} parent must be a resolved non-link directory")
+                raise ValueError(
+                    (
+                        f"{label}"
+                        + _ui_text("lifecycle.parent_must_be_a_resolved_non_link_directory")
+                    )
+                )
             info = path.lstat()
             if (
                 path.is_symlink()
@@ -2849,15 +2926,15 @@ class LifecycleMixin:
                 or info.st_nlink != 1
                 or not 0 < info.st_size <= max_bytes
             ):
-                raise ValueError(f"{label} must be one bounded regular file")
+                raise ValueError(
+                    (f"{label}" + _ui_text("lifecycle.must_be_one_bounded_regular_file"))
+                )
             resolved = path.resolve(strict=True)
             if resolved != path or resolved.parent != parent:
-                raise ValueError(f"{label} resolves outside its private directory")
-            flags = (
-                os.O_RDONLY
-                | getattr(os, "O_BINARY", 0)
-                | getattr(os, "O_NOFOLLOW", 0)
-            )
+                raise ValueError(
+                    (f"{label}" + _ui_text("lifecycle.resolves_outside_its_private_directory"))
+                )
+            flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
             descriptor = os.open(path, flags)
             opened = os.fstat(descriptor)
             if (
@@ -2867,20 +2944,21 @@ class LifecycleMixin:
                 or (opened.st_dev, opened.st_ino, opened.st_mode)
                 != (info.st_dev, info.st_ino, info.st_mode)
             ):
-                raise ValueError(f"{label} changed while being opened")
+                raise ValueError((f"{label}" + _ui_text("lifecycle.changed_while_being_opened")))
             with os.fdopen(descriptor, "rb", closefd=True) as stream:
                 descriptor = None
                 raw = stream.read(max_bytes + 1)
                 after = os.fstat(stream.fileno())
-            if (
-                len(raw) != info.st_size
-                or (after.st_dev, after.st_ino, after.st_mode, after.st_size)
-                != (opened.st_dev, opened.st_ino, opened.st_mode, opened.st_size)
-            ):
-                raise ValueError(f"{label} changed while being read")
+            if len(raw) != info.st_size or (
+                after.st_dev,
+                after.st_ino,
+                after.st_mode,
+                after.st_size,
+            ) != (opened.st_dev, opened.st_ino, opened.st_mode, opened.st_size):
+                raise ValueError((f"{label}" + _ui_text("lifecycle.changed_while_being_read")))
             return raw
         except OSError as exc:
-            raise ValueError(f"{label} cannot be read safely") from exc
+            raise ValueError((f"{label}" + _ui_text("lifecycle.cannot_be_read_safely"))) from exc
         finally:
             if descriptor is not None:
                 os.close(descriptor)
@@ -2892,7 +2970,7 @@ class LifecycleMixin:
         raw = cls._bounded_private_bytes(
             path,
             max_bytes=MAX_DOCUMENT_BYTES,
-            label="private acquisition document",
+            label=_ui_text("lifecycle.private_acquisition_document"),
         )
         return raw, hashlib.sha256(raw).hexdigest()
 
@@ -2905,7 +2983,9 @@ class LifecycleMixin:
         plan_dir = Path(workflow["plan_dir"])
         candidates = sorted(plan_dir.glob("acquisition-plan-*.plan.json"))
         if len(candidates) != 1:
-            raise ValueError("reviewed acquisition plan is missing or ambiguous")
+            raise ValueError(
+                _ui_text("lifecycle.reviewed_acquisition_plan_is_missing_or_ambiguous")
+            )
         path = candidates[0]
         _raw, digest = self._bounded_private_document(path)
         plan = load_plan(path, expected_sha256=digest)
@@ -2922,7 +3002,9 @@ class LifecycleMixin:
         receipts_dir = Path(workflow["receipts_dir"])
         candidates = sorted(receipts_dir.glob("acquisition-receipt-*.receipt.json"))
         if len(candidates) != 1:
-            raise ValueError("model acquisition receipt is missing or ambiguous")
+            raise ValueError(
+                _ui_text("lifecycle.model_acquisition_receipt_is_missing_or_ambiguous")
+            )
         path = candidates[0]
         _raw, digest = self._bounded_private_document(path)
         receipt = load_receipt(path, expected_sha256=digest, plan=plan)
@@ -2939,13 +3021,13 @@ class LifecycleMixin:
         # not be resolved through mutable registries again; its exact snapshot
         # validation above is the continuity authority.
         if isinstance(workflow.get("execution_snapshot"), Mapping):
-            errors = self._validate_builder(params, preparation=workflow.get('next_stage') == 'preflight')
+            errors = self._validate_builder(
+                params, preparation=workflow.get("next_stage") == "preflight"
+            )
             if errors:
                 raise ValueError(
-                    "reviewed Builder lane is no longer admissible: "
-                    + "; ".join(
-                        f"{key}: {value}" for key, value in sorted(errors.items())
-                    )
+                    _ui_text("lifecycle.reviewed_builder_lane_is_no_longer_admissible")
+                    + "; ".join(f"{key}: {value}" for key, value in sorted(errors.items()))
                 )
         command, values, rebound = self._compose_from_builder(
             params,
@@ -2966,7 +3048,7 @@ class LifecycleMixin:
                 "execution_config_bundle_sha256"
             ):
                 raise ValueError(
-                    "selected execution config changed after acquisition review"
+                    _ui_text("lifecycle.selected_execution_config_changed_after_acquisition_review")
                 )
             return command, values, rebound
         except BaseException:
@@ -3024,9 +3106,7 @@ class LifecycleMixin:
         state = self._model_acquisition_activity.pop(job.job_id, None)
         if state is not None:
             self._unlink_private_activity_event(state.get("path"))
-        self._unlink_workflow_activity_token(
-            self._model_acquisition_workflows.get(job.job_id)
-        )
+        self._unlink_workflow_activity_token(self._model_acquisition_workflows.get(job.job_id))
         job.activity = None
 
     def _refresh_model_acquisition_activity(self, job: Job) -> None:
@@ -3040,7 +3120,7 @@ class LifecycleMixin:
             raw = self._bounded_private_bytes(
                 path,
                 max_bytes=16 * 1024,
-                label="private acquisition activity event",
+                label=_ui_text("lifecycle.private_acquisition_activity_event"),
             )
             value = strict_json_loads(raw.decode("utf-8"))
             from experiments.model_acquire import (  # noqa: PLC0415
@@ -3056,9 +3136,7 @@ class LifecycleMixin:
         except (OSError, TypeError, UnicodeError, ValueError):
             return
         state["sequence"] = int(event["sequence"])
-        job.activity = (
-            "model_download" if event["state"] == "start" else None
-        )
+        job.activity = "model_download" if event["state"] == "start" else None
 
     def _start_model_acquisition_plan(
         self,
@@ -3070,16 +3148,17 @@ class LifecycleMixin:
         params = {str(key): str(value) for key, value in ticket_params.items()}
         next_stage = params.pop("_model_acquisition_next", "")
         if next_stage not in {"preflight", "run"}:
-            raise ValueError("reviewed model-acquisition stage is invalid")
-        errors = self._validate_builder(params, preparation=next_stage == 'preflight')
+            raise ValueError(_ui_text("lifecycle.reviewed_model_acquisition_stage_is_invalid"))
+        errors = self._validate_builder(params, preparation=next_stage == "preflight")
         if errors:
-            raise ValueError("reviewed Builder lane is no longer admissible: "+'; '.join(errors.values()))
+            raise ValueError(
+                _ui_text("lifecycle.reviewed_builder_lane_is_no_longer_admissible")
+                + "; ".join(errors.values())
+            )
         if execution_snapshot:
             snapshot = self._validate_execution_snapshot(params, execution_snapshot)
         else:
-            params, snapshot, _snapshot_sha256 = (
-                self._capture_execution_config_snapshot(params)
-            )
+            params, snapshot, _snapshot_sha256 = self._capture_execution_config_snapshot(params)
         command, values, rebound = self._compose_from_builder(
             params,
             execution_snapshot=snapshot,
@@ -3089,8 +3168,9 @@ class LifecycleMixin:
                 _card, caps_ok = self._ceilings_card(rebound)
                 if not caps_ok:
                     raise ValueError(
-                        "the reviewed call ceilings no longer cover an exact "
-                        "preflight"
+                        _ui_text(
+                            "lifecycle.the_reviewed_call_ceilings_no_longer_cover_an_exact_preflight"
+                        )
                     )
             attacker_config = self._materialize_prepared_attacker_config(
                 rebound,
@@ -3103,7 +3183,9 @@ class LifecycleMixin:
                     attacker_config.read_bytes()
                 ).hexdigest()
             if not self._builder_model_acquisition_required(rebound):
-                raise ValueError("the reviewed lane does not require Hub acquisition")
+                raise ValueError(
+                    _ui_text("lifecycle.the_reviewed_lane_does_not_require_hub_acquisition")
+                )
             workflow_id = secrets.token_hex(16)
             paths = self._new_model_acquisition_workflow_paths(workflow_id)
             final_values = (
@@ -3122,9 +3204,7 @@ class LifecycleMixin:
             workflow: dict[str, Any] = {
                 "acquisition_job_id": "",
                 "consumed": False,
-                "execution_config_bundle_sha256": rebound[
-                    "_execution_config_bundle_sha256"
-                ],
+                "execution_config_bundle_sha256": rebound["_execution_config_bundle_sha256"],
                 "next_stage": next_stage,
                 "params": dict(rebound),
                 "execution_snapshot": dict(snapshot),
@@ -3152,7 +3232,9 @@ class LifecycleMixin:
         self._model_acquisition_workflows[job.job_id] = workflow
         return job
 
-    def _start_model_acquisition_download(self, plan_job_id: str, *, reserved_job_id: str | None = None) -> Job:
+    def _start_model_acquisition_download(
+        self, plan_job_id: str, *, reserved_job_id: str | None = None
+    ) -> Job:
         workflow = self._model_acquisition_workflows.get(plan_job_id)
         plan_job = self.jobs.get(plan_job_id)
         if (
@@ -3162,12 +3244,14 @@ class LifecycleMixin:
             or run_kind(plan_job.command, plan_job.argv) != "acquisition_plan"
             or plan_job.state() != "complete"
         ):
-            raise ValueError("reviewed acquisition plan job is unavailable")
+            raise ValueError(_ui_text("lifecycle.reviewed_acquisition_plan_job_is_unavailable"))
         prior_acquisition_id = str(workflow.get("acquisition_job_id", ""))
         if prior_acquisition_id:
             prior = self.jobs.get(prior_acquisition_id)
             if prior is None or prior.state() not in {"failed", "stopped", "interrupted"}:
-                raise ValueError("this reviewed acquisition plan was already launched")
+                raise ValueError(
+                    _ui_text("lifecycle.this_reviewed_acquisition_plan_was_already_launched")
+                )
         _command, values, _rebound = self._compose_model_acquisition_lane(workflow)
         self._discard_unlaunched_local_config(values)
         plan_path, plan_sha256, _plan = self._workflow_plan(workflow)
@@ -3209,16 +3293,31 @@ class LifecycleMixin:
         self._model_acquisition_workflows[job.job_id] = workflow
         return job
 
-    def _start_model_acquisition_run(self, acquisition_job_id: str, *, reserved_job_id: str | None = None,
-                                     resume_job_id: str | None = None) -> Job:
+    def _start_model_acquisition_run(
+        self,
+        acquisition_job_id: str,
+        *,
+        reserved_job_id: str | None = None,
+        resume_job_id: str | None = None,
+    ) -> Job:
         workflow = self._model_acquisition_workflows.get(acquisition_job_id)
         acquisition_job = self.jobs.get(acquisition_job_id)
         resume_job = self.jobs.get(resume_job_id) if resume_job_id else None
-        if resume_job_id and (resume_job is None or resume_job.command != 'run_matrix'
-                or resume_job.state() not in {'failed','stopped','interrupted'}
-                or not any(op.get('resume_job') == resume_job_id and op.get('jobs', [None])[-1] == acquisition_job_id
-                           for op in self._operations.values())):
-            raise ValueError('Only the campaign-owned interrupted execution can resume its acquisition')
+        if resume_job_id and (
+            resume_job is None
+            or resume_job.command != "run_matrix"
+            or resume_job.state() not in {"failed", "stopped", "interrupted"}
+            or not any(
+                op.get("resume_job") == resume_job_id
+                and op.get("jobs", [None])[-1] == acquisition_job_id
+                for op in self._operations.values()
+            )
+        ):
+            raise ValueError(
+                _ui_text(
+                    "lifecycle.only_the_campaign_owned_interrupted_execution_can_resume_its_acqu"
+                )
+            )
         if (
             workflow is None
             or acquisition_job is None
@@ -3226,7 +3325,7 @@ class LifecycleMixin:
             or acquisition_job.state() != "complete"
             or (workflow.get("consumed") is True and resume_job is None)
         ):
-            raise ValueError("completed model acquisition is unavailable")
+            raise ValueError(_ui_text("lifecycle.completed_model_acquisition_is_unavailable"))
         plan_path, plan_sha256, plan = self._workflow_plan(workflow)
         receipt_path, receipt_sha256, _receipt = self._workflow_receipt(
             workflow,
@@ -3243,18 +3342,22 @@ class LifecycleMixin:
             if not caps_ok:
                 self._discard_unlaunched_local_config(values)
                 raise ValueError(
-                    "the reviewed call ceilings no longer cover an exact preflight"
+                    _ui_text(
+                        "lifecycle.the_reviewed_call_ceilings_no_longer_cover_an_exact_preflight"
+                    )
                 )
         else:  # pragma: no cover - created only by the exact controller above
             self._discard_unlaunched_local_config(values)
-            raise ValueError("model acquisition has an invalid terminal stage")
-        values.update({
-            "--model-acquisition-plan": str(plan_path),
-            "--model-acquisition-plan-sha256": plan_sha256,
-            "--model-acquisition-receipt": str(receipt_path),
-            "--model-acquisition-receipt-sha256": receipt_sha256,
-            "--model-acquisition-store": str(workflow["store"]),
-        })
+            raise ValueError(_ui_text("lifecycle.model_acquisition_has_an_invalid_terminal_stage"))
+        values.update(
+            {
+                "--model-acquisition-plan": str(plan_path),
+                "--model-acquisition-plan-sha256": plan_sha256,
+                "--model-acquisition-receipt": str(receipt_path),
+                "--model-acquisition-receipt-sha256": receipt_sha256,
+                "--model-acquisition-store": str(workflow["store"]),
+            }
+        )
         workflow["consumed"] = True
         self._persist_model_acquisition_workflow(workflow)
         try:
@@ -3263,7 +3366,7 @@ class LifecycleMixin:
                 values,
                 builder_params=rebound,
                 execution_snapshot=self._workflow_execution_snapshot(workflow),
-                **({'reserved_job_id': reserved_job_id} if reserved_job_id else {}),
+                **({"reserved_job_id": reserved_job_id} if reserved_job_id else {}),
             )
         except BaseException:
             workflow["consumed"] = resume_job is not None
@@ -3286,9 +3389,8 @@ class LifecycleMixin:
             try:
                 _path, _digest, plan = self._workflow_plan(workflow)
             except (OSError, TypeError, ValueError):
-                return (
-                    "<div class='notice red'><strong>The private acquisition plan "
-                    "is missing or invalid.</strong> Review the lane again.</div>"
+                return _ui_template(
+                    "<div class='notice red'><strong>[[text:lifecycle.the_private_acquisition_plan_is_missing_or_invalid]]</strong> [[text:lifecycle.review_the_lane_again]]</div>"
                 )
             resources = "".join(
                 "<li><code>"
@@ -3305,47 +3407,43 @@ class LifecycleMixin:
                 purpose="acquisition_download",
             )
             return (
-                "<div class='card'><h2>Reviewed sealed acquisition plan</h2>"
-                "<p class='note'>Public repository identities and immutable commits "
-                "are shown below. The dedicated controller verifies cache bytes and "
-                "downloads only confirmed missing files.</p><ul>"
+                _ui_template(
+                    "<div class='card'><h2>[[text:lifecycle.reviewed_sealed_acquisition_plan]]</h2><p class='note'>[[text:lifecycle.public_repository_identities_and_immutable_commits_are_shown_belo]]</p><ul>"
+                )
                 + resources
                 + "</ul><form method='post' "
                 "action='/build/model-acquisition/acquire'>"
                 "<input type='hidden' name='launch_ticket' value='"
                 + html.escape(ticket)
-                + "'><button type='submit'>Acquire sealed models</button></form></div>"
+                + _ui_template(
+                    "'><button type='submit'>[[text:lifecycle.acquire_sealed_models]]</button></form></div>"
+                )
             )
         if job.command == "model_acquire" and state == "complete":
             try:
                 _plan_path, _plan_sha, plan = self._workflow_plan(workflow)
                 self._workflow_receipt(workflow, plan=plan)
             except (OSError, TypeError, ValueError):
-                return (
-                    "<div class='notice red'><strong>The acquisition receipt is "
-                    "missing or invalid.</strong> Review the lane again.</div>"
+                return _ui_template(
+                    "<div class='notice red'><strong>[[text:lifecycle.the_acquisition_receipt_is_missing_or_invalid]]</strong> [[text:lifecycle.review_the_lane_again]]</div>"
                 )
             if workflow.get("consumed") is True:
-                return (
-                    "<div class='notice green'><strong>The sealed acquisition was "
-                    "consumed by its reviewed run.</strong></div>"
+                return _ui_template(
+                    "<div class='notice green'><strong>[[text:lifecycle.the_sealed_acquisition_was_consumed_by_its_reviewed_run]]</strong></div>"
                 )
             ticket = self._new_launch_ticket(
                 {"acquisition_job_id": job.job_id},
                 purpose="acquisition_run",
             )
             label = (
-                "Start no-call preflight"
+                _ui_text("lifecycle.start_no_call_preflight")
                 if workflow["next_stage"] == "preflight"
-                else "Start reviewed measured job"
+                else _ui_text("lifecycle.start_reviewed_measured_job")
             )
             return (
-                "<div class='card'><h2>Verified model acquisition receipt</h2>"
-                "<p class='note'>The next process receives the exact plan, receipt, "
-                "and managed-store locator in memory and runs with Hugging Face "
-                "offline/local-only policy. No Hub token is forwarded.</p>"
-                "<form method='post' action='/build/model-acquisition/run'>"
-                "<input type='hidden' name='launch_ticket' value='"
+                _ui_template(
+                    "<div class='card'><h2>[[text:lifecycle.verified_model_acquisition_receipt]]</h2><p class='note'>[[text:lifecycle.the_next_process_receives_the_exact_plan_receipt_and_managed_stor]]</p><form method='post' action='/build/model-acquisition/run'><input type='hidden' name='launch_ticket' value='"
+                )
                 + html.escape(ticket)
                 + "'><button type='submit'>"
                 + html.escape(label)
@@ -3357,13 +3455,13 @@ class LifecycleMixin:
                 purpose="acquisition_download",
             )
             return (
-                "<div class='card'><h2>Acquisition failed</h2>"
-                "<p class='note'>After correcting credentials, storage, or network "
-                "access, retry the same immutable reviewed plan.</p>"
-                "<form method='post' action='/build/model-acquisition/acquire'>"
-                "<input type='hidden' name='launch_ticket' value='"
+                _ui_template(
+                    "<div class='card'><h2>[[text:lifecycle.acquisition_failed]]</h2><p class='note'>[[text:lifecycle.after_correcting_credentials_storage_or_network_access_retry_the]]</p><form method='post' action='/build/model-acquisition/acquire'><input type='hidden' name='launch_ticket' value='"
+                )
                 + html.escape(ticket)
-                + "'><button type='submit'>Retry acquisition</button></form></div>"
+                + _ui_template(
+                    "'><button type='submit'>[[text:lifecycle.retry_acquisition]]</button></form></div>"
+                )
             )
         return ""
 
@@ -3404,7 +3502,9 @@ class LifecycleMixin:
         ):
             return launch_argv, None
         if re.fullmatch(r"[1-9][0-9]*", raw_hours) is None:
-            raise ValueError("local process wall-time hours must be a positive integer")
+            raise ValueError(
+                _ui_text("lifecycle.local_process_wall_time_hours_must_be_a_positive_integer")
+            )
         mode = str(builder_params.get("mode", "measured")).strip() or "measured"
         local = self._split_list(str(builder_params.get("local", "")))
         api = self._split_list(str(builder_params.get("api", "")))
@@ -3417,12 +3517,16 @@ class LifecycleMixin:
         )
         if mode != "measured" or not local or api or hosted_judge:
             raise ValueError(
-                "local process wall-time cap requires a final measured all-local lane"
+                _ui_text(
+                    "lifecycle.local_process_wall_time_cap_requires_a_final_measured_all_local_l"
+                )
             )
         timeout_executable = self._coreutils_timeout_executable()
         if not timeout_executable:
             raise ValueError(
-                "local process wall-time cap requires GNU coreutils timeout on this host"
+                _ui_text(
+                    "lifecycle.local_process_wall_time_cap_requires_gnu_coreutils_timeout_on_thi"
+                )
             )
         seconds = int(raw_hours) * 3600
         return [
@@ -3449,29 +3553,36 @@ class LifecycleMixin:
     ) -> Job:
         bound_campaign = str((builder_params or {}).get("campaign_id", ""))
         if campaign_id and bound_campaign and campaign_id != bound_campaign:
-            raise ValueError("Campaign differs from the reviewed Build launch")
+            raise ValueError(_ui_text("lifecycle.campaign_differs_from_the_reviewed_build_launch"))
         campaign_id = campaign_id or bound_campaign
         if campaign_id:
             self.db.require_workspace(campaign_id)
         if activity not in {None, "model_download"}:
-            raise ValueError("unsupported job activity")
+            raise ValueError(_ui_text("lifecycle.unsupported_job_activity"))
         if activity == "model_download" and command != "ollama_pull":
-            raise ValueError("model_download activity is reserved for ollama_pull jobs")
+            raise ValueError(
+                _ui_text("lifecycle.model_download_activity_is_reserved_for_ollama_pull_jobs")
+            )
         if command == "model_acquire":
             if (
                 not isinstance(model_acquisition_activity_token, str)
-                or re.fullmatch(r"[0-9a-f]{64}", model_acquisition_activity_token)
-                is None
+                or re.fullmatch(r"[0-9a-f]{64}", model_acquisition_activity_token) is None
                 or reserved_job_id is None
             ):
                 raise ValueError(
-                    "model_acquire requires a reserved job id and private activity token"
+                    _ui_text(
+                        "lifecycle.model_acquire_requires_a_reserved_job_id_and_private_activity_tok"
+                    )
                 )
             acquisition_event_path = Path(str(values.get("--activity-event", "")))
             if not acquisition_event_path.is_absolute():
-                raise ValueError("model acquisition activity event must be absolute")
+                raise ValueError(
+                    _ui_text("lifecycle.model_acquisition_activity_event_must_be_absolute")
+                )
         elif model_acquisition_activity_token is not None:
-            raise ValueError("reserved acquisition launch inputs are command-specific")
+            raise ValueError(
+                _ui_text("lifecycle.reserved_acquisition_launch_inputs_are_command_specific")
+            )
         else:
             # Durable operation handoffs reserve identity before launching any
             # stage. The ID still passes the ordinary uniqueness/path checks;
@@ -3489,9 +3600,7 @@ class LifecycleMixin:
                         builder_params,
                         execution_snapshot,
                     )
-                    builder_params = self._bind_execution_config_bundle_identity(
-                        builder_params
-                    )
+                    builder_params = self._bind_execution_config_bundle_identity(builder_params)
                 else:
                     builder_params = self._bind_execution_config_bundle_identity(
                         self._bind_selected_execution_config_identity(builder_params)
@@ -3505,16 +3614,32 @@ class LifecycleMixin:
         # allowlist and differ only in content-identity projection.
         try:
             launch_argv = build_argv(command, values, commands=self.commands)
-            operation_id = (builder_params or {}).get('campaign_operation')
+            operation_id = (builder_params or {}).get("campaign_operation")
             operation = self._operations.get(operation_id) if operation_id else None
-            if command == 'run_matrix' and operation and operation.get('spending_policy'):
-                launch_argv = [launch_argv[0],str(_REPO_ROOT/'experiments'/'campaign_spending.py'),
-                    '--policy',operation['spending_policy'],'--runner-root',str(self.repo_root),
-                    '--',*launch_argv[3:]]
-            if command in {"response_svm", "campaign_assess", "human_review_campaign", "human_audit"}:
+            if command == "run_matrix" and operation and operation.get("spending_policy"):
+                launch_argv = [
+                    launch_argv[0],
+                    str(_REPO_ROOT / "experiments" / "campaign_spending.py"),
+                    "--policy",
+                    operation["spending_policy"],
+                    "--runner-root",
+                    str(self.repo_root),
+                    "--",
+                    *launch_argv[3:],
+                ]
+            if command in {
+                "response_svm",
+                "campaign_assess",
+                "human_review_campaign",
+                "human_audit",
+            }:
                 # Console-owned analysis does not advance the measured Runner.
                 # Use this release's tool, including its automatic study mode.
-                launch_argv = [launch_argv[0], str(_REPO_ROOT / "experiments" / (command+".py")), *launch_argv[3:]]
+                launch_argv = [
+                    launch_argv[0],
+                    str(_REPO_ROOT / "experiments" / (command + ".py")),
+                    *launch_argv[3:],
+                ]
             (
                 argv,
                 retained_params,
@@ -3524,16 +3649,12 @@ class LifecycleMixin:
                 transient_attacker_config,
                 transient_source_conformance,
                 transient_evidence_files,
-            ) = self._durable_launch_state(
-                command, values, builder_params
-            )
-            launch_argv, controller_wall_time_seconds = (
-                self._wrap_local_measured_wall_time(
-                    command,
-                    values,
-                    builder_params,
-                    launch_argv,
-                )
+            ) = self._durable_launch_state(command, values, builder_params)
+            launch_argv, controller_wall_time_seconds = self._wrap_local_measured_wall_time(
+                command,
+                values,
+                builder_params,
+                launch_argv,
             )
             # This is the exact SQLite path-privacy boundary and must run before
             # a subprocess, job directory, or in-memory Job can exist.
@@ -3576,8 +3697,17 @@ class LifecycleMixin:
             # Standalone launches must not inherit another campaign's binding.
             child_env.pop("URA_CAMPAIGN_WORKSPACE_ID", None)
             child_env.pop("URA_CAMPAIGN_CONSOLE_DB", None)
-            if command in {"hosted_campaign_execute", "run_matrix", "retained_response_judge_pair_execute",
-                           "retained_native_judge_execute", "retained_inventory_judging"} and campaign_id:
+            if (
+                command
+                in {
+                    "hosted_campaign_execute",
+                    "run_matrix",
+                    "retained_response_judge_pair_execute",
+                    "retained_native_judge_execute",
+                    "retained_inventory_judging",
+                }
+                and campaign_id
+            ):
                 child_env["URA_CAMPAIGN_WORKSPACE_ID"] = campaign_id
                 child_env["URA_CAMPAIGN_CONSOLE_DB"] = str(self.db.path.resolve())
             if transient_config is not None:
@@ -3588,38 +3718,24 @@ class LifecycleMixin:
                 child_env[_PRIVATE_SOURCE_CONFIG_ENV] = str(transient_source_config)
             if transient_attacker_config is not None:
                 child_env[_PRIVATE_ATTACKER_CONFIG_ENV] = str(transient_attacker_config)
-            private_engine_runtime_config = (
-                self._private_engine_runtime_config_path(values)
-            )
+            private_engine_runtime_config = self._private_engine_runtime_config_path(values)
             if private_engine_runtime_config is not None:
-                child_env[_PRIVATE_ENGINE_RUNTIME_CONFIG_ENV] = str(
-                    private_engine_runtime_config
-                )
+                child_env[_PRIVATE_ENGINE_RUNTIME_CONFIG_ENV] = str(private_engine_runtime_config)
             if transient_source_conformance is not None:
-                child_env[_PRIVATE_SOURCE_CONFORMANCE_ENV] = str(
-                    transient_source_conformance
-                )
+                child_env[_PRIVATE_SOURCE_CONFORMANCE_ENV] = str(transient_source_conformance)
             private_project_revision = self._private_project_revision_path(values)
             if private_project_revision is not None:
-                child_env[_PRIVATE_PROJECT_REVISION_ENV] = str(
-                    private_project_revision
-                )
-            for path_flag, _digest_flag, path in self._private_live_attestation_paths(
-                values
-            ):
+                child_env[_PRIVATE_PROJECT_REVISION_ENV] = str(private_project_revision)
+            for path_flag, _digest_flag, path in self._private_live_attestation_paths(values):
                 index = int(path_flag.rsplit("#", 1)[1])
-                child_env[
-                    f"{_PRIVATE_LIVE_ATTESTATION_ENV_PREFIX}{index:02d}"
-                ] = str(path)
+                child_env[f"{_PRIVATE_LIVE_ATTESTATION_ENV_PREFIX}{index:02d}"] = str(path)
         except (OSError, TypeError, ValueError):
             self._discard_unlaunched_local_config(values)
             raise
         capture_logs = True
         try:
             redactions = (
-                self._durable_log_redactions(command, values, child_env)
-                if capture_logs
-                else ()
+                self._durable_log_redactions(command, values, child_env) if capture_logs else ()
             )
         except (OSError, TypeError, ValueError):
             self._discard_unlaunched_local_config(values)
@@ -3627,11 +3743,12 @@ class LifecycleMixin:
         with self._app_lock:
             job_id = reserved_job_id or self._job_id_factory()
             if (
-                re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", job_id)
-                is None
+                re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", job_id) is None
                 or job_id in self.jobs
             ):
-                raise ValueError("generated job id is invalid or already in use")
+                raise ValueError(
+                    _ui_text("lifecycle.generated_job_id_is_invalid_or_already_in_use")
+                )
             directory = self.state_dir / job_id
             directory.mkdir(parents=True, exist_ok=False)
             try:
@@ -3644,22 +3761,23 @@ class LifecycleMixin:
                 "argv": argv,
                 "supervised": os.name == "posix",
             }
-            if command in {"response_svm", "campaign_assess", "human_review_campaign", "human_audit"}:
-                command_document['analysis_code_repository'] = str(_REPO_ROOT)
+            if command in {
+                "response_svm",
+                "campaign_assess",
+                "human_review_campaign",
+                "human_audit",
+            }:
+                command_document["analysis_code_repository"] = str(_REPO_ROOT)
             if campaign_id:
                 from .workspace_store import activity_role  # noqa: PLC0415
 
                 # Commit ownership before a process can make a call. A failed
                 # launch leaves an honest unresolved activity, never an
                 # unowned paid worker or a fabricated successful job.
-                self.db.attach_workspace_member(
-                    campaign_id, "job", job_id, activity_role(command)
-                )
+                self.db.attach_workspace_member(campaign_id, "job", job_id, activity_role(command))
                 command_document["campaign_id"] = campaign_id
             if controller_wall_time_seconds is not None:
-                command_document["controller_wall_time_seconds"] = (
-                    controller_wall_time_seconds
-                )
+                command_document["controller_wall_time_seconds"] = controller_wall_time_seconds
             (directory / "command.json").write_text(
                 json.dumps(command_document, indent=2, sort_keys=True),
                 encoding="utf-8",
@@ -3683,19 +3801,37 @@ class LifecycleMixin:
             lease = None
             job = None
             try:
-                from .job_runtime import repository_lease, supervisor_argv, process_identity, write_state
+                from .job_runtime import (
+                    repository_lease,
+                    supervisor_argv,
+                    process_identity,
+                    write_state,
+                )
+
                 lease = repository_lease(self.repo_root)
                 if os.name == "posix":
-                    launch_argv = supervisor_argv(directory, launch_argv, lease.fileno() if lease else None)
+                    launch_argv = supervisor_argv(
+                        directory, launch_argv, lease.fileno() if lease else None
+                    )
                     if lease:
                         popen_kwargs["pass_fds"] = (lease.fileno(),)
-                job = Job(job_id=job_id, command=command, argv=argv, directory=directory,
-                    stdout_handle=stdout_handle, stderr_handle=stderr_handle,
-                    builder_params=retained_params, pin=os.environ.get("REF_URA", ""),
-                    activity=activity, restored_state="running")
+                job = Job(
+                    job_id=job_id,
+                    command=command,
+                    argv=argv,
+                    directory=directory,
+                    stdout_handle=stdout_handle,
+                    stderr_handle=stderr_handle,
+                    builder_params=retained_params,
+                    pin=os.environ.get("REF_URA", ""),
+                    activity=activity,
+                    restored_state="running",
+                )
                 self.jobs[job_id] = job
                 if not self.db.upsert_job(job):
-                    raise OSError("Could not retain job identity before process launch")
+                    raise OSError(
+                        _ui_text("lifecycle.could_not_retain_job_identity_before_process_launch")
+                    )
                 if capture_logs:
                     log_writers = self._start_log_capture(
                         job_id,
@@ -3716,12 +3852,23 @@ class LifecycleMixin:
                 job.process = process
                 identity = process_identity(process.pid) if os.name == "posix" else None
                 if identity:
-                    write_state(directory, dict(job_id=job_id, state="running", supervisor=identity,
-                        started_at=job.started_at, exit_code=None), "execution-start.json")
+                    write_state(
+                        directory,
+                        dict(
+                            job_id=job_id,
+                            state="running",
+                            supervisor=identity,
+                            started_at=job.started_at,
+                            exit_code=None,
+                        ),
+                        "execution-start.json",
+                    )
             except (OSError, ValueError):
                 if job is not None and job.process is None:
                     job.restored_state = "failed"
-                    job.failure = "Job launch did not complete; inspect retained logs before retrying."
+                    job.failure = _ui_text(
+                        "lifecycle.job_launch_did_not_complete_inspect_retained_logs_before_retrying"
+                    )
                     job.ended_at = time.time()
                     self.db.upsert_job(job)
                 if log_writers is not None:
@@ -3801,7 +3948,10 @@ class LifecycleMixin:
             self._release_job_handle(job)
             return
         from .job_runtime import write_state
-        write_state(job.directory, dict(job_id=job.job_id, requested_at=time.time()), "stop-request.json")
+
+        write_state(
+            job.directory, dict(job_id=job.job_id, requested_at=time.time()), "stop-request.json"
+        )
         if os.name == "nt":
             self._terminate_tree_windows(job, process)
         else:
@@ -3814,7 +3964,11 @@ class LifecycleMixin:
         # and is reaped, os.getpgid(pid) raises ESRCH and any surviving group
         # member could no longer be addressed.
         try:
-            pgid: int | None = process.process_group() if hasattr(process, "process_group") else os.getpgid(process.pid)
+            pgid: int | None = (
+                process.process_group()
+                if hasattr(process, "process_group")
+                else os.getpgid(process.pid)
+            )
         except (OSError, ProcessLookupError):
             pgid = None
         self._signal_group(process, signal.SIGTERM, pgid)
@@ -3833,8 +3987,10 @@ class LifecycleMixin:
             pass
         if process.poll() is None:
             job.stop_error = (
-                "stop could not be confirmed: SIGTERM and SIGKILL to the "
-                f"process group did not terminate PID {process.pid}"
+                _ui_text(
+                    "lifecycle.stop_could_not_be_confirmed_sigterm_and_sigkill_to_the_process_gr"
+                )
+                + f"{process.pid}"
             )
         else:
             job.stop_error = None  # a prior unconfirmed stop is now resolved
@@ -3878,9 +4034,11 @@ class LifecycleMixin:
         #    tree stopped - surface it, do not report a false success.
         if process.poll() is None:
             job.stop_error = (
-                "stop could not be confirmed: taskkill and the job-object "
-                f"fallback did not terminate PID {process.pid}; the process "
-                "tree may still be running"
+                _ui_text(
+                    "lifecycle.stop_could_not_be_confirmed_taskkill_and_the_job_object_fallback"
+                )
+                + f"{process.pid}"
+                + _ui_text("lifecycle.the_process_tree_may_still_be_running")
             )
         else:
             job.stop_error = None  # a prior unconfirmed stop is now resolved
@@ -3922,14 +4080,12 @@ class LifecycleMixin:
         with self._app_lock:
             job = self.jobs.get(job_id)
             if job is None:
-                raise KeyError(f"unknown job {job_id!r}")
+                raise KeyError((_ui_text("lifecycle.unknown_job") + f"{job_id!r}"))
             acquisition_event = None
             if job.command == "model_acquire":
                 acquisition_state = self._model_acquisition_activity.get(job.job_id)
                 acquisition_event = (
-                    acquisition_state.get("path")
-                    if acquisition_state is not None
-                    else None
+                    acquisition_state.get("path") if acquisition_state is not None else None
                 )
                 self._clear_model_acquisition_activity(job)
             self._terminate_tree(job)
@@ -3974,7 +4130,9 @@ class LifecycleMixin:
                     "orphan_responses": 0,
                     "truncated": 1,
                     "unreadable_artifacts": 0,
-                    "error": "retained ownership registry unavailable or over limit",
+                    "error": _ui_text(
+                        "lifecycle.retained_ownership_registry_unavailable_or_over_limit"
+                    ),
                 }
             for row in runs:
                 out = str(row["out_dir"] or "").strip()
@@ -4133,88 +4291,140 @@ class LifecycleMixin:
         path = parsed.path
         query = {key: values[0] for key, values in parse_qs(parsed.query).items() if values}
         try:
-            if path == '/assessment' and method == 'GET':
+            if path == "/assessment" and method == "GET":
                 from .campaign_assessment import page
-                return 200, 'text/html; charset=utf-8', page(self,query.get('campaign_id',''))
-            if path == '/assessment/review' and method == 'GET':
+
+                return 200, "text/html; charset=utf-8", page(self, query.get("campaign_id", ""))
+            if path == "/assessment/review" and method == "GET":
                 from .campaign_assessment import review
-                return 200, 'text/html; charset=utf-8', review(self,query.get('campaign_id',''),query.get('job',''))
-            if path in {'/assessment/prepare','/assessment/start'} and method == 'POST':
+
+                return (
+                    200,
+                    "text/html; charset=utf-8",
+                    review(self, query.get("campaign_id", ""), query.get("job", "")),
+                )
+            if path in {"/assessment/prepare", "/assessment/start"} and method == "POST":
                 from .campaign_assessment import prepare, launch
+
                 with self._app_lock:
-                    job=(prepare if path.endswith('/prepare') else launch)(self,dict(form or {}))
-                owner=self.db.workspace_for_job(job.job_id)
-                return 303, ('/assessment/review?campaign_id='+owner+'&job='+job.job_id if path.endswith('/prepare') else '/jobs/'+job.job_id), b''
-            if path == '/analysis' and method == 'GET':
+                    job = (prepare if path.endswith("/prepare") else launch)(self, dict(form or {}))
+                owner = self.db.workspace_for_job(job.job_id)
+                return (
+                    303,
+                    (
+                        "/assessment/review?campaign_id=" + owner + "&job=" + job.job_id
+                        if path.endswith("/prepare")
+                        else "/jobs/" + job.job_id
+                    ),
+                    b"",
+                )
+            if path == "/analysis" and method == "GET":
                 from .response_analysis import page
-                return 200, 'text/html; charset=utf-8', page(self, query.get('campaign_id',''))
-            if method == 'POST' and path in {'/analysis/start','/analysis/resume'}:
+
+                return 200, "text/html; charset=utf-8", page(self, query.get("campaign_id", ""))
+            if method == "POST" and path in {"/analysis/start", "/analysis/resume"}:
                 from .response_analysis import start, resume
+
                 with self._app_lock:
-                    job=(start if path.endswith('/start') else resume)(self,dict(form or {}))
-                return 303, '/jobs/'+job.job_id, b''
-            if method == 'GET' and path.startswith('/operations/'):
-                return 200, 'text/html; charset=utf-8', self._operation_page(path.removeprefix('/operations/'))
-            if method == 'POST' and path == '/operations/start-campaign':
+                    job = (start if path.endswith("/start") else resume)(self, dict(form or {}))
+                return 303, "/jobs/" + job.job_id, b""
+            if method == "GET" and path.startswith("/operations/"):
+                return (
+                    200,
+                    "text/html; charset=utf-8",
+                    self._operation_page(path.removeprefix("/operations/")),
+                )
+            if method == "POST" and path == "/operations/start-campaign":
                 data = dict(form or {})
-                if set(data) != {'launch_ticket'}:
-                    raise ValueError('Review the campaign before starting')
-                ticket = self._consume_launch_ticket(data['launch_ticket'], purpose='campaign-start')
+                if set(data) != {"launch_ticket"}:
+                    raise ValueError(_ui_text("lifecycle.review_the_campaign_before_starting"))
+                ticket = self._consume_launch_ticket(
+                    data["launch_ticket"], purpose="campaign-start"
+                )
                 if ticket is None:
-                    raise ValueError('This start was already used or expired; reopen the campaign')
+                    raise ValueError(
+                        _ui_text(
+                            "lifecycle.this_start_was_already_used_or_expired_reopen_the_campaign"
+                        )
+                    )
                 with self._app_lock:
-                    operation = self._operations[ticket[0]['operation']]
-                    if operation['kind'] != 'campaign' or operation['status'] != 'ready' or operation.get('execution_authorized'):
-                        raise ValueError('This campaign has already started or is not ready')
+                    operation = self._operations[ticket[0]["operation"]]
+                    if (
+                        operation["kind"] != "campaign"
+                        or operation["status"] != "ready"
+                        or operation.get("execution_authorized")
+                    ):
+                        raise ValueError(
+                            _ui_text("lifecycle.this_campaign_has_already_started_or_is_not_ready")
+                        )
                     from .operations import completed_equivalent
+
                     completed = completed_equivalent(self._operations, operation)
                     if completed:
-                        return 303, '/operations/'+completed['id'], b''
-                    operation.update(execution_authorized=True, step=1, status='preparing')
+                        return 303, "/operations/" + completed["id"], b""
+                    operation.update(execution_authorized=True, step=1, status="preparing")
                     self._save_operation(operation)
-                    self._ensure_operation_worker(operation['id'])
-                return 303, '/operations/'+operation['id'], b''
-            if method == 'POST' and path == '/operations/start-experiment':
+                    self._ensure_operation_worker(operation["id"])
+                return 303, "/operations/" + operation["id"], b""
+            if method == "POST" and path == "/operations/start-experiment":
                 data = dict(form or {})
-                if set(data) != {'launch_ticket'}:
-                    raise ValueError('Review the experiment before starting')
-                ticket = self._consume_launch_ticket(data['launch_ticket'], purpose='experiment-with-checks')
+                if set(data) != {"launch_ticket"}:
+                    raise ValueError(_ui_text("lifecycle.review_the_experiment_before_starting"))
+                ticket = self._consume_launch_ticket(
+                    data["launch_ticket"], purpose="experiment-with-checks"
+                )
                 if ticket is None:
-                    raise ValueError('This start has already been used or expired; reopen the prepared experiment')
+                    raise ValueError(
+                        _ui_text(
+                            "lifecycle.this_start_has_already_been_used_or_expired_reopen_the_prepared_e"
+                        )
+                    )
                 with self._app_lock:
-                    operation = self._operations[ticket[0]['operation']]
-                    if operation['status'] != 'ready' or not operation.get('awaiting_connections') or operation.get('execution_authorized'):
-                        raise ValueError('The experiment is not waiting for a start')
-                    operation.update(execution_authorized=True, awaiting_connections=False, status='preparing')
+                    operation = self._operations[ticket[0]["operation"]]
+                    if (
+                        operation["status"] != "ready"
+                        or not operation.get("awaiting_connections")
+                        or operation.get("execution_authorized")
+                    ):
+                        raise ValueError(
+                            _ui_text("lifecycle.the_experiment_is_not_waiting_for_a_start")
+                        )
+                    operation.update(
+                        execution_authorized=True, awaiting_connections=False, status="preparing"
+                    )
                     self._save_operation(operation)
-                    self._ensure_operation_worker(operation['id'])
-                return 303, '/operations/'+operation['id'], b''
-            if method == 'POST' and path.startswith('/operations/') and path.endswith('/stop'):
-                operation_id = path.split('/')[2]
+                    self._ensure_operation_worker(operation["id"])
+                return 303, "/operations/" + operation["id"], b""
+            if method == "POST" and path.startswith("/operations/") and path.endswith("/stop"):
+                operation_id = path.split("/")[2]
                 self._stop_operation(operation_id)
-                return 303, '/operations/'+operation_id, b''
-            if method == 'POST' and path.startswith('/operations/') and path.endswith('/retry'):
-                operation_id = path.split('/')[2]
+                return 303, "/operations/" + operation_id, b""
+            if method == "POST" and path.startswith("/operations/") and path.endswith("/retry"):
+                operation_id = path.split("/")[2]
                 self._retry_operation(operation_id)
-                return 303, '/operations/'+operation_id, b''
-            if method == 'POST' and path == '/build/prepare-automatic':
+                return 303, "/operations/" + operation_id, b""
+            if method == "POST" and path == "/build/prepare-automatic":
                 data = dict(form or {})
-                ticket = data.pop('launch_ticket', '')
-                payload = self._consume_launch_ticket(ticket, purpose='automatic-preparation')
+                ticket = data.pop("launch_ticket", "")
+                payload = self._consume_launch_ticket(ticket, purpose="automatic-preparation")
                 if data or payload is None:
-                    raise ValueError('This preparation review expired. Reopen your saved configuration.')
+                    raise ValueError(
+                        _ui_text(
+                            "lifecycle.this_preparation_review_expired_reopen_your_saved_configuration"
+                        )
+                    )
                 params, snapshot = payload
-                params.pop('_model_acquisition_next', None)
-                operation_id = self._start_operation('direct', params, snapshot=snapshot)
-                return 303, '/operations/'+operation_id, b''
-            if method == 'POST' and path.startswith('/build/prepare-operation/'):
-                kind = path.removeprefix('/build/prepare-operation/')
-                if kind not in {'matched', 'local-judging', 'haiku-judging', 'paired-haiku'}:
-                    raise ValueError('Choose a supported preparation')
+                params.pop("_model_acquisition_next", None)
+                operation_id = self._start_operation("direct", params, snapshot=snapshot)
+                return 303, "/operations/" + operation_id, b""
+            if method == "POST" and path.startswith("/build/prepare-operation/"):
+                kind = path.removeprefix("/build/prepare-operation/")
+                if kind not in {"matched", "local-judging", "haiku-judging", "paired-haiku"}:
+                    raise ValueError(_ui_text("lifecycle.choose_a_supported_preparation"))
                 params = self._save_build_campaign(self._builder_params(form or {}))
                 operation_id = self._start_operation(kind, params)
-                return 303, '/operations/'+operation_id, b''
-            if path == '/human-evaluation' or path.startswith(('/human-evaluation/', '/review/')):
+                return 303, "/operations/" + operation_id, b""
+            if path == "/human-evaluation" or path.startswith(("/human-evaluation/", "/review/")):
                 return self._human_route(method, path, query, dict(form or {}))
             if method == "GET" and path == "/campaigns":
                 return 200, "text/html; charset=utf-8", self._workspaces_page()
@@ -4222,15 +4432,19 @@ class LifecycleMixin:
                 return 303, "/build?work_kind=campaign#build-general", b""
             if method == "POST" and path == "/campaigns":
                 data = dict(form or {})
-                campaign_id = self.db.create_workspace(data.get("name", ""), data.get("kind", "mixed"))
+                campaign_id = self.db.create_workspace(
+                    data.get("name", ""), data.get("kind", "mixed")
+                )
                 section = "#build-general" if data.get("creation_flow") == "name_then_build" else ""
                 return 303, f"/build?campaign_id={campaign_id}{section}", b""
             if method == "GET" and path.startswith("/campaigns/"):
                 parts = path.removeprefix("/campaigns/").split("/")
                 if len(parts) == 3 and parts[1] == "figures":
                     return self._workspace_export(parts[0], parts[2], query)
-                return 200, "text/html; charset=utf-8", self._workspace_page(
-                    path.removeprefix("/campaigns/"), query
+                return (
+                    200,
+                    "text/html; charset=utf-8",
+                    self._workspace_page(path.removeprefix("/campaigns/"), query),
                 )
             if method == "GET" and path == "/":
                 return (
@@ -4245,7 +4459,11 @@ class LifecycleMixin:
             if method == "GET" and path in {"/static/favicon.svg", "/favicon.ico"}:
                 return 200, "image/svg+xml", _FAVICON_SVG
             if method == "GET" and path == "/commands":
-                return 200, "text/html; charset=utf-8", self._commands_page(query.get("campaign_id", ""))
+                return (
+                    200,
+                    "text/html; charset=utf-8",
+                    self._commands_page(query.get("campaign_id", "")),
+                )
             if method == "GET" and path == "/ollama/status":
                 return (
                     200,
@@ -4257,11 +4475,7 @@ class LifecycleMixin:
                 )
             if method == "POST" and path in {"/ollama/start", "/ollama/stop"}:
                 try:
-                    status = (
-                        self.ollama.start()
-                        if path.endswith("/start")
-                        else self.ollama.stop()
-                    )
+                    status = self.ollama.start() if path.endswith("/start") else self.ollama.stop()
                 except (OllamaError, OSError, ValueError) as exc:
                     return 303, f"/build?ollama_error={quote(str(exc))}", b""
                 return 303, f"/build?ollama_state={quote(str(status['state']))}", b""
@@ -4270,7 +4484,9 @@ class LifecycleMixin:
                 try:
                     model = validate_ollama_tag(data.get("model", ""))
                     if self.ollama.status().get("api_reachable") is not True:
-                        raise ValueError("Ollama loopback daemon is not running")
+                        raise ValueError(
+                            _ui_text("lifecycle.ollama_loopback_daemon_is_not_running")
+                        )
                     storage = self.ollama.validate_pull_storage()
                     models_path = storage.get("models_path")
                     base_url = storage.get("base_url")
@@ -4282,7 +4498,9 @@ class LifecycleMixin:
                         or not isinstance(base_url, str)
                         or not base_url
                     ):
-                        raise ValueError("owned Ollama storage contract is incomplete")
+                        raise ValueError(
+                            _ui_text("lifecycle.owned_ollama_storage_contract_is_incomplete")
+                        )
                     if (
                         isinstance(owned_pid, bool)
                         or not isinstance(owned_pid, int)
@@ -4290,7 +4508,9 @@ class LifecycleMixin:
                         or not isinstance(owned_process_identity, str)
                         or not owned_process_identity
                     ):
-                        raise ValueError("owned Ollama process contract is incomplete")
+                        raise ValueError(
+                            _ui_text("lifecycle.owned_ollama_process_contract_is_incomplete")
+                        )
                     self.ollama.invalidate_roster()
                     job = self.start_job(
                         "ollama_pull",
@@ -4313,16 +4533,25 @@ class LifecycleMixin:
                 data = dict(form or {})
                 command = data.pop("command", "")
                 campaign_id = data.pop("campaign_id", "")
-                if command == 'live_attestation' and 'probe_job' in data:
-                    probe_job = data.pop('probe_job')
+                if command == "live_attestation" and "probe_job" in data:
+                    probe_job = data.pop("probe_job")
                     if data:
-                        raise ValueError('Do not mix a saved probe selection with manual receipt fields')
-                    campaign_id, data, existing_job = self._transport_check_from_job(probe_job, campaign_id)
+                        raise ValueError(
+                            _ui_text(
+                                "lifecycle.do_not_mix_a_saved_probe_selection_with_manual_receipt_fields"
+                            )
+                        )
+                    campaign_id, data, existing_job = self._transport_check_from_job(
+                        probe_job, campaign_id
+                    )
                     if existing_job:
-                        return 303, '/jobs/' + existing_job, b''
+                        return 303, "/jobs/" + existing_job, b""
                 if command == "campaign_assess":
-                    return (400, "text/plain; charset=utf-8",
-                            b"use the campaign's Evaluate saved answers workflow")
+                    return (
+                        400,
+                        "text/plain; charset=utf-8",
+                        b"use the campaign's Evaluate saved answers workflow",
+                    )
                 if command in {
                     "run_matrix",
                     "model_acquire",
@@ -4349,9 +4578,7 @@ class LifecycleMixin:
                 return 303, f"/jobs/{job.job_id}", b""
             if method == "GET" and path == "/jobs":
                 return 200, "text/html; charset=utf-8", self._jobs_page(query)
-            if method == "POST" and path.startswith("/jobs/external/") and path.endswith(
-                "/stop"
-            ):
+            if method == "POST" and path.startswith("/jobs/external/") and path.endswith("/stop"):
                 return (
                     405,
                     "text/plain; charset=utf-8",
@@ -4428,9 +4655,11 @@ class LifecycleMixin:
             if method == "GET" and path == "/stats":
                 if query.get("view") == "compare":
                     from .stats_compare import response
+
                     return response(self, query)
                 if query.get("view") == "svm":
                     from .svm_stats import response
+
                     return response(self, query)
                 if query.get("view") == "standalone":
                     return 200, "text/html; charset=utf-8", self._standalone_results_page(query)
@@ -4440,29 +4669,36 @@ class LifecycleMixin:
             if method == "GET" and path == "/build":
                 campaign_id = query.get("campaign_id", "")
                 prefill = self.db.workspace_definition(campaign_id) if campaign_id else {}
-                prefill.update(campaign_id=campaign_id,
-                    work_kind=query.get("work_kind", "campaign" if campaign_id else "run"))
+                prefill.update(
+                    campaign_id=campaign_id,
+                    work_kind=query.get("work_kind", "campaign" if campaign_id else "run"),
+                )
                 return (
                     200,
                     "text/html; charset=utf-8",
                     self._build_page(
                         prefill=prefill,
-                        saved=query.get('saved') == '1',
+                        saved=query.get("saved") == "1",
                         ollama_state=query.get("ollama_state", ""),
                         ollama_error=query.get("ollama_error", ""),
-                        framework_runtime_state=query.get(
-                            "framework_runtime_state", ""
-                        ),
+                        framework_runtime_state=query.get("framework_runtime_state", ""),
                     ),
                 )
             if method == "POST" and path == "/build/save":
                 params = self._builder_params(form or {})
                 if params.get("work_kind") != "campaign" and not params.get("campaign_id"):
-                    raise ValueError("Select Campaign to save a campaign definition")
+                    raise ValueError(
+                        _ui_text("lifecycle.select_campaign_to_save_a_campaign_definition")
+                    )
                 params = self._save_build_campaign(params)
-                return 303, "/build?campaign_id=" + params["campaign_id"] + "&saved=1#build-general", b""
+                return (
+                    303,
+                    "/build?campaign_id=" + params["campaign_id"] + "&saved=1#build-general",
+                    b"",
+                )
             if method == "POST" and path in {"/build/source-runs", "/build/prepare-inputs"}:
                 from .builder_sources import prepare_selected_inputs
+
                 params = self._builder_params(form or {})
                 if path == "/build/source-runs":
                     return 200, "text/html; charset=utf-8", self._build_page(prefill=params)
@@ -4470,80 +4706,131 @@ class LifecycleMixin:
                 return 303, "/jobs/" + job.job_id, b""
             if method == "POST" and path == "/build/forecast-matched":
                 from .builder_budget import prepare_budget
+
                 job = prepare_budget(self, self._builder_params(form or {}))
                 return 303, "/jobs/" + job.job_id, b""
             if method == "POST" and path == "/build/prepare-replays":
                 from .builder_replays import prepare_replays
+
                 job = prepare_replays(self, self._builder_params(form or {}))
                 return 303, "/jobs/" + job.job_id, b""
             if method == "POST" and path == "/build/prepare-programs":
                 from .builder_programs import prepare_programs
                 from ura.guardrail_setup import GuardrailSetupError
+
                 params = self._builder_params(form or {})
                 try:
                     job = prepare_programs(self, params)
                 except GuardrailSetupError as exc:
-                    return 400, "text/html; charset=utf-8", self._build_page(
-                        prefill=params,errors={'guardrail_model':str(exc)})
+                    return (
+                        400,
+                        "text/html; charset=utf-8",
+                        self._build_page(prefill=params, errors={"guardrail_model": str(exc)}),
+                    )
                 return 303, "/jobs/" + job.job_id, b""
             if method == "POST" and path == "/build/review-collection":
                 from .builder_collection import collection_review
-                return 200, "text/html; charset=utf-8", collection_review(self,self._builder_params(form or {}))
+
+                return (
+                    200,
+                    "text/html; charset=utf-8",
+                    collection_review(self, self._builder_params(form or {})),
+                )
             if method == "POST" and path == "/build/collect-prepared":
                 from .builder_collection import collect_prepared
-                job = collect_prepared(self,form or {})
+
+                job = collect_prepared(self, form or {})
                 return 303, "/jobs/" + job.job_id, b""
             if method == "POST" and path == "/build/prepare-native-judging":
                 from .builder_native_judging import prepare_native_judging
-                job = prepare_native_judging(self,self._builder_params(form or {}))
+
+                job = prepare_native_judging(self, self._builder_params(form or {}))
                 return 303, "/jobs/" + job.job_id, b""
             if method == "POST" and path == "/build/review-native-judging":
                 from .builder_native_judging import native_judging_review
-                return 200, "text/html; charset=utf-8", native_judging_review(self,self._builder_params(form or {}))
+
+                return (
+                    200,
+                    "text/html; charset=utf-8",
+                    native_judging_review(self, self._builder_params(form or {})),
+                )
             if method == "POST" and path == "/build/judge-retained-local":
                 from .builder_native_judging import judge_retained_local
-                job = judge_retained_local(self,form or {})
+
+                job = judge_retained_local(self, form or {})
                 return 303, "/jobs/" + job.job_id, b""
             if method == "POST" and path == "/build/prepare-haiku-judging":
                 from .builder_haiku_judging import prepare_haiku_judging
-                job = prepare_haiku_judging(self,self._builder_params(form or {}))
+
+                job = prepare_haiku_judging(self, self._builder_params(form or {}))
                 return 303, "/jobs/" + job.job_id, b""
             if method == "POST" and path == "/build/prepare-judging-inventory":
                 from .builder_judging_inventory import prepare_judging_inventory
-                job = prepare_judging_inventory(self,self._builder_params(form or {}))
+
+                job = prepare_judging_inventory(self, self._builder_params(form or {}))
                 return 303, "/jobs/" + job.job_id, b""
             if method == "POST" and path == "/build/review-judging-inventory":
                 from .builder_judging_inventory import judging_inventory_review
-                return 200, "text/html; charset=utf-8", judging_inventory_review(self,self._builder_params(form or {}))
+
+                return (
+                    200,
+                    "text/html; charset=utf-8",
+                    judging_inventory_review(self, self._builder_params(form or {})),
+                )
             if method == "POST" and path == "/build/prepare-inventory-judging":
                 from .builder_judging_inventory import prepare_inventory_judging
-                job = prepare_inventory_judging(self,self._builder_params(form or {}))
+
+                job = prepare_inventory_judging(self, self._builder_params(form or {}))
                 return 303, "/jobs/" + job.job_id, b""
             if method == "POST" and path == "/build/review-inventory-judging":
                 from .builder_judging_inventory import inventory_judging_review
-                return 200, "text/html; charset=utf-8", inventory_judging_review(self,self._builder_params(form or {}))
+
+                return (
+                    200,
+                    "text/html; charset=utf-8",
+                    inventory_judging_review(self, self._builder_params(form or {})),
+                )
             if method == "POST" and path == "/build/prepare-inventory-haiku":
                 from .builder_inventory_execution import prepare
+
                 job = prepare(self, self._builder_params(form or {}))
                 return 303, "/jobs/" + job.job_id, b""
             if method == "POST" and path == "/build/review-inventory-haiku":
                 from .builder_inventory_execution import review
-                return 200, "text/html; charset=utf-8", review(self, self._builder_params(form or {}))
+
+                return (
+                    200,
+                    "text/html; charset=utf-8",
+                    review(self, self._builder_params(form or {})),
+                )
             if method == "POST" and path == "/build/execute-inventory-haiku":
                 from .builder_inventory_execution import launch
+
                 job = launch(self, form or {})
                 return 303, "/jobs/" + job.job_id, b""
             if method == "POST" and path == "/build/review-haiku-judging":
                 from .builder_haiku_judging import haiku_judging_review
-                return 200, "text/html; charset=utf-8", haiku_judging_review(self,self._builder_params(form or {}))
+
+                return (
+                    200,
+                    "text/html; charset=utf-8",
+                    haiku_judging_review(self, self._builder_params(form or {})),
+                )
             if method == "POST" and path == "/build/judge-retained-haiku":
                 from .builder_haiku_judging import judge_retained_haiku
-                job = judge_retained_haiku(self,form or {})
+
+                job = judge_retained_haiku(self, form or {})
                 return 303, "/jobs/" + job.job_id, b""
             if method == "POST" and path == "/build/edit":
-                ticket = self._consume_launch_ticket((form or {}).get("edit_ticket", ""), purpose="build-edit")
+                ticket = self._consume_launch_ticket(
+                    (form or {}).get("edit_ticket", ""), purpose="build-edit"
+                )
                 if ticket is None:
-                    raise ValueError("This edit link expired; reopen the saved campaign in Build")
+                    raise ValueError(
+                        _ui_text(
+                            "lifecycle.this_edit_link_expired_reopen_the_saved_campaign_in_build"
+                        )
+                    )
                 return 200, "text/html; charset=utf-8", self._build_page(prefill=ticket[0])
             if method == "POST" and path == "/build/framework-runtimes":
                 try:
@@ -4591,12 +4878,15 @@ class LifecycleMixin:
                     return (
                         200,
                         "text/html; charset=utf-8",
-                        self._build_page(errors={
-                            "models": (
-                                "the sealed acquisition authorization expired or "
-                                "changed; review the lane again"
-                            )
-                        }),
+                        self._build_page(
+                            errors={
+                                "models": (
+                                    _ui_text(
+                                        "lifecycle.the_sealed_acquisition_authorization_expired_or_changed_review_th"
+                                    )
+                                )
+                            }
+                        ),
                     )
                 try:
                     ticket_params, execution_snapshot = ticket_payload
@@ -4606,40 +4896,51 @@ class LifecycleMixin:
                             execution_snapshot=execution_snapshot,
                         )
                     elif stage == "acquire" and set(ticket_params) == {"plan_job_id"}:
-                        job = self._start_model_acquisition_download(
-                            ticket_params["plan_job_id"]
-                        )
-                    elif stage == "run" and set(ticket_params) == {
-                        "acquisition_job_id"
-                    }:
-                        job = self._start_model_acquisition_run(
-                            ticket_params["acquisition_job_id"]
-                        )
+                        job = self._start_model_acquisition_download(ticket_params["plan_job_id"])
+                    elif stage == "run" and set(ticket_params) == {"acquisition_job_id"}:
+                        job = self._start_model_acquisition_run(ticket_params["acquisition_job_id"])
                     else:
-                        raise ValueError("invalid acquisition stage authorization")
+                        raise ValueError(
+                            _ui_text("lifecycle.invalid_acquisition_stage_authorization")
+                        )
                 except (KeyError, OSError, TypeError, ValueError):
                     return (
                         200,
                         "text/html; charset=utf-8",
-                        self._build_page(errors={
-                            "models": (
-                                "the sealed acquisition stage failed admission; "
-                                "review the lane and its immutable inputs again"
-                            )
-                        }),
+                        self._build_page(
+                            errors={
+                                "models": (
+                                    _ui_text(
+                                        "lifecycle.the_sealed_acquisition_stage_failed_admission_review_the_lane_and"
+                                    )
+                                )
+                            }
+                        ),
                     )
                 operation_id = self._finish_probe_automatically(job)
-                return 303, ('/operations/'+operation_id if operation_id else f"/jobs/{job.job_id}"), b""
+                return (
+                    303,
+                    ("/operations/" + operation_id if operation_id else f"/jobs/{job.job_id}"),
+                    b"",
+                )
             if method == "POST" and path in {"/build", "/build/review"}:
                 data = dict(form or {})
-                if (data.get('campaign_flow') == 'on' and data.get('mode') == 'measured'
-                        and (data.get('campaign_id') or data.get('work_kind') == 'campaign')
-                        and not any(data.get(key) for key in ('confirm','launch_ticket','preflight_only'))):
+                if (
+                    data.get("campaign_flow") == "on"
+                    and data.get("mode") == "measured"
+                    and (data.get("campaign_id") or data.get("work_kind") == "campaign")
+                    and not any(
+                        data.get(key) for key in ("confirm", "launch_ticket", "preflight_only")
+                    )
+                ):
                     from .campaign_flow import settings
-                    params = settings(self, self._runtime_builder_params(self._builder_params(data)))
+
+                    params = settings(
+                        self, self._runtime_builder_params(self._builder_params(data))
+                    )
                     params = self._save_build_campaign(params)
-                    operation_id = self._start_operation('campaign', params)
-                    return 303, '/operations/'+operation_id, b''
+                    operation_id = self._start_operation("campaign", params)
+                    return 303, "/operations/" + operation_id, b""
                 confirm_value = data.pop("confirm", "")
                 preflight_value = data.pop("preflight_only", "")
                 launch_ticket = data.pop("launch_ticket", "")
@@ -4651,8 +4952,9 @@ class LifecycleMixin:
                         self._build_page(
                             errors={
                                 "models": (
-                                    "the confirmation expired or was changed; "
-                                    "review the lane again"
+                                    _ui_text(
+                                        "lifecycle.the_confirmation_expired_or_was_changed_review_the_lane_again"
+                                    )
                                 )
                             },
                         ),
@@ -4691,9 +4993,7 @@ class LifecycleMixin:
                     # paths. Resolve those identities from the current private
                     # registry only for this in-memory validation/composition.
                     try:
-                        params = self._runtime_builder_params(
-                            self._builder_params(data)
-                        )
+                        params = self._runtime_builder_params(self._builder_params(data))
                     except ValueError:
                         return (
                             200,
@@ -4701,8 +5001,9 @@ class LifecycleMixin:
                             self._build_page(
                                 errors={
                                     "models": (
-                                        "the builder request contains unsupported "
-                                        "or malformed fields; review the lane again"
+                                        _ui_text(
+                                            "lifecycle.the_builder_request_contains_unsupported_or_malformed_fields_revi"
+                                        )
                                     )
                                 },
                             ),
@@ -4771,10 +5072,13 @@ class LifecycleMixin:
                         # still needs its own purpose-bound one-shot ticket;
                         # never launch a Hub preflight that lacks a receipt.
                         self._discard_unlaunched_local_config(values)
-                        job = self._start_model_acquisition_plan({
-                            **params,
-                            "_model_acquisition_next": "preflight",
-                        }, execution_snapshot=execution_snapshot)
+                        job = self._start_model_acquisition_plan(
+                            {
+                                **params,
+                                "_model_acquisition_next": "preflight",
+                            },
+                            execution_snapshot=execution_snapshot,
+                        )
                     else:
                         proj_values = self._builder_preflight_values(
                             values,
@@ -4797,10 +5101,12 @@ class LifecycleMixin:
                         try:
                             params, snapshot, _ = self._capture_execution_config_snapshot(params)
                             params = self._bind_execution_config_bundle_identity(params)
-                            operation_id = self._start_operation('direct',params,snapshot=snapshot)
+                            operation_id = self._start_operation(
+                                "direct", params, snapshot=snapshot
+                            )
                         finally:
                             self._discard_unlaunched_local_config(values)
-                        return 303, '/operations/'+operation_id, b''
+                        return 303, "/operations/" + operation_id, b""
                     try:
                         page = self._preview_page(
                             command,
@@ -4833,9 +5139,15 @@ class LifecycleMixin:
                     execution_snapshot=execution_snapshot,
                 )
                 operation_id = self._finish_probe_automatically(job)
-                return 303, ('/operations/'+operation_id if operation_id else f"/jobs/{job.job_id}"), b""
+                return (
+                    303,
+                    ("/operations/" + operation_id if operation_id else f"/jobs/{job.job_id}"),
+                    b"",
+                )
             if method == "POST" and path == "/db/reindex":
-                summary = self.reindex_all(verify_sha=(form or {}).get("verify_artifact_sha256") == "on")
+                summary = self.reindex_all(
+                    verify_sha=(form or {}).get("verify_artifact_sha256") == "on"
+                )
                 return 303, f"/?reindexed={quote(json.dumps(summary, sort_keys=True))}", b""
             if method == "GET" and path == "/config/secrets":
                 return (
@@ -4902,8 +5214,13 @@ class LifecycleMixin:
             return 404, "text/plain; charset=utf-8", b"not found"
         except (KeyError, ValueError) as exc:
             body = _page(
-                "Request rejected",
-                "<div class='card'><h1>Request rejected</h1>"
-                f"<pre>{html.escape(str(exc))}</pre></div>",
+                _ui_text("lifecycle.request_rejected"),
+                (
+                    _ui_template(
+                        "<div class='card'><h1>[[text:lifecycle.request_rejected]]</h1><pre>"
+                    )
+                    + f"{html.escape(str(exc))}"
+                    + "</pre></div>"
+                ),
             )
             return 400, "text/html; charset=utf-8", body

@@ -94,10 +94,17 @@ def test_resume_uses_original_selection_even_before_controller_file_exists(app,m
 
 def test_analysis_process_uses_console_tool_and_bounded_threads(app,monkeypatch):
     import inspect
+    import ast
+    import textwrap
     from experiments.rig_web_app.lifecycle import LifecycleMixin
     # The command remains typed; execution source is recorded separately from Runner.
     source=inspect.getsource(LifecycleMixin.start_job)
-    assert 'analysis_code_repository' in source and 'command+".py"' in source
+    assert 'analysis_code_repository' in source
+    tree = ast.parse(textwrap.dedent(source))
+    assert any(isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add)
+               and isinstance(node.left, ast.Name) and node.left.id == 'command'
+               and isinstance(node.right, ast.Constant) and node.right.value == '.py'
+               for node in ast.walk(tree))
     monkeypatch.setenv('OPENBLAS_NUM_THREADS','24')
     env=app._generic_child_environment('response_svm',{})
     assert env['OPENBLAS_NUM_THREADS']==env['OMP_NUM_THREADS']==env['MKL_NUM_THREADS']=='2'

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+
+from .i18n import text as _ui_text
+
 import hashlib
 import json
 import math
@@ -165,16 +168,12 @@ def _validate_terminal_inventory(document: Mapping[str, Any]) -> None:
         or _TERMINAL_INVENTORY_SCHEMA.fullmatch(document["schema"]) is None
         or not isinstance(cohort_order, list)
         or not 1 <= len(cohort_order) <= _TERMINAL_INVENTORY_MAX_GROUPS
-        or any(
-            not _terminal_inventory_label(cohort)
-            for cohort in cohort_order
-        )
+        or any(not _terminal_inventory_label(cohort) for cohort in cohort_order)
         or len(set(cohort_order)) != len(cohort_order)
         or not isinstance(cohort_counts, Mapping)
         or set(cohort_counts) != set(cohort_order)
         or any(
-            type(cohort_counts.get(cohort)) is not int
-            or cohort_counts[cohort] < 0
+            type(cohort_counts.get(cohort)) is not int or cohort_counts[cohort] < 0
             for cohort in cohort_order
         )
         or not isinstance(rows, list)
@@ -186,20 +185,18 @@ def _validate_terminal_inventory(document: Mapping[str, Any]) -> None:
         or type(document.get("cross_revision_pooling_permitted")) is not bool
         or type(document.get("cross_source_pooling_permitted")) is not bool
     ):
-        raise ValueError("terminal inventory schema, size, or cohort counts differ")
+        raise ValueError(_ui_text("reports.terminal_inventory_schema_size_or_cohort_counts_differ"))
 
     accounting = document.get("accounting")
     if (
         not isinstance(accounting, Mapping)
         or len(accounting) > _TERMINAL_INVENTORY_MAX_GROUPS
         or any(
-            not _terminal_inventory_label(field)
-            or type(value) is not int
-            or value < 0
+            not _terminal_inventory_label(field) or type(value) is not int or value < 0
             for field, value in accounting.items()
         )
     ):
-        raise ValueError("terminal inventory accounting is malformed")
+        raise ValueError(_ui_text("reports.terminal_inventory_accounting_is_malformed"))
 
     keys: list[str] = []
     failures: list[str] = []
@@ -208,7 +205,7 @@ def _validate_terminal_inventory(document: Mapping[str, Any]) -> None:
     source_strata: dict[str, list[str]] = {}
     for row in rows:
         if not isinstance(row, Mapping) or set(row) != _TERMINAL_INVENTORY_ROW_FIELDS:
-            raise ValueError("terminal inventory row fields differ")
+            raise ValueError(_ui_text("reports.terminal_inventory_row_fields_differ"))
         cohort = row.get("cohort")
         logical_id = row.get("logical_id")
         key = row.get("key")
@@ -227,7 +224,7 @@ def _validate_terminal_inventory(document: Mapping[str, Any]) -> None:
             or not row["evidence"]
             or len(row["evidence"]) > _TERMINAL_INVENTORY_MAX_GROUPS
         ):
-            raise ValueError("terminal inventory row identity or fields differ")
+            raise ValueError(_ui_text("reports.terminal_inventory_row_identity_or_fields_differ"))
         keys.append(key)
         cohort_rows[cohort].append(key)
         project_strata.setdefault(revision, []).append(key)
@@ -238,17 +235,13 @@ def _validate_terminal_inventory(document: Mapping[str, Any]) -> None:
     if (
         len(set(keys)) != len(rows)
         or row_order != keys
-        or any(
-            len(cohort_rows[cohort]) != cohort_counts[cohort]
-            for cohort in cohort_order
-        )
+        or any(len(cohort_rows[cohort]) != cohort_counts[cohort] for cohort in cohort_order)
         or document.get("failure_rows") != failures
         or document.get("project_revision_strata") != project_strata
         or document.get("source_conformance_strata") != source_strata
-        or document.get("status")
-        != ("complete_with_failures" if failures else "complete")
+        or document.get("status") != ("complete_with_failures" if failures else "complete")
     ):
-        raise ValueError("terminal inventory partition or status differs")
+        raise ValueError(_ui_text("reports.terminal_inventory_partition_or_status_differs"))
 
 
 def _validate_content_id(
@@ -263,7 +256,7 @@ def _validate_content_id(
         not isinstance(claimed, str)
         or re.fullmatch(re.escape(prefix) + r"[0-9a-f]{24}", claimed) is None
     ):
-        raise ValueError(f"missing or malformed {field}")
+        raise ValueError((_ui_text("reports.missing_or_malformed") + f"{field}"))
     body = dict(document)
     del body[field]
     try:
@@ -275,10 +268,10 @@ def _validate_content_id(
             allow_nan=False,
         ).encode("utf-8")
     except (TypeError, ValueError) as exc:
-        raise ValueError("report is not strict canonical JSON") from exc
+        raise ValueError(_ui_text("reports.report_is_not_strict_canonical_json")) from exc
     expected = prefix + hashlib.sha256(material).hexdigest()[:24]
     if not secrets.compare_digest(claimed, expected):
-        raise ValueError(f"{field} does not match the report content")
+        raise ValueError((f"{field}" + _ui_text("reports.does_not_match_the_report_content")))
 
 
 def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
@@ -310,23 +303,23 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
             "ura-level1-evidence/3",
             "ura-level1-evidence/2",
         }:
-            raise ValueError("wrong Level-1 schema")
+            raise ValueError(_ui_text("reports.wrong_level_1_schema"))
         if document.get("status") != "validated_unit_qualified_lifecycle_inventory":
-            raise ValueError("Level-1 status is not validated")
+            raise ValueError(_ui_text("reports.level_1_status_is_not_validated"))
         _validate_content_id(document, "evidence_id", "level1-")
         scope = document.get("scope")
         if not isinstance(scope, Mapping):
-            raise ValueError("Level-1 scope is missing")
+            raise ValueError(_ui_text("reports.level_1_scope_is_missing"))
         evidence_kind = scope.get("evidence_kind")
         if evidence_kind not in {"diagnostic_dry_run", "measured_run"}:
-            raise ValueError("Level-1 evidence_kind is invalid")
+            raise ValueError(_ui_text("reports.level_1_evidence_kind_is_invalid"))
         if scope.get("empirical_validity_established") is not False:
-            raise ValueError("Level-1 empirical-validity boundary is missing")
+            raise ValueError(_ui_text("reports.level_1_empirical_validity_boundary_is_missing"))
         if scope.get("contains_diagnostic_dry_run") is not (evidence_kind == "diagnostic_dry_run"):
-            raise ValueError("Level-1 diagnostic scope is inconsistent")
+            raise ValueError(_ui_text("reports.level_1_diagnostic_scope_is_inconsistent"))
         counts = document.get("counts")
         if not isinstance(counts, Mapping):
-            raise ValueError("Level-1 counts are missing")
+            raise ValueError(_ui_text("reports.level_1_counts_are_missing"))
         for name in (
             "prospective_request_units",
             "planning_strata",
@@ -336,22 +329,36 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
             "request_level_errors",
         ):
             block = counts.get(name)
-            if name in {
-                "prospective_request_units",
-                "approximate_proxy_judgment_records",
-            } and block is None:
+            if (
+                name
+                in {
+                    "prospective_request_units",
+                    "approximate_proxy_judgment_records",
+                }
+                and block is None
+            ):
                 continue
             if (
                 not isinstance(block, Mapping)
                 or not isinstance(block.get("unit"), str)
                 or not block.get("unit")
             ):
-                raise ValueError(f"Level-1 {name} count block is malformed")
+                raise ValueError(
+                    ("Level-1 " + f"{name}" + _ui_text("reports.count_block_is_malformed"))
+                )
             for key, value in block.items():
                 if key == "unit" or value is None:
                     continue
                 if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-                    raise ValueError(f"Level-1 {name}.{key} is not a nonnegative count")
+                    raise ValueError(
+                        (
+                            "Level-1 "
+                            + f"{name}"
+                            + "."
+                            + f"{key}"
+                            + _ui_text("reports.is_not_a_nonnegative_count")
+                        )
+                    )
         judgment_counts = counts.get("judgment_records")
         if isinstance(judgment_counts, Mapping):
             completed = judgment_counts.get("completed")
@@ -367,7 +374,9 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
                 )
                 and completed != decided + abstained + non_evaluable
             ):
-                raise ValueError("Level-1 judgment decision counts do not reconcile")
+                raise ValueError(
+                    _ui_text("reports.level_1_judgment_decision_counts_do_not_reconcile")
+                )
             if (
                 all(
                     isinstance(item, int) and not isinstance(item, bool)
@@ -375,7 +384,9 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
                 )
                 and evaluable != decided + abstained
             ):
-                raise ValueError("Level-1 evaluable judgment counts do not reconcile")
+                raise ValueError(
+                    _ui_text("reports.level_1_evaluable_judgment_counts_do_not_reconcile")
+                )
             if missing_responses is not None:
                 if (
                     not isinstance(missing_responses, int)
@@ -386,12 +397,12 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
                     or missing_responses > abstained
                 ):
                     raise ValueError(
-                        "Level-1 missing-response counts do not reconcile"
+                        _ui_text("reports.level_1_missing_response_counts_do_not_reconcile")
                     )
                 planning_rows = document.get("planning_strata")
                 if not isinstance(planning_rows, list):
                     raise ValueError(
-                        "Level-1 missing-response counts require planning strata"
+                        _ui_text("reports.level_1_missing_response_counts_require_planning_strata")
                     )
                 row_counts = [
                     row.get("missing_response_judgment_records")
@@ -401,15 +412,15 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
                 if (
                     len(row_counts) != len(planning_rows)
                     or any(
-                        not isinstance(value, int)
-                        or isinstance(value, bool)
-                        or value < 0
+                        not isinstance(value, int) or isinstance(value, bool) or value < 0
                         for value in row_counts
                     )
                     or sum(row_counts) != missing_responses
                 ):
                     raise ValueError(
-                        "Level-1 missing-response counts do not match planning strata"
+                        _ui_text(
+                            "reports.level_1_missing_response_counts_do_not_match_planning_strata"
+                        )
                     )
         approximate_counts = counts.get("approximate_proxy_judgment_records")
         if isinstance(approximate_counts, Mapping):
@@ -424,12 +435,12 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
                 and evaluable != decided + abstained
             ):
                 raise ValueError(
-                    "Level-1 approximate proxy decision counts do not reconcile"
+                    _ui_text("reports.level_1_approximate_proxy_decision_counts_do_not_reconcile")
                 )
             planning_rows = document.get("planning_strata")
             if not isinstance(planning_rows, list):
                 raise ValueError(
-                    "Level-1 approximate proxy counts require planning strata"
+                    _ui_text("reports.level_1_approximate_proxy_counts_require_planning_strata")
                 )
             row_fields = {
                 "evaluable": "approximate_proxy_evaluable_judgment_records",
@@ -437,41 +448,41 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
                 "abstained": "approximate_proxy_abstained_judgment_records",
             }
             for count_name, row_name in row_fields.items():
-                values = [
-                    row.get(row_name)
-                    for row in planning_rows
-                    if isinstance(row, Mapping)
-                ]
+                values = [row.get(row_name) for row in planning_rows if isinstance(row, Mapping)]
                 if len(values) != len(planning_rows) or any(
-                    not isinstance(value, int)
-                    or isinstance(value, bool)
-                    or value < 0
+                    not isinstance(value, int) or isinstance(value, bool) or value < 0
                     for value in values
                 ):
                     raise ValueError(
-                        f"Level-1 planning-stratum {row_name} is malformed"
+                        (
+                            "Level-1 planning-stratum "
+                            + f"{row_name}"
+                            + _ui_text("reports.is_malformed")
+                        )
                     )
                 if sum(values) != approximate_counts.get(count_name):
                     raise ValueError(
-                        "Level-1 approximate proxy counts do not match planning strata"
+                        _ui_text(
+                            "reports.level_1_approximate_proxy_counts_do_not_match_planning_strata"
+                        )
                     )
         return
 
     if kind != "level2":
         return
     if document.get("schema_version") not in {"ura-level2-report/1", "ura-level2-report/2"}:
-        raise ValueError("wrong Level-2 schema")
+        raise ValueError(_ui_text("reports.wrong_level_2_schema"))
     if document.get("status") != "deterministic_compatible_stratum_export":
-        raise ValueError("Level-2 status is not validated")
+        raise ValueError(_ui_text("reports.level_2_status_is_not_validated"))
     if document.get("empirical_validity_established") is not False:
-        raise ValueError("Level-2 empirical-validity boundary is missing")
+        raise ValueError(_ui_text("reports.level_2_empirical_validity_boundary_is_missing"))
     pooling = document.get("pooling_policy")
     if not isinstance(pooling, Mapping) or (
         pooling.get("universal_safety_score_defined") is not False
         or pooling.get("cross_stratum_pooling_permitted") is not False
         or pooling.get("native_scale_pooling_permitted") is not False
     ):
-        raise ValueError("Level-2 no-pooling policy is missing")
+        raise ValueError(_ui_text("reports.level_2_no_pooling_policy_is_missing"))
     _validate_content_id(document, "report_id", "level2-")
     if document.get("schema_version") == "ura-level2-report/2":
         from experiments.generation_conditions import validate_generation_conditions
@@ -479,48 +490,55 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
         inputs = document.get("inputs")
         cells = inputs.get("cells") if isinstance(inputs, Mapping) else None
         if not isinstance(cells, list) or any(not isinstance(cell, dict) for cell in cells):
-            raise ValueError("Level-2 generation source cells are missing")
+            raise ValueError(_ui_text("reports.level_2_generation_source_cells_are_missing"))
         if any(not isinstance(cell.get("run_id"), str) for cell in cells):
-            raise ValueError("Level-2 generation source cells are ambiguous")
+            raise ValueError(_ui_text("reports.level_2_generation_source_cells_are_ambiguous"))
         run_ids = {cell["run_id"] for cell in cells}
         if len(run_ids) != len(cells):
-            raise ValueError("Level-2 generation source cells are ambiguous")
+            raise ValueError(_ui_text("reports.level_2_generation_source_cells_are_ambiguous"))
         conditions = document.get("generation_conditions")
         validate_generation_conditions(conditions, run_ids)
         for cell in cells:
             expected = cell.get("n_responses")
-            if type(expected) is not int or expected < 0 or expected != sum(
-                row["rows"] for row in conditions["conditions"] if row["run_id"] == cell["run_id"]
+            if (
+                type(expected) is not int
+                or expected < 0
+                or expected
+                != sum(
+                    row["rows"]
+                    for row in conditions["conditions"]
+                    if row["run_id"] == cell["run_id"]
+                )
             ):
-                raise ValueError("Level-2 generation rows differ from source cell counts")
+                raise ValueError(
+                    _ui_text("reports.level_2_generation_rows_differ_from_source_cell_counts")
+                )
     common = document.get("common")
     if not isinstance(common, Mapping) or not isinstance(common.get("estimates"), list):
-        raise ValueError("Level-2 common estimates are missing")
+        raise ValueError(_ui_text("reports.level_2_common_estimates_are_missing"))
     estimates = common["estimates"]
     count = common.get("n_estimate_rows")
     if not isinstance(count, int) or isinstance(count, bool) or count != len(estimates):
-        raise ValueError("Level-2 estimate count does not reconcile")
+        raise ValueError(_ui_text("reports.level_2_estimate_count_does_not_reconcile"))
     for row in estimates:
         if not isinstance(row, Mapping) or not _LEVEL2_ROW_FIELDS.issubset(row):
-            raise ValueError("Level-2 estimate row is incomplete")
+            raise ValueError(_ui_text("reports.level_2_estimate_row_is_incomplete"))
         if "sampling_policy" in row:
             if not isinstance(row["sampling_policy"], str):
                 raise ValueError(
-                    "Level-2 estimate sampling policy is unsupported"
+                    _ui_text("reports.level_2_estimate_sampling_policy_is_unsupported")
                 )
             try:
                 effective_sampling_policy(row["sampling_policy"])
             except ValueError as exc:
                 raise ValueError(
-                    "Level-2 estimate sampling policy is unsupported"
+                    _ui_text("reports.level_2_estimate_sampling_policy_is_unsupported")
                 ) from exc
         metric = row.get("metric")
         is_approximate = isinstance(metric, str) and metric.startswith("approximate_")
         approximate_value = row.get("approximate_provenance")
         if is_approximate:
-            approximate = validate_approximate_metric_provenance(
-                metric, approximate_value
-            )
+            approximate = validate_approximate_metric_provenance(metric, approximate_value)
             expected_flat = {
                 "metric_authority": "supplementary_non_authoritative",
                 "warning_tag": approximate.warning_tag,
@@ -530,17 +548,17 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
             }
             if any(row.get(name) != value for name, value in expected_flat.items()):
                 raise ValueError(
-                    "Level-2 approximate warning/provenance fields are incoherent"
+                    _ui_text("reports.level_2_approximate_warning_provenance_fields_are_incoherent")
                 )
             if row.get("endpoint_status") != "approximate_common_proxy":
-                raise ValueError("Level-2 approximate endpoint status is incoherent")
+                raise ValueError(
+                    _ui_text("reports.level_2_approximate_endpoint_status_is_incoherent")
+                )
             expected_counts = {
                 "n_records": approximate.n_result_units,
                 "judgments_decided": approximate.n_supporting_decisions,
                 "judgments_non_evaluable": 0,
-                "approximate_model_query_count": (
-                    approximate.n_model_queried_decisions
-                ),
+                "approximate_model_query_count": (approximate.n_model_queried_decisions),
                 "approximate_source_reference_use_count": (
                     approximate.n_source_reference_context_used
                 ),
@@ -555,7 +573,9 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
                 for name, value in expected_counts.items()
             ):
                 raise ValueError(
-                    "Level-2 approximate support/query/reference counts are incoherent"
+                    _ui_text(
+                        "reports.level_2_approximate_support_query_reference_counts_are_incoherent"
+                    )
                 )
         elif (
             approximate_value is not None
@@ -573,7 +593,9 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
             )
         ):
             raise ValueError(
-                "Level-2 authoritative/source-native row carries approximate semantics"
+                _ui_text(
+                    "reports.level_2_authoritative_source_native_row_carries_approximate_seman"
+                )
             )
         value = row.get("value")
         if (
@@ -581,10 +603,10 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
             or isinstance(value, bool)
             or not math.isfinite(value)
         ):
-            raise ValueError("Level-2 estimate value is not finite")
+            raise ValueError(_ui_text("reports.level_2_estimate_value_is_not_finite"))
         ci_low, ci_high = row.get("ci_low"), row.get("ci_high")
         if (ci_low is None) != (ci_high is None):
-            raise ValueError("Level-2 CI endpoints must be paired")
+            raise ValueError(_ui_text("reports.level_2_ci_endpoints_must_be_paired"))
         if ci_low is not None and ci_high is not None:
             if any(
                 not isinstance(item, (int, float))
@@ -592,18 +614,20 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
                 or not math.isfinite(item)
                 for item in (ci_low, ci_high)
             ):
-                raise ValueError("Level-2 CI endpoints are not finite numbers")
+                raise ValueError(_ui_text("reports.level_2_ci_endpoints_are_not_finite_numbers"))
             if ci_low > ci_high:
-                raise ValueError("Level-2 CI endpoints are reversed")
+                raise ValueError(_ui_text("reports.level_2_ci_endpoints_are_reversed"))
             tolerance = 1e-9
             if not ci_low - tolerance <= value <= ci_high + tolerance:
-                raise ValueError("Level-2 estimate lies outside its CI")
+                raise ValueError(_ui_text("reports.level_2_estimate_lies_outside_its_ci"))
         for name in ("n_records", "n_clusters"):
             item = row.get(name)
             if not isinstance(item, int) or isinstance(item, bool) or item < 0:
-                raise ValueError(f"Level-2 {name} is not a nonnegative count")
+                raise ValueError(
+                    ("Level-2 " + f"{name}" + _ui_text("reports.is_not_a_nonnegative_count"))
+                )
         if row.get("cross_stratum_pooling_permitted") is not False:
-            raise ValueError("Level-2 row permits cross-stratum pooling")
+            raise ValueError(_ui_text("reports.level_2_row_permits_cross_stratum_pooling"))
         decisions: dict[str, int] = {}
         for name in (
             "judgments_completed",
@@ -614,7 +638,9 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
         ):
             item = row.get(name)
             if not isinstance(item, int) or isinstance(item, bool) or item < 0:
-                raise ValueError(f"Level-2 {name} is not a nonnegative count")
+                raise ValueError(
+                    ("Level-2 " + f"{name}" + _ui_text("reports.is_not_a_nonnegative_count"))
+                )
             decisions[name] = item
         if decisions["judgments_completed"] != (
             decisions["judgments_decided"]
@@ -623,7 +649,7 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
         ) or decisions["judgments_evaluable"] != (
             decisions["judgments_decided"] + decisions["judgments_abstained"]
         ):
-            raise ValueError("Level-2 judgment counts do not reconcile")
+            raise ValueError(_ui_text("reports.level_2_judgment_counts_do_not_reconcile"))
         missing_responses = row.get("judgments_missing_responses")
         if missing_responses is not None and (
             not isinstance(missing_responses, int)
@@ -631,7 +657,7 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
             or missing_responses < 0
             or missing_responses > decisions["judgments_abstained"]
         ):
-            raise ValueError("Level-2 missing-response count is incoherent")
+            raise ValueError(_ui_text("reports.level_2_missing_response_count_is_incoherent"))
 
 
 def collect_reports(
@@ -756,30 +782,36 @@ def rate_for(
     provider = canonical_provider_name(provider)
     providers = pricing.get("providers")
     if not isinstance(providers, Mapping):
-        return None, "pricing table has no providers section"
+        return None, _ui_text("reports.pricing_table_has_no_providers_section")
     entry = None
     for key, value in providers.items():
         if str(key).lower() == provider.lower():
             entry = value
             break
     if not isinstance(entry, Mapping):
-        return None, f"no pricing entry for provider {provider!r}"
+        return None, (_ui_text("reports.no_pricing_entry_for_provider") + f"{provider!r}")
     models = entry.get("models")
     if not isinstance(models, Mapping) or model not in models:
-        return None, f"no pricing entry for model {model!r}"
+        return None, (_ui_text("reports.no_pricing_entry_for_model") + f"{model!r}")
     rates = models[model].get("rates") if isinstance(models[model], Mapping) else None
     if not isinstance(rates, list) or not rates:
-        return None, f"no rates recorded for model {model!r}"
+        return None, (_ui_text("reports.no_rates_recorded_for_model") + f"{model!r}")
     today = on_date or time.strftime("%Y-%m-%d")
     if not _valid_iso_date(today):
-        return None, f"invalid usage date {today!r}; expected YYYY-MM-DD"
+        return None, (
+            _ui_text("reports.invalid_usage_date")
+            + f"{today!r}"
+            + _ui_text("reports.expected_yyyy_mm_dd")
+        )
 
     if any(
         not isinstance(rate, Mapping) or not _valid_iso_date(rate.get("effective_date"))
         for rate in rates
     ):
         return None, (
-            f"model {model!r} has a malformed rate or a non ISO 8601 (YYYY-MM-DD) effective_date"
+            "model "
+            + f"{model!r}"
+            + _ui_text("reports.has_a_malformed_rate_or_a_non_iso_8601_yyyy_mm_dd_effective_date")
         )
 
     def _is_priced(rate: Mapping[str, Any]) -> bool:
@@ -796,7 +828,12 @@ def rate_for(
         if isinstance(rate, Mapping) and rate["effective_date"] <= today and _is_priced(rate)
     ]
     if not applicable:
-        return None, f"no priced rate effective on or before {today} for {model!r}"
+        return None, (
+            _ui_text("reports.no_priced_rate_effective_on_or_before")
+            + f"{today}"
+            + " for "
+            + f"{model!r}"
+        )
     # On an equal effective_date, an operator-entered rate outranks an
     # auto-fetched one, and a later list position outranks an earlier one, so a
     # same-date operator correction always wins over an auto rate regardless of
@@ -894,7 +931,16 @@ def compute_costs(
         def recorded_count(cats: Mapping[str, int], category: str) -> int:
             value = cats.get(category, 0)
             if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-                malformed_usage.append(f"{provider}/{model}: invalid recorded {category} count")
+                malformed_usage.append(
+                    (
+                        f"{provider}"
+                        + "/"
+                        + f"{model}"
+                        + _ui_text("reports.invalid_recorded")
+                        + f"{category}"
+                        + " count"
+                    )
+                )
                 return 0
             return value
 
@@ -904,8 +950,13 @@ def compute_costs(
             missing_tokens += recorded_count(cats, "missing_tokens")
             if date_calls and not {"input", "output"}.issubset(cats):
                 malformed_usage.append(
-                    f"{provider}/{model}: incomplete input/output token usage "
-                    f"on {usage_date or 'unknown date'}"
+                    (
+                        f"{provider}"
+                        + "/"
+                        + f"{model}"
+                        + _ui_text("reports.incomplete_input_output_token_usage_on")
+                        + f"{usage_date or _ui_text('reports.unknown_date')}"
+                    )
                 )
             for category in _TOKEN_CATEGORIES:
                 tokens[category] += recorded_count(cats, category)
@@ -938,8 +989,14 @@ def compute_costs(
         for usage_date, cats in sorted(by_date.items()):
             if not _valid_iso_date(usage_date):
                 missing.append(
-                    f"{provider}/{model}: missing or invalid completion date; "
-                    "historical usage cannot be priced at today's rate"
+                    (
+                        f"{provider}"
+                        + "/"
+                        + f"{model}"
+                        + _ui_text(
+                            "reports.missing_or_invalid_completion_date_historical_usage_cannot_be_pri"
+                        )
+                    )
                 )
                 continue
             rate, why = rate_for(pricing, provider, model, on_date=usage_date)
@@ -951,7 +1008,14 @@ def compute_costs(
             currency = _currency_code(rate.get("currency"))
             if currency is None:
                 missing.append(
-                    f"{provider}/{model}: rate on {usage_date} has no valid three-letter currency"
+                    (
+                        f"{provider}"
+                        + "/"
+                        + f"{model}"
+                        + _ui_text("reports.rate_on")
+                        + f"{usage_date}"
+                        + _ui_text("reports.has_no_valid_three_letter_currency")
+                    )
                 )
                 continue
             display_rate = rate
@@ -964,14 +1028,29 @@ def compute_costs(
                 unit = _finite_nonneg(per_million.get(category))
                 if unit is None:
                     missing.append(
-                        f"{provider}/{model}: no valid {category} rate on {usage_date or 'today'}"
+                        (
+                            f"{provider}"
+                            + "/"
+                            + f"{model}"
+                            + _ui_text("reports.no_valid")
+                            + f"{category}"
+                            + _ui_text("reports.rate_on_2")
+                            + f"{usage_date or 'today'}"
+                        )
                     )
                 else:
                     subtotal += amount / 1_000_000 * unit
             cost_by_currency[currency] = cost_by_currency.get(currency, 0.0) + subtotal
         if missing_tokens:
             missing.append(
-                f"{provider}/{model}: {missing_tokens} call(s) have incomplete token usage"
+                (
+                    f"{provider}"
+                    + "/"
+                    + f"{model}"
+                    + ": "
+                    + f"{missing_tokens}"
+                    + _ui_text("reports.call_s_have_incomplete_token_usage")
+                )
             )
         if display_rate is not None:
             per_million = display_rate.get("per_million_tokens")
@@ -991,8 +1070,14 @@ def compute_costs(
             # Never sum different currencies into one figure.
             row["currency"] = "mixed"
             row["missing"].append(
-                f"{provider}/{model}: mixed currencies "
-                f"{sorted(cost_by_currency)}; per-currency subtotals shown"
+                (
+                    f"{provider}"
+                    + "/"
+                    + f"{model}"
+                    + _ui_text("reports.mixed_currencies")
+                    + f"{sorted(cost_by_currency)}"
+                    + _ui_text("reports.per_currency_subtotals_shown")
+                )
             )
         rows.append(row)
     return rows

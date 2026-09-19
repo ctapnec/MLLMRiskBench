@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .i18n import text as _ui_text
+
 import html
 import sys
 from dataclasses import dataclass
@@ -42,173 +44,168 @@ class CommandParam:
 #: Per-flag help text shown as field tooltips and inline hints on the Run
 #: page.  Presentation only; the CLI's own --help remains authoritative.
 _PARAM_HELP: dict[str, str] = {
-    "--dry-run": "Use MockTarget and the offline mock LLM only - no provider "
-    "calls, no spend. Produces a diagnostic dry-run artifact.",
-    "--diagnostic-canary": "Run a small real slice under real attack and judge "
-    "conditions to project per-cluster cost. Diagnostic "
-    "only; never enters a measured tree.",
-    "--attestation-probe": "One bounded real call per model to confirm the "
-    "served identity and read token usage. First paid "
-    "step; the per-model cost anchor comes from here.",
-    "--exclude-tool-conditioned": "Drop tool-conditioned source rows (no Runner "
-    "attacker can execute them yet) with a recorded exclusion count instead of "
-    "failing the whole request. Valid only for a standalone offline dry run; "
-    "preflight and evidence-bearing routes reject it.",
-    "--api": "Comma list of hosted target ids from api-targets.json (e.g. the "
-    "Fable/Sol focal pair). Hosted lanes must carry an explicit --limit; "
-    "--sample-seed is required only for a positive bounded selection.",
-    "--local": "Comma list of backend:model specs for local GPU lanes. Local "
-    "lanes may use an approved bounded per-arm sample or an explicitly "
-    "projected full-corpus cohort. A selected hosted judge remains metered; "
-    "a local judge avoids hosted API spend but cannot share one process with "
-    "a local target.",
-    "--corpora": "Comma list of source arm ids (from source-instances.json) or "
-    "'synth'. Every selected real arm must be admitted in the "
-    "source-conformance receipt.",
-    "--attackers": "Comma list of attack engines. 'replay' sends the corpus "
-    "prompt as-is; 'crescendo' escalates over turns; the rest "
-    "are external adapters.",
-    "--judges": "Judge stages: 'rules' is the deterministic rule scorer "
-    "(free), 'llm' adds an explicitly selected hosted or local model judge.",
-    "--judge-model": "Configured hosted or local target id used by the LLM "
-    "judge; 'mock' is reserved for offline dry runs.",
-    "--ack-hosted-judge-data-transfer": "Explicit acknowledgement that a hosted "
-    "judge receives target output plus source/reference grading context under "
-    "the selected provider's retention and usage terms.",
-    "--approximate-common-metrics": "Explicit opt-in for separate supplementary "
-    "common-security response proxies on common-metric-ineligible source rows. "
-    "These are non-authoritative, never replace source-native metrics, and carry "
-    "an uncalibrated reliability indicator that is not probability or accuracy.",
-    "--limit": "Maximum unique source clusters applied independently to each "
-    "selected corpus arm. Omitting it means the CLI default of 50 clusters per "
-    "arm; 0 means the complete selected release for every arm. "
-    "Hosted paid lanes must enter the value explicitly: use a positive bound, "
-    "or 0 only with a separate full-grid projection, covering call/HTTP/judge "
-    "caps, deadline and approval.",
-    "--sample-seed": "Seed for each arm-scoped pseudorandom cluster shuffle "
-    "without replacement. Fix and record it so limits are nested and conditions "
-    "with the same logical arm, converted corpus digest, limit and seed see "
-    "the identical subset (comparable, never pooled across arms or tiers).",
-    "--seeds": "Comma list of trajectory seeds (attack stochasticity), distinct "
-    "from --sample-seed.",
-    "--sampling-policy": "Whole-cluster prefix policy. The seeded pseudorandom "
-    "policy is the unchanged CLI default; source order takes the first source "
-    "clusters. An explicit value is retained in request and projection identity.",
-    "--max-queries": "Max target queries per trajectory (turn budget upper bound).",
-    "--max-turns": "Max conversation turns per trajectory.",
-    "--target-answer-retries": "Additional attempts after an empty, malformed, "
-    "binary/control-like, or symbol-only model answer. Local default is one. "
-    "Paid hosted targets require zero; their bounded transport retries are "
-    "separate and apply only to retryable HTTP status errors.",
-    "--recovery-completed-prefix": "Validated create-only recovery selection "
-    "that removes only exact already-completed input identities from the "
-    "unchanged requested population.",
-    "--recovery-completed-prefix-sha256": "Exact byte SHA-256 paired with the "
-    "recovery completed-prefix artifact.",
-    "--max-total-target-calls": "Hard circuit-breaker: abort the lane after "
-    "this many target calls. A budget guard.",
-    "--max-total-judge-calls": "Hard circuit-breaker on model-backed judge "
-    "calls, hosted or local. A budget guard.",
-    "--max-total-http-attempts": "Hard cap on total HTTP attempts across the "
-    "lane (retries included).",
-    "--deadline-seconds": "Durable call-start admission window measured from "
-    "the matrix's first invocation. It prevents new model acquisitions and "
-    "new calls after expiry; it does not interrupt an already admitted call "
-    "or guarantee that the process finishes within this many seconds.",
-    "--source-config": "Path to the source registry (experiments/"
-    "source-instances.json). Bound automatically when the "
-    "campaign env is exported.",
-    "--api-config": "Path to the hosted-target registry (experiments/api-targets.json).",
-    "--api-config-sha256": "Exact byte SHA-256 for a read-once selected hosted config.",
-    "--local-config-sha256": "Exact byte SHA-256 for a read-once selected local config.",
-    "--profile-registry": "Machine-local registry that retains identity-bound local-model "
-    "readiness recommendations for both CLI and Build. Hosted targets never use it.",
-    "--out": "Output directory under the rig results root for this run's artifacts.",
-    "--expected-revision": "The exact 40-hex project commit this checkout must "
-    "match for the revision receipt.",
-    "--validate": "Path to an existing artifact to re-validate (with --sha256) "
-    "instead of creating a new one.",
-    "--scaffold": "Pre-fill the mechanical receipt fields from bounded "
-    "observations, leaving operator judgments as OPERATOR_TODO "
-    "placeholders.",
-    "--selftest-sleep": "UI diagnostic only: sleep this many seconds and exit.",
-    "--models": "Comma list of model names resolved through the hosted and "
-    "local target registries (api-targets.json / "
-    "local-targets.json). Mutually exclusive with explicit "
-    "--api/--local; unknown or ambiguous names are rejected.",
-    "--preflight-only": "Validate and project the complete grid without any "
-    "model or judge call (what rig_check runs).",
-    "--project-revision": "Path to the validated ura-project-revision/1 "
-    "receipt; required for every non-dry invocation. The CLI defaults it from "
-    "URA_PROJECT_REVISION_MANIFEST; the console forwards that exported "
-    "variable (and URA_PROJECT_REVISION_SHA256) to a non-dry child when it is "
-    "set in the console process, and Build folds the value into the argv.",
-    "--project-revision-sha256": "Exact byte SHA-256 paired with "
-    "--project-revision. The CLI defaults it from URA_PROJECT_REVISION_SHA256, "
-    "which the console forwards to a non-dry child when set.",
-    "--source-conformance": "Path to the validated ura-source-conformance/1 "
-    "receipt; required when any real source arm is selected. The CLI defaults "
-    "it from URA_SOURCE_CONFORMANCE_MANIFEST; the console forwards that "
-    "exported variable (and URA_SOURCE_CONFORMANCE_SHA256) to a non-dry child "
-    "when it is set in the console process, and Build folds the value into "
-    "the argv.",
-    "--source-conformance-sha256": "Exact byte SHA-256 paired with "
-    "--source-conformance. The CLI defaults it from "
-    "URA_SOURCE_CONFORMANCE_SHA256, which the console forwards to a non-dry "
-    "child when set.",
-    "--quantization": "Default vLLM override (bitsandbytes, awq, gptq, fp8, "
-    "none); per-model config wins; empty chooses the highest "
-    "fitting 16-, 8-, or 4-bit precision.",
-    "--dtype": "vLLM dtype for local models (auto, bfloat16, float16).",
-    "--lock-stale-seconds": "Diagnostic stale-age metadata for cell locks; "
-    "locks are never removed automatically. Optional positive integer "
-    "(CLI default 86400).",
-    "--reset-open-circuits": "Operator acknowledgement: clear the durable "
-    "provider/judge circuit after correcting its root cause, then rerun the "
-    "identical measured lane to resume (runbook section 17). Never a "
-    "default.",
-    "--group": "Comma list of aggregation group keys from the CLI's allowed "
-    "set (model, target, attacker, strategy, source, risk, risk_category, "
-    "risk_subtype, modality, effective_modality, is_multimodal, "
-    "expected_behavior, attack_family, seed, source_policy_id, "
-    "source_policy_version). The CLI default (and the runbook's measured "
-    "lanes, Build's default) is model,source,risk,effective_modality,"
-    "expected_behavior,attacker,source_policy_id,source_policy_version. "
-    "Level-2 export requires at least these eight keys; narrower groupings "
-    "are rejected at export; blank inherits the CLI default.",
-    "--live-attestation": "Repeatable: one content-addressed "
-    "ura-live-attestation/2 receipt per row, paired "
-    "positionally with a --live-attestation-sha256 row.",
-    "--live-attestation-sha256": "Repeatable: the exact byte digest for the "
-    "same-numbered --live-attestation row.",
-    "--live-attestation-max-age-hours": "Maximum receipt age at measured-grid "
-    "admission; must be in (0, 8760].",
-    "--right-attacker": "Enables the replay-vs-adaptive comparison: "
-    "--attacker is the left arm, this is the right arm "
-    "(same model and defense on both sides).",
-    "--minimum-unique-clusters": "Minimum source prompt/intent clusters per "
-    "estimable transfer cell (>= 2).",
-    "--bootstrap": "Cluster bootstrap resamples for the analysis CLIs.",
-    "--bootstrap-resamples": "Labels-analysis-only bootstrap resamples for "
-    "the human audit (this CLI's spelling of --bootstrap); invalid during "
-    "preparation.",
-    "--prepared-rating-form": "Exact controller-prepared blank two-rater form "
-    "that the completed labels must match without dropped or substituted rows.",
-    "--prepared-rating-form-sha256": "Authorized lowercase SHA-256 of the exact "
-    "prepared rating form.",
-    "--alpha": "Labels-analysis-only two-sided significance level in (0, 1).",
-    "--seed": "Labels-analysis-only deterministic resampling seed; preparation "
-    "uses a versioned seedless selector.",
-    "--allow-single-rater": "Exploratory labels analysis only. The resulting "
-    "report remains ineligible for evidence-ready human-audit claims.",
+    "--dry-run": _ui_text(
+        "catalog.use_mocktarget_and_the_offline_mock_llm_only_no_provider_calls_no"
+    ),
+    "--diagnostic-canary": _ui_text(
+        "catalog.run_a_small_real_slice_under_real_attack_and_judge_conditions_to"
+    ),
+    "--attestation-probe": _ui_text(
+        "catalog.one_bounded_real_call_per_model_to_confirm_the_served_identity_an"
+    ),
+    "--exclude-tool-conditioned": _ui_text(
+        "catalog.drop_tool_conditioned_source_rows_no_runner_attacker_can_execute"
+    ),
+    "--api": _ui_text("catalog.comma_list_of_hosted_target_ids_from_api_targets_json_e_g_the_fab"),
+    "--local": _ui_text(
+        "catalog.comma_list_of_backend_model_specs_for_local_gpu_lanes_local_lanes"
+    ),
+    "--corpora": _ui_text(
+        "catalog.comma_list_of_source_arm_ids_from_source_instances_json_or_synth"
+    ),
+    "--attackers": _ui_text(
+        "catalog.comma_list_of_attack_engines_replay_sends_the_corpus_prompt_as_is"
+    ),
+    "--judges": _ui_text(
+        "catalog.judge_stages_rules_is_the_deterministic_rule_scorer_free_llm_adds"
+    ),
+    "--judge-model": _ui_text(
+        "catalog.configured_hosted_or_local_target_id_used_by_the_llm_judge_mock_i"
+    ),
+    "--ack-hosted-judge-data-transfer": _ui_text(
+        "catalog.explicit_acknowledgement_that_a_hosted_judge_receives_target_outp"
+    ),
+    "--approximate-common-metrics": _ui_text(
+        "catalog.explicit_opt_in_for_separate_supplementary_common_security_respon"
+    ),
+    "--limit": _ui_text(
+        "catalog.maximum_unique_source_clusters_applied_independently_to_each_sele"
+    ),
+    "--sample-seed": _ui_text(
+        "catalog.seed_for_each_arm_scoped_pseudorandom_cluster_shuffle_without_rep"
+    ),
+    "--seeds": _ui_text(
+        "catalog.comma_list_of_trajectory_seeds_attack_stochasticity_distinct_from"
+    ),
+    "--sampling-policy": _ui_text(
+        "catalog.whole_cluster_prefix_policy_the_seeded_pseudorandom_policy_is_the"
+    ),
+    "--max-queries": _ui_text("catalog.max_target_queries_per_trajectory_turn_budget_upper_bound"),
+    "--max-turns": _ui_text("catalog.max_conversation_turns_per_trajectory"),
+    "--target-answer-retries": _ui_text(
+        "catalog.additional_attempts_after_an_empty_malformed_binary_control_like"
+    ),
+    "--recovery-completed-prefix": _ui_text(
+        "catalog.validated_create_only_recovery_selection_that_removes_only_exact"
+    ),
+    "--recovery-completed-prefix-sha256": _ui_text(
+        "catalog.exact_byte_sha_256_paired_with_the_recovery_completed_prefix_arti"
+    ),
+    "--max-total-target-calls": _ui_text(
+        "catalog.hard_circuit_breaker_abort_the_lane_after_this_many_target_calls"
+    ),
+    "--max-total-judge-calls": _ui_text(
+        "catalog.hard_circuit_breaker_on_model_backed_judge_calls_hosted_or_local"
+    ),
+    "--max-total-http-attempts": _ui_text(
+        "catalog.hard_cap_on_total_http_attempts_across_the_lane_retries_included"
+    ),
+    "--deadline-seconds": _ui_text(
+        "catalog.durable_call_start_admission_window_measured_from_the_matrix_s_fi"
+    ),
+    "--source-config": _ui_text(
+        "catalog.path_to_the_source_registry_experiments_source_instances_json_bou"
+    ),
+    "--api-config": _ui_text(
+        "catalog.path_to_the_hosted_target_registry_experiments_api_targets_json"
+    ),
+    "--api-config-sha256": _ui_text(
+        "catalog.exact_byte_sha_256_for_a_read_once_selected_hosted_config"
+    ),
+    "--local-config-sha256": _ui_text(
+        "catalog.exact_byte_sha_256_for_a_read_once_selected_local_config"
+    ),
+    "--profile-registry": _ui_text(
+        "catalog.machine_local_registry_that_retains_identity_bound_local_model_re"
+    ),
+    "--out": _ui_text("catalog.output_directory_under_the_rig_results_root_for_this_run_s_artifa"),
+    "--expected-revision": _ui_text(
+        "catalog.the_exact_40_hex_project_commit_this_checkout_must_match_for_the"
+    ),
+    "--validate": _ui_text(
+        "catalog.path_to_an_existing_artifact_to_re_validate_with_sha256_instead_o"
+    ),
+    "--scaffold": _ui_text(
+        "catalog.pre_fill_the_mechanical_receipt_fields_from_bounded_observations"
+    ),
+    "--selftest-sleep": _ui_text("catalog.ui_diagnostic_only_sleep_this_many_seconds_and_exit"),
+    "--models": _ui_text(
+        "catalog.comma_list_of_model_names_resolved_through_the_hosted_and_local_t"
+    ),
+    "--preflight-only": _ui_text(
+        "catalog.validate_and_project_the_complete_grid_without_any_model_or_judge"
+    ),
+    "--project-revision": _ui_text(
+        "catalog.path_to_the_validated_ura_project_revision_1_receipt_required_for"
+    ),
+    "--project-revision-sha256": _ui_text(
+        "catalog.exact_byte_sha_256_paired_with_project_revision_the_cli_defaults"
+    ),
+    "--source-conformance": _ui_text(
+        "catalog.path_to_the_validated_ura_source_conformance_1_receipt_required_w"
+    ),
+    "--source-conformance-sha256": _ui_text(
+        "catalog.exact_byte_sha_256_paired_with_source_conformance_the_cli_default"
+    ),
+    "--quantization": _ui_text(
+        "catalog.default_vllm_override_bitsandbytes_awq_gptq_fp8_none_per_model_co"
+    ),
+    "--dtype": _ui_text("catalog.vllm_dtype_for_local_models_auto_bfloat16_float16"),
+    "--lock-stale-seconds": _ui_text(
+        "catalog.diagnostic_stale_age_metadata_for_cell_locks_locks_are_never_remo"
+    ),
+    "--reset-open-circuits": _ui_text(
+        "catalog.operator_acknowledgement_clear_the_durable_provider_judge_circuit"
+    ),
+    "--group": _ui_text(
+        "catalog.comma_list_of_aggregation_group_keys_from_the_cli_s_allowed_set_m"
+    ),
+    "--live-attestation": _ui_text(
+        "catalog.repeatable_one_content_addressed_ura_live_attestation_2_receipt_p"
+    ),
+    "--live-attestation-sha256": _ui_text(
+        "catalog.repeatable_the_exact_byte_digest_for_the_same_numbered_live_attes"
+    ),
+    "--live-attestation-max-age-hours": _ui_text(
+        "catalog.maximum_receipt_age_at_measured_grid_admission_must_be_in_0_8760"
+    ),
+    "--right-attacker": _ui_text(
+        "catalog.enables_the_replay_vs_adaptive_comparison_attacker_is_the_left_ar"
+    ),
+    "--minimum-unique-clusters": _ui_text(
+        "catalog.minimum_source_prompt_intent_clusters_per_estimable_transfer_cell"
+    ),
+    "--bootstrap": _ui_text("catalog.cluster_bootstrap_resamples_for_the_analysis_clis"),
+    "--bootstrap-resamples": _ui_text(
+        "catalog.labels_analysis_only_bootstrap_resamples_for_the_human_audit_this"
+    ),
+    "--prepared-rating-form": _ui_text(
+        "catalog.exact_controller_prepared_blank_two_rater_form_that_the_completed"
+    ),
+    "--prepared-rating-form-sha256": _ui_text(
+        "catalog.authorized_lowercase_sha_256_of_the_exact_prepared_rating_form"
+    ),
+    "--alpha": _ui_text("catalog.labels_analysis_only_two_sided_significance_level_in_0_1"),
+    "--seed": _ui_text("catalog.labels_analysis_only_deterministic_resampling_seed_preparation_us"),
+    "--allow-single-rater": _ui_text(
+        "catalog.exploratory_labels_analysis_only_the_resulting_report_remains_ine"
+    ),
 }
 
 #: Builder-owned process wall-time ceiling for long local measured lanes. It is
 #: deliberately separate from Runner's ``--deadline-seconds`` call-start gate.
-_LOCAL_BUDGET_HELP = (
-    "Final measured all-local process only. Whole hours become a detached process "
-    "wall-time cap that terminates and then kills the complete process tree after "
-    "expiry. Set --deadline-seconds independently for Runner's call-start window."
+_LOCAL_BUDGET_HELP = _ui_text(
+    "catalog.final_measured_all_local_process_only_whole_hours_become_a_detach"
 )
 
 
@@ -235,22 +232,17 @@ _MODALITIES = ("text", "image", "audio", "video", "tool")
 #:     target: native_import canonicalises the upstream end-to-end engines.
 def _ineligible(metric: str) -> str:
     return (
-        f"This source requires the source-specific '{metric}' metric (not common "
-        "harmful-ASR), but that evaluator is not integrated. Default scored "
-        "admission therefore remains closed. The explicit approximate-common-"
-        "metrics opt-in can add separate supplementary, non-authoritative "
-        "response-proxy metrics; it does not implement or replace this source "
-        "evaluator."
+        _ui_text("catalog.this_source_requires_the_source_specific")
+        + f"{metric}"
+        + _ui_text("catalog.metric_not_common_harmful_asr_but_that_evaluator_is_not_integrate")
     )
 
 
 def _tool_ineligible(metric: str) -> str:
     return (
-        f"This source requires the source-specific {metric!r} metric and an "
-        "executable tool environment. No maintained Runner target currently "
-        "declares that capability, so both default scoring and the approximate "
-        "response-proxy route remain fail-closed. Use a validated native tool "
-        "runtime/import instead."
+        _ui_text("catalog.this_source_requires_the_source_specific_2")
+        + f"{metric!r}"
+        + _ui_text("catalog.metric_and_an_executable_tool_environment_no_maintained_runner_ta")
     )
 
 
@@ -357,14 +349,16 @@ _INELIGIBLE_REASONS: dict[str, str] = {arm: reason for arm, _mods, reason in _AR
 #: pools or spans many upstream safety corpora). Tagged with an "aggregator"
 #: badge in the builder so the operator can see the aggregator-class sources at a
 #: glance; this is display metadata only and does not change admission.
-_AGGREGATOR_ARMS: frozenset[str] = frozenset({
-    "saladbench_base",
-    "airbench_full",
-    "xstest_full",
-    "simplesafetytests_full",
-    "holisafe_full",
-    "decodingtrust_stereotype",
-})
+_AGGREGATOR_ARMS: frozenset[str] = frozenset(
+    {
+        "saladbench_base",
+        "airbench_full",
+        "xstest_full",
+        "simplesafetytests_full",
+        "holisafe_full",
+        "decodingtrust_stereotype",
+    }
+)
 
 #: Attack frameworks (engines) offered in the builder, mirroring the harness
 #: registry in src/ura/adapters/engines.py, with the modalities each can drive.
@@ -430,9 +424,7 @@ _CLI_ONLY_ATTACKERS: dict[str, str] = {}
 _SOURCE_RESTRICTED_ATTACKERS: dict[str, tuple[str, str]] = {
     "purplellama": (
         "cyberseceval_",
-        "purplellama replays only source-authentic CyberSecEval rows "
-        "(DataPoint.source == 'cyberseceval'); select only cyberseceval_* "
-        "arms with it (no synth)",
+        _ui_text("catalog.purplellama_replays_only_source_authentic_cyberseceval_rows_datap"),
     ),
 }
 #: Mirror of ``experiments.run_matrix._ALLOWED_GROUP_KEYS`` (a parity test
@@ -474,26 +466,35 @@ _RUNBOOK_GROUP = _CLI_DEFAULT_GROUP
 #: modality-agnostic (they carry whatever the corpus datapoint holds); the
 #: prepared external adapters below are text-first.
 _FRAMEWORK_DESCRIPTIONS: dict[str, tuple[str, tuple[str, ...]]] = {
-    "replay": ("send the corpus prompt as-is (single turn)", _ALL_MODALITIES),
-    "crescendo": ("escalate the request over multiple turns", _ALL_MODALITIES),
-    "pyrit": ("Microsoft PyRIT 0.14.0 in its own explicit venv", ("text",)),
-    "garak": ("NVIDIA garak probes", ("text",)),
-    "deepteam": ("DeepTeam 1.0.7 in its own explicit venv", ("text",)),
-    "promptfoo": ("Promptfoo adapter", ("text",)),
-    "t3mp3st": ("prepared T3MP3ST safe-probe replay", ("text",)),
-    "petri": ("Petri adapter", ("text",)),
-    "fuzzyai": ("FuzzyAI adapter", ("text",)),
-    "nanogcg": ("precomputed nanoGCG suffix replay; live generation disabled", ("text",)),
-    "autodan": ("AutoDAN-Turbo adapter", ("text",)),
-    "agentdojo": ("AgentDojo adapter", ("text",)),
-    "giskard": ("Giskard scan adapter", ("text",)),
-    "easyjailbreak": ("EasyJailbreak adapter", ("text",)),
-    "h4rm3l": ("h4rm3l 0.2.4 in its own explicit venv", ("text",)),
-    "spikee": ("Spikee 0.9.1 in its own explicit venv", ("text",)),
-    "ideator": ("IDEATOR verified precomputed text-image seed-pair replay", ("text",)),
-    "purplellama": ("PurpleLlama source-identity replay (CyberSecEval arms only)", ("text",)),
-    "asb": ("Agent Security Bench adapter", ("text",)),
-    "harmbench": ("prepared HarmBench case-transfer replay", ("text",)),
+    "replay": (_ui_text("catalog.send_the_corpus_prompt_as_is_single_turn"), _ALL_MODALITIES),
+    "crescendo": (_ui_text("catalog.escalate_the_request_over_multiple_turns"), _ALL_MODALITIES),
+    "pyrit": (_ui_text("catalog.microsoft_pyrit_0_14_0_in_its_own_explicit_venv"), ("text",)),
+    "garak": (_ui_text("catalog.nvidia_garak_probes"), ("text",)),
+    "deepteam": (_ui_text("catalog.deepteam_1_0_7_in_its_own_explicit_venv"), ("text",)),
+    "promptfoo": (_ui_text("catalog.promptfoo_adapter"), ("text",)),
+    "t3mp3st": (_ui_text("catalog.prepared_t3mp3st_safe_probe_replay"), ("text",)),
+    "petri": (_ui_text("catalog.petri_adapter"), ("text",)),
+    "fuzzyai": (_ui_text("catalog.fuzzyai_adapter"), ("text",)),
+    "nanogcg": (
+        _ui_text("catalog.precomputed_nanogcg_suffix_replay_live_generation_disabled"),
+        ("text",),
+    ),
+    "autodan": (_ui_text("catalog.autodan_turbo_adapter"), ("text",)),
+    "agentdojo": (_ui_text("catalog.agentdojo_adapter"), ("text",)),
+    "giskard": (_ui_text("catalog.giskard_scan_adapter"), ("text",)),
+    "easyjailbreak": (_ui_text("catalog.easyjailbreak_adapter"), ("text",)),
+    "h4rm3l": (_ui_text("catalog.h4rm3l_0_2_4_in_its_own_explicit_venv"), ("text",)),
+    "spikee": (_ui_text("catalog.spikee_0_9_1_in_its_own_explicit_venv"), ("text",)),
+    "ideator": (
+        _ui_text("catalog.ideator_verified_precomputed_text_image_seed_pair_replay"),
+        ("text",),
+    ),
+    "purplellama": (
+        _ui_text("catalog.purplellama_source_identity_replay_cyberseceval_arms_only"),
+        ("text",),
+    ),
+    "asb": (_ui_text("catalog.agent_security_bench_adapter"), ("text",)),
+    "harmbench": (_ui_text("catalog.prepared_harmbench_case_transfer_replay"), ("text",)),
 }
 _FRAMEWORKS: tuple[tuple[str, str, tuple[str, ...]], ...] = tuple(
     (
@@ -506,18 +507,18 @@ _FRAMEWORKS: tuple[tuple[str, str, tuple[str, ...]], ...] = tuple(
 
 #: Builder execution modes -> the run_matrix flag they set (empty = measured).
 _BUILD_MODES: tuple[tuple[str, str, str], ...] = (
-    ("dry_run", "--dry-run", "Offline dry-run (MockTarget, no calls, no spend)"),
+    ("dry_run", "--dry-run", _ui_text("catalog.offline_dry_run_mocktarget_no_calls_no_spend")),
     (
         "attestation_probe",
         "--attestation-probe",
-        "Attestation probe (one real call per model; usage baseline)",
+        _ui_text("catalog.attestation_probe_one_real_call_per_model_usage_baseline"),
     ),
     (
         "diagnostic_canary",
         "--diagnostic-canary",
-        "Diagnostic canary (small live slice; observed usage only)",
+        _ui_text("catalog.diagnostic_canary_small_live_slice_observed_usage_only"),
     ),
-    ("measured", "", "Measured lane (real calls; produces campaign evidence)"),
+    ("measured", "", _ui_text("catalog.measured_lane_real_calls_produces_campaign_evidence")),
 )
 
 
@@ -530,41 +531,27 @@ _EDITABLE_CONFIGS: dict[str, tuple[str, str, str]] = {
     "api-targets": (
         "experiments/api-targets.json",
         "experiments/rig/api-targets.example.json",
-        "Hosted target roster: exact provider:model ids with modalities, "
-        "max_tokens, temperature. Read fresh by run_matrix each invocation.",
+        _ui_text("catalog.hosted_target_roster_exact_provider_model_ids_with_modalities_max"),
     ),
     "source-instances": (
         "experiments/source-instances.json",
         "experiments/rig/source-instances.example.json",
-        "Source arm registry: logical arm id -> converter, path_env, split. "
-        "Add a reviewed release under a new arm id; never repoint an existing "
-        "arm at different data.",
+        _ui_text("catalog.source_arm_registry_logical_arm_id_converter_path_env_split_add_a"),
     ),
     "local-targets": (
         "experiments/local-targets.json",
         "experiments/rig/local-targets.example.json",
-        "Local vLLM target registry: vllm:org/model -> pinned revision, "
-        "modalities, tensor-parallel size, GPU memory, optional max_model_len "
-        "context cap, and generation max_tokens. Consumed via "
-        "--local / --local-config; runs on the rig's own GPUs (no API spend).",
+        _ui_text("catalog.local_vllm_target_registry_vllm_org_model_pinned_revision_modalit"),
     ),
     "budgets": (
         "experiments/budgets.json",
         "experiments/rig/budgets.example.json",
-        "Prepaid provider budgets shown on the dashboard and Stats: a "
-        "list of {name, prepaid, match, funds}. 'match' is a lowercase "
-        "prefix used to attribute observed usage to the provider. "
-        "Presentation only - the console spends nothing.",
+        _ui_text("catalog.budget_dashboard_help"),
     ),
     "pricing": (
         "experiments/pricing.json",
         "experiments/rig/pricing.example.json",
-        "Effective-dated per-model price table used to calculate monetary "
-        "cost from recorded token usage: providers -> models -> rates "
-        "[{effective_date, currency, per_million_tokens{input, output, "
-        "cache_read, cache_write, reasoning, batch_input, batch_output}}]. "
-        "Rates ship null - fill them from the provider's current price "
-        "sheet; the console never invents a price.",
+        _ui_text("catalog.effective_dated_per_model_price_table_used_to_calculate_monetary"),
     ),
 }
 
@@ -655,9 +642,7 @@ _MATRIX_PARAMS = (
     CommandParam("--dtype", "str"),
     CommandParam("--limit", "int"),
     CommandParam("--sample-seed", "int"),
-    CommandParam(
-        "--sampling-policy", "str", choices=tuple(sorted(SAMPLING_POLICIES))
-    ),
+    CommandParam("--sampling-policy", "str", choices=tuple(sorted(SAMPLING_POLICIES))),
     CommandParam("--seeds", "str", suggest="seeds"),
     CommandParam("--max-queries", "int"),
     CommandParam("--max-turns", "int"),
@@ -680,27 +665,30 @@ _MATRIX_PARAMS = (
 # can therefore never be valid on that forwarding surface, even when the form
 # also supplies --dry-run.
 _RIG_CHECK_PARAMS = tuple(
-    param
-    for param in _MATRIX_PARAMS
-    if param.flag != "--exclude-tool-conditioned"
+    param for param in _MATRIX_PARAMS if param.flag != "--exclude-tool-conditioned"
 )
 
 
 def _commands() -> dict[str, Command]:
-    common_out = (CommandParam("--out", "path", help="output directory under the rig root"),)
+    common_out = (
+        CommandParam("--out", "path", help=_ui_text("catalog.output_directory_under_the_rig_root")),
+    )
     # Same field where the module's argparse marks --out required; the Run
     # page renders the required marker from this (a parity test derives the
     # set from each module's real parser).
     required_out = (
         CommandParam(
-            "--out", "path", required=True, help="output directory under the rig root"
+            "--out",
+            "path",
+            required=True,
+            help=_ui_text("catalog.output_directory_under_the_rig_root"),
         ),
     )
     entries = [
         Command(
             "project_revision",
             "experiments.project_revision",
-            "Create or validate the ura-project-revision/1 receipt",
+            _ui_text("catalog.create_or_validate_the_ura_project_revision_1_receipt"),
             (
                 CommandParam("--expected-revision", "str"),
                 CommandParam("--out", "path"),
@@ -711,7 +699,7 @@ def _commands() -> dict[str, Command]:
         Command(
             "source_conformance",
             "experiments.source_conformance",
-            "Scaffold or validate the compact source acquisition receipt",
+            _ui_text("catalog.scaffold_or_validate_the_compact_source_acquisition_receipt"),
             (
                 CommandParam("--scaffold", "flag"),
                 CommandParam("--arm", "str", repeat=True),
@@ -725,7 +713,7 @@ def _commands() -> dict[str, Command]:
         Command(
             "capture_t3mp3st",
             "experiments.capture_t3mp3st",
-            "Capture a validated T3MP3ST planning bundle for measured replay",
+            _ui_text("catalog.capture_a_validated_t3mp3st_planning_bundle_for_measured_replay"),
             (
                 CommandParam("--corpus", "str"),
                 CommandParam("--input", "path"),
@@ -746,7 +734,7 @@ def _commands() -> dict[str, Command]:
         Command(
             "harmbench_capture",
             "experiments.harmbench_capture",
-            "Prepare a content-addressed HarmBench case bundle for measured replay",
+            _ui_text("catalog.prepare_a_content_addressed_harmbench_case_bundle_for_measured_re"),
             (
                 CommandParam("--repo", "path", required=True),
                 CommandParam("--revision", "str", required=True),
@@ -767,19 +755,19 @@ def _commands() -> dict[str, Command]:
         Command(
             "rig_check",
             "experiments.rig_check",
-            "No-call preflight for a planned grid",
+            _ui_text("catalog.no_call_preflight_for_a_planned_grid"),
             _RIG_CHECK_PARAMS,
         ),
         Command(
             "run_matrix",
             "experiments.run_matrix",
-            "Execute or dry-run one experiment matrix lane",
+            _ui_text("catalog.execute_or_dry_run_one_experiment_matrix_lane"),
             _MATRIX_PARAMS,
         ),
         Command(
             "live_attestation",
             "experiments.live_attestation",
-            "Derive a typed transport receipt from a completed probe",
+            _ui_text("catalog.derive_a_typed_transport_receipt_from_a_completed_probe"),
             (
                 CommandParam("--probe-root", "path"),
                 CommandParam("--execution-scope-id", "str"),
@@ -791,7 +779,7 @@ def _commands() -> dict[str, Command]:
         Command(
             "lane_canary",
             "experiments.lane_canary",
-            "Summarize one typed diagnostic canary completion",
+            _ui_text("catalog.summarize_one_typed_diagnostic_canary_completion"),
             (
                 CommandParam("--results", "path", required=True),
                 CommandParam("--eligibility", "path", required=True),
@@ -801,7 +789,7 @@ def _commands() -> dict[str, Command]:
         Command(
             "level1_evidence",
             "experiments.level1_evidence",
-            "Build the Level-1 lifecycle JSON/CSV for one cohort",
+            _ui_text("catalog.build_the_level_1_lifecycle_json_csv_for_one_cohort"),
             (
                 CommandParam("--eligibility", "path", repeat=True),
                 CommandParam("--results", "path", repeat=True),
@@ -814,7 +802,7 @@ def _commands() -> dict[str, Command]:
         Command(
             "suite_summary",
             "experiments.suite_summary",
-            "Build the no-pooling suite evidence inventory",
+            _ui_text("catalog.build_the_no_pooling_suite_evidence_inventory"),
             (
                 CommandParam("--results", "path", repeat=True),
                 CommandParam("--native", "path", repeat=True),
@@ -826,11 +814,16 @@ def _commands() -> dict[str, Command]:
         Command(
             "level2_report",
             "experiments.level2_report",
-            "Export deterministic Level-2 JSON/CSV/Markdown broad tables",
+            _ui_text("catalog.export_deterministic_level_2_json_csv_markdown_broad_tables"),
             (
                 CommandParam("--results", "path", repeat=True),
-                CommandParam("--historical-code-repository", "path",
-                    help="Repository containing the original source revisions for retained runs."),
+                CommandParam(
+                    "--historical-code-repository",
+                    "path",
+                    help=_ui_text(
+                        "catalog.repository_containing_the_original_source_revisions_for_retained"
+                    ),
+                ),
                 CommandParam("--native", "path", repeat=True),
                 CommandParam("--out-json", "path", required=True),
                 CommandParam("--out-csv", "path", required=True),
@@ -840,7 +833,7 @@ def _commands() -> dict[str, Command]:
         Command(
             "human_review_campaign",
             "experiments.human_review_campaign",
-            "Prepare or analyse saved campaign outputs for independent review",
+            _ui_text("catalog.prepare_or_analyse_saved_campaign_outputs_for_independent_review"),
             (
                 CommandParam("--database", "path"),
                 CommandParam("--campaign", "str"),
@@ -859,7 +852,7 @@ def _commands() -> dict[str, Command]:
         Command(
             "human_audit",
             "experiments.human_audit",
-            "Prepare or analyse the human-audit frames",
+            _ui_text("catalog.prepare_or_analyse_the_human_audit_frames"),
             (
                 CommandParam("--results", "path", required=True),
                 CommandParam("--media-index", "path"),
@@ -882,7 +875,7 @@ def _commands() -> dict[str, Command]:
         Command(
             "figures",
             "experiments.figures",
-            "Render figure previews or measured focal figures",
+            _ui_text("catalog.render_figure_previews_or_measured_focal_figures"),
             (
                 CommandParam("--verify-artifact-sha256", "flag"),
                 CommandParam("--synth", "flag"),
@@ -902,11 +895,16 @@ def _commands() -> dict[str, Command]:
         Command(
             "paired_compare",
             "experiments.paired_compare",
-            "Paired cluster comparison between two exact conditions",
+            _ui_text("catalog.paired_cluster_comparison_between_two_exact_conditions"),
             (
                 CommandParam("--results", "path", required=True),
-                CommandParam("--historical-code-repository", "path",
-                    help="Repository containing the original source revisions for retained runs."),
+                CommandParam(
+                    "--historical-code-repository",
+                    "path",
+                    help=_ui_text(
+                        "catalog.repository_containing_the_original_source_revisions_for_retained"
+                    ),
+                ),
                 CommandParam("--left-model", "str", required=True),
                 CommandParam("--right-model", "str", required=True),
                 CommandParam("--left-defense", "str"),
@@ -926,7 +924,7 @@ def _commands() -> dict[str, Command]:
         Command(
             "judge_sensitivity",
             "experiments.judge_sensitivity",
-            "Same-response judge-stage sensitivity analysis",
+            _ui_text("catalog.same_response_judge_stage_sensitivity_analysis"),
             (
                 CommandParam("--results", "path", required=True),
                 CommandParam("--attacker", "str"),
@@ -937,7 +935,7 @@ def _commands() -> dict[str, Command]:
         Command(
             "kappa",
             "experiments.kappa",
-            "Pairwise judge-agreement diagnostics",
+            _ui_text("catalog.pairwise_judge_agreement_diagnostics"),
             (
                 CommandParam("--results", "path", required=True),
                 CommandParam("--attacker", "str"),
@@ -947,7 +945,7 @@ def _commands() -> dict[str, Command]:
         Command(
             "transfer_matrix",
             "experiments.transfer_matrix",
-            "Support-qualified descriptive transfer analysis",
+            _ui_text("catalog.support_qualified_descriptive_transfer_analysis"),
             (
                 CommandParam("--verify-artifact-sha256", "flag"),
                 CommandParam("--results", "path", required=True),
@@ -962,7 +960,7 @@ def _commands() -> dict[str, Command]:
         Command(
             "export_jalmbench",
             "experiments.export_jalmbench",
-            "Export the official JALMBench Parquet release for the converter",
+            _ui_text("catalog.export_the_official_jalmbench_parquet_release_for_the_converter"),
             (
                 CommandParam("--source", "path", required=True),
                 CommandParam("--max-records", "int"),
@@ -973,7 +971,7 @@ def _commands() -> dict[str, Command]:
         Command(
             "export_vlsbench",
             "experiments.export_vlsbench",
-            "Export the official VLSBench Parquet release for the converter",
+            _ui_text("catalog.export_the_official_vlsbench_parquet_release_for_the_converter"),
             (
                 CommandParam("--source", "path", required=True),
                 CommandParam("--max-records", "int"),
@@ -984,7 +982,7 @@ def _commands() -> dict[str, Command]:
         Command(
             "export_aggregators",
             "experiments.export_aggregators",
-            "Acquire one (or all) aggregator corpora into the converter layout",
+            _ui_text("catalog.acquire_one_or_all_aggregator_corpora_into_the_converter_layout"),
             (
                 CommandParam(
                     "--source",
@@ -999,21 +997,22 @@ def _commands() -> dict[str, Command]:
                         "holisafe",
                         "all",
                     ),
-                    help="which aggregator corpus to prepare (or all six)",
+                    help=_ui_text("catalog.which_aggregator_corpus_to_prepare_or_all_six"),
                 ),
                 CommandParam(
                     "--out-root",
                     "path",
                     required=True,
-                    help="corpora root (the exported URA_CORPORA); each source "
-                    "writes under its own subdir",
+                    help=_ui_text(
+                        "catalog.corpora_root_the_exported_ura_corpora_each_source_writes_under_it"
+                    ),
                 ),
             ),
         ),
         Command(
             "native_import",
             "experiments.native_import",
-            "Validate and canonicalize a native artifact family",
+            _ui_text("catalog.validate_and_canonicalize_a_native_artifact_family"),
             (
                 CommandParam("--config", "path"),
                 CommandParam("--validate", "path"),
@@ -1023,7 +1022,7 @@ def _commands() -> dict[str, Command]:
         Command(
             "syn_compat",
             "experiments.syn_compat",
-            "Synthetic compatibility corpus: generate/check/evaluate (rule-fidelity only)",
+            _ui_text("catalog.synthetic_compatibility_corpus_generate_check_evaluate_rule_fidel"),
             (
                 CommandParam("--generate", "flag"),
                 CommandParam("--check", "flag"),
@@ -1038,7 +1037,7 @@ def _commands() -> dict[str, Command]:
         Command(
             "response_svm",
             "experiments.response_svm",
-            "Retained response classifiers: harmful compliance, over-refusal and judge disagreement (no calls)",
+            _ui_text("catalog.retained_response_classifiers_harmful_compliance_over_refusal_and"),
             (
                 CommandParam("--export", "flag"),
                 CommandParam("--evaluate", "flag"),
@@ -1057,8 +1056,14 @@ def _commands() -> dict[str, Command]:
                 CommandParam("--dataset", "path"),
                 CommandParam("--study-result", "path"),
                 CommandParam("--study-predictions", "path"),
-                CommandParam("--models", "path", help="Trusted fitted models.joblib from this tool only"),
-                CommandParam("--features", "str", choices=("prompt", "response", "prompt_response")),
+                CommandParam(
+                    "--models",
+                    "path",
+                    help=_ui_text("catalog.trusted_fitted_models_joblib_from_this_tool_only"),
+                ),
+                CommandParam(
+                    "--features", "str", choices=("prompt", "response", "prompt_response")
+                ),
                 CommandParam("--out", "path", required=True),
                 CommandParam("--seed", "int"),
                 CommandParam("--max-feature-characters", "int"),
@@ -1070,7 +1075,7 @@ def _commands() -> dict[str, Command]:
         Command(
             "local_targets",
             "experiments.local_targets",
-            "List or refresh the vLLM local-target roster (version-matched)",
+            _ui_text("catalog.list_or_refresh_the_vllm_local_target_roster_version_matched"),
             (
                 CommandParam("--refresh", "flag"),
                 CommandParam("--vllm-version", "str"),
@@ -1078,24 +1083,37 @@ def _commands() -> dict[str, Command]:
             ),
         ),
         Command(
-            "campaign_assess", "experiments.campaign_assess",
-            "Prepare or resume missing local/Haiku verdicts on indexed campaign answers",
-            (CommandParam("--execute", "flag"), CommandParam("--database", "path", required=True),
-             CommandParam("--campaign", "str"), CommandParam("--results-root", "path"),
-             CommandParam("--kind", "str", choices=("local", "haiku")),
-             CommandParam("--judge-model", "str"), CommandParam("--api-config", "path"),
-             CommandParam("--pricing-config", "path"), CommandParam("--max-cost-microusd", "int"),
-             CommandParam("--model-store", "path"), CommandParam("--limit", "int"),
-             CommandParam("--out", "path", required=True)),
+            "campaign_assess",
+            "experiments.campaign_assess",
+            _ui_text("catalog.prepare_or_resume_missing_local_haiku_verdicts_on_indexed_campaig"),
+            (
+                CommandParam("--execute", "flag"),
+                CommandParam("--database", "path", required=True),
+                CommandParam("--campaign", "str"),
+                CommandParam("--results-root", "path"),
+                CommandParam("--kind", "str", choices=("local", "haiku")),
+                CommandParam("--judge-model", "str"),
+                CommandParam("--api-config", "path"),
+                CommandParam("--pricing-config", "path"),
+                CommandParam("--max-cost-microusd", "int"),
+                CommandParam("--model-store", "path"),
+                CommandParam("--limit", "int"),
+                CommandParam("--out", "path", required=True),
+            ),
         ),
         Command(
             "local_model_readiness",
             "experiments.local_model_readiness",
-            "Profile one vLLM or Ollama target with the seeded 10-text/5-image gate",
+            _ui_text("catalog.profile_one_vllm_or_ollama_target_with_the_seeded_10_text_5_image"),
             (
                 CommandParam("--local", "str"),
-                CommandParam("--context-ceiling", "int", help="Optional context ceiling tested by readiness; "
-                    "leave empty for hardware fit. Minimum 25001 tokens. Ollama still requires full GPU residency."),
+                CommandParam(
+                    "--context-ceiling",
+                    "int",
+                    help=_ui_text(
+                        "catalog.optional_context_ceiling_tested_by_readiness_leave_empty_for_hard"
+                    ),
+                ),
                 CommandParam("--local-config", "path"),
                 CommandParam("--local-config-sha256", "str"),
                 CommandParam("--model-acquisition-plan-only", "flag"),
@@ -1115,12 +1133,25 @@ def _commands() -> dict[str, Command]:
         Command(
             "retained_local_sources",
             "experiments.retained_local_sources",
-            "Select saved local runs for input-matched follow-on preparation, without model calls",
+            _ui_text("catalog.select_saved_local_runs_for_input_matched_follow_on_preparation_w"),
             (
-                CommandParam("--source-root", "path", required=True, repeat=True,
-                    help="Completed Runner results directories. Select narrow job directories, not the entire results store."),
-                CommandParam("--run-id", "str", repeat=True,
-                    help="Optional exact run IDs; blank selects all completed local runs in the named directories."),
+                CommandParam(
+                    "--source-root",
+                    "path",
+                    required=True,
+                    repeat=True,
+                    help=_ui_text(
+                        "catalog.completed_runner_results_directories_select_narrow_job_directorie"
+                    ),
+                ),
+                CommandParam(
+                    "--run-id",
+                    "str",
+                    repeat=True,
+                    help=_ui_text(
+                        "catalog.optional_exact_run_ids_blank_selects_all_completed_local_runs_in"
+                    ),
+                ),
                 CommandParam("--out", "path", required=True),
                 CommandParam("--verify-artifact-sha256", "flag"),
             ),
@@ -1128,24 +1159,46 @@ def _commands() -> dict[str, Command]:
         Command(
             "hosted_retained_inputs",
             "experiments.hosted_retained_inputs",
-            "Prepare an input-matched hosted subset from saved local runs, without paid calls",
+            _ui_text("catalog.prepare_an_input_matched_hosted_subset_from_saved_local_runs_with"),
             (
-                CommandParam("--local-inventory", "path", required=True,
-                    help="Inventory produced by Select saved local runs; historical inventories also need runner-view."),
+                CommandParam(
+                    "--local-inventory",
+                    "path",
+                    required=True,
+                    help=_ui_text(
+                        "catalog.inventory_produced_by_select_saved_local_runs_historical_inventor"
+                    ),
+                ),
                 CommandParam("--local-inventory-sha256", "str", required=True),
-                CommandParam("--runner-view", "path", help="Historical inventories only; omit for selected local source directories."),
+                CommandParam(
+                    "--runner-view",
+                    "path",
+                    help=_ui_text(
+                        "catalog.historical_inventories_only_omit_for_selected_local_source_direct"
+                    ),
+                ),
                 CommandParam("--budget", "path", required=True),
                 CommandParam("--budget-sha256", "str", required=True),
                 CommandParam("--api-config", "path", required=True),
                 CommandParam("--api-config-sha256", "str", required=True),
                 CommandParam("--target", "str", required=True),
                 CommandParam("--global-input-cap", "int"),
-                CommandParam("--media-index", "path",
-                    help="Optional for selected local sources: original converted inputs and configured media roots provide their locations."),
+                CommandParam(
+                    "--media-index",
+                    "path",
+                    help=_ui_text(
+                        "catalog.optional_for_selected_local_sources_original_converted_inputs_and"
+                    ),
+                ),
                 CommandParam("--media-index-sha256", "str"),
                 CommandParam("--materialize-corpus", "str"),
-                CommandParam("--source-corpora", "path",
-                    help="Optional for selected local sources: reconstructs the recorded original corpus subset, without resampling."),
+                CommandParam(
+                    "--source-corpora",
+                    "path",
+                    help=_ui_text(
+                        "catalog.optional_for_selected_local_sources_reconstructs_the_recorded_ori"
+                    ),
+                ),
                 CommandParam("--source-corpora-sha256", "str"),
                 CommandParam("--out", "path", required=True),
                 CommandParam("--verify-artifact-sha256", "flag"),
@@ -1154,23 +1207,32 @@ def _commands() -> dict[str, Command]:
         Command(
             "hosted_campaign_prepare",
             "experiments.hosted_campaign_prepare",
-            "Count selected requests and prepare shared target and judging allowances; no generation",
+            _ui_text("catalog.count_selected_requests_and_prepare_shared_target_and_judging_all"),
             (
                 CommandParam("--request", "path", required=True),
                 CommandParam("--request-sha256", "str", required=True),
                 CommandParam("--out-root", "path", required=True),
-                CommandParam("--count-cache", "path", help="Reuse exact token-count receipts after interruption."),
+                CommandParam(
+                    "--count-cache",
+                    "path",
+                    help=_ui_text("catalog.reuse_exact_token_count_receipts_after_interruption"),
+                ),
                 CommandParam("--shared-budget-root", "path"),
                 CommandParam("--shared-budget-sha256", "str"),
-                CommandParam("--allow-network-counts", "flag",
-                    help="Allow provider token-count endpoints only; this does not enable answer generation."),
+                CommandParam(
+                    "--allow-network-counts",
+                    "flag",
+                    help=_ui_text(
+                        "catalog.allow_provider_token_count_endpoints_only_this_does_not_enable_an"
+                    ),
+                ),
                 CommandParam("--verify-artifact-sha256", "flag"),
             ),
         ),
         Command(
             "hosted_selected_replays",
             "experiments.hosted_selected_replays",
-            "Prepare all selected models' matched replay inputs from saved sources and a forecast, without calls",
+            _ui_text("catalog.prepare_all_selected_models_matched_replay_inputs_from_saved_sour"),
             (
                 CommandParam("--local-inventory", "path", required=True),
                 CommandParam("--local-inventory-sha256", "str", required=True),
@@ -1185,7 +1247,7 @@ def _commands() -> dict[str, Command]:
         Command(
             "hosted_program_runtime",
             "experiments.hosted_program_runtime",
-            "Bind an untouched hosted program to installed models without calls; transport observation still required",
+            _ui_text("catalog.bind_an_untouched_hosted_program_to_installed_models_without_call"),
             (
                 CommandParam("--program", "path", required=True),
                 CommandParam("--program-sha256", "str", required=True),
@@ -1193,9 +1255,21 @@ def _commands() -> dict[str, Command]:
                 CommandParam("--budget-plan-sha256", "str", required=True),
                 CommandParam("--project-root", "path", required=True),
                 CommandParam("--expected-commit", "str", required=True),
-                CommandParam("--store", "path", help="Existing managed-model store; no downloads are performed."),
-                CommandParam("--out", "path", required=True,
-                    help="New or matching interrupted runtime preparation directory."),
+                CommandParam(
+                    "--store",
+                    "path",
+                    help=_ui_text(
+                        "catalog.existing_managed_model_store_no_downloads_are_performed"
+                    ),
+                ),
+                CommandParam(
+                    "--out",
+                    "path",
+                    required=True,
+                    help=_ui_text(
+                        "catalog.new_or_matching_interrupted_runtime_preparation_directory"
+                    ),
+                ),
                 CommandParam("--max-age-hours", "float"),
                 CommandParam("--verify-model-sha256", "flag"),
                 CommandParam("--verify-artifact-sha256", "flag"),
@@ -1204,31 +1278,66 @@ def _commands() -> dict[str, Command]:
         Command(
             "hosted_campaign_execute",
             "experiments.hosted_campaign_execute",
-            "Collect prepared hosted programs in parallel; judge retained answers afterward",
+            _ui_text("catalog.collect_prepared_hosted_programs_in_parallel_judge_retained_answe"),
             (
-                CommandParam("--program", "path", required=True, repeat=True,
-                    help="Exact prepared/attested program files, one per selected model condition"),
-                CommandParam("--program-sha256", "str", required=True, repeat=True,
-                    help="Matching program digests, in the same order as the program files"),
+                CommandParam(
+                    "--program",
+                    "path",
+                    required=True,
+                    repeat=True,
+                    help=_ui_text(
+                        "catalog.exact_prepared_attested_program_files_one_per_selected_model_cond"
+                    ),
+                ),
+                CommandParam(
+                    "--program-sha256",
+                    "str",
+                    required=True,
+                    repeat=True,
+                    help=_ui_text(
+                        "catalog.matching_program_digests_in_the_same_order_as_the_program_files"
+                    ),
+                ),
                 CommandParam("--budget-root", "path", required=True),
                 CommandParam("--budget-plan-sha256", "str", required=True),
                 CommandParam("--project-root", "path", required=True),
                 CommandParam("--expected-commit", "str", required=True),
                 CommandParam("--out", "path", required=True),
-                CommandParam("--prepare-runtime", "flag", help="Bind installed models and complete the selected funded transport probes before collection"),
-                CommandParam("--model-store", "path", help="Existing resolved managed-model store; defaults to URA_MODEL_STORE"),
-                CommandParam("--workers-per-provider", "int",
-                    help="Independent target workers per provider (default 2, maximum 8); providers run concurrently"),
-                CommandParam("--resume-from", "path", help="Previous collection control directory. "
-                    "Keep its programs and budget; choose a fresh output directory for this continuation. "
-                    "Completed jobs are restored, not regenerated."),
+                CommandParam(
+                    "--prepare-runtime",
+                    "flag",
+                    help=_ui_text(
+                        "catalog.bind_installed_models_and_complete_the_selected_funded_transport"
+                    ),
+                ),
+                CommandParam(
+                    "--model-store",
+                    "path",
+                    help=_ui_text(
+                        "catalog.existing_resolved_managed_model_store_defaults_to_ura_model_store"
+                    ),
+                ),
+                CommandParam(
+                    "--workers-per-provider",
+                    "int",
+                    help=_ui_text(
+                        "catalog.independent_target_workers_per_provider_default_2_maximum_8_provi"
+                    ),
+                ),
+                CommandParam(
+                    "--resume-from",
+                    "path",
+                    help=_ui_text(
+                        "catalog.previous_collection_control_directory_keep_its_programs_and_budge"
+                    ),
+                ),
                 CommandParam("--verify-artifact-sha256", "flag"),
             ),
         ),
         Command(
             "hosted_campaign_budget",
             "experiments.hosted_campaign_budget",
-            "Project the sealed hosted target and Haiku judge budget without calls",
+            _ui_text("catalog.project_the_sealed_hosted_target_and_haiku_judge_budget_without_c"),
             (
                 CommandParam("--api-config", "path", required=True),
                 CommandParam("--api-config-sha256", "str", required=True),
@@ -1237,24 +1346,47 @@ def _commands() -> dict[str, Command]:
                 CommandParam("--budgets", "path", required=True),
                 CommandParam("--budgets-sha256", "str", required=True),
                 CommandParam("--pricing-as-of", "str", required=True),
-                CommandParam("--route-configuration", "path",
-                    help="Selected models with their own request and output-token caps; omit only for the legacy default cohort."),
+                CommandParam(
+                    "--route-configuration",
+                    "path",
+                    help=_ui_text(
+                        "catalog.selected_models_with_their_own_request_and_output_token_caps_omit"
+                    ),
+                ),
                 CommandParam("--route-configuration-sha256", "str"),
-                CommandParam("--reservation-policy", "str", choices=("first_attempts_upfront", "per_attempt"),
-                    help="Per-attempt checks queue the full selected inventory under shared spending ceilings."),
+                CommandParam(
+                    "--reservation-policy",
+                    "str",
+                    choices=("first_attempts_upfront", "per_attempt"),
+                    help=_ui_text(
+                        "catalog.per_attempt_checks_queue_the_full_selected_inventory_under_shared"
+                    ),
+                ),
                 CommandParam("--out", "path", required=True),
             ),
         ),
         Command(
             "retained_native_judge_prepare",
             "experiments.retained_native_judge_prepare",
-            "Prepare local judging of saved API answers without generating or judging",
+            _ui_text("catalog.prepare_local_judging_of_saved_api_answers_without_generating_or"),
             (
                 CommandParam("--program", "path", required=True, repeat=True),
                 CommandParam("--program-sha256", "str", required=True, repeat=True),
-                CommandParam("--job", "str", repeat=True, help="Optional exact job names; blank selects all supplied jobs."),
-                CommandParam("--include-incomplete", "flag",
-                    help="Include saved outputs from interrupted jobs; unsaved inputs remain pending, not judged."),
+                CommandParam(
+                    "--job",
+                    "str",
+                    repeat=True,
+                    help=_ui_text(
+                        "catalog.optional_exact_job_names_blank_selects_all_supplied_jobs"
+                    ),
+                ),
+                CommandParam(
+                    "--include-incomplete",
+                    "flag",
+                    help=_ui_text(
+                        "catalog.include_saved_outputs_from_interrupted_jobs_unsaved_inputs_remain"
+                    ),
+                ),
                 CommandParam("--out", "path", required=True),
                 CommandParam("--verify-artifact-sha256", "flag"),
             ),
@@ -1262,11 +1394,16 @@ def _commands() -> dict[str, Command]:
         Command(
             "retained_native_judge_execute",
             "experiments.retained_native_judge_execute",
-            "Judge saved API answers locally, resuming verdicts without target calls",
+            _ui_text("catalog.judge_saved_api_answers_locally_resuming_verdicts_without_target"),
             (
                 CommandParam("--preparation", "path", required=True),
                 CommandParam("--preparation-sha256", "str", required=True),
-                CommandParam("--out", "path", required=True, help="Reuse the same directory to resume saved judgments."),
+                CommandParam(
+                    "--out",
+                    "path",
+                    required=True,
+                    help=_ui_text("catalog.reuse_the_same_directory_to_resume_saved_judgments"),
+                ),
                 CommandParam("--verify-artifact-sha256", "flag"),
                 CommandParam("--verify-model-sha256", "flag"),
             ),
@@ -1274,9 +1411,13 @@ def _commands() -> dict[str, Command]:
         Command(
             "retained_response_judge_pair",
             "experiments.retained_response_judge_pair",
-            "Select matched retained local and hosted outputs for bounded Haiku judging",
+            _ui_text("catalog.select_matched_retained_local_and_hosted_outputs_for_bounded_haik"),
             (
-                CommandParam("--api-config", "path", help="Needed with an existing campaign judging budget."),
+                CommandParam(
+                    "--api-config",
+                    "path",
+                    help=_ui_text("catalog.needed_with_an_existing_campaign_judging_budget"),
+                ),
                 CommandParam("--shared-budget-root", "path"),
                 CommandParam("--shared-budget-sha256", "str"),
                 CommandParam("--program", "path", repeat=True),
@@ -1293,20 +1434,24 @@ def _commands() -> dict[str, Command]:
                 CommandParam("--pair-limit", "int"),
                 CommandParam("--sample-seed", "int"),
                 CommandParam("--max-cost-microusd", "int"),
-                CommandParam(
-                    "--ack-hosted-judge-data-transfer", "flag", required=True
-                ),
+                CommandParam("--ack-hosted-judge-data-transfer", "flag", required=True),
                 CommandParam("--out", "path", required=True),
             ),
         ),
         Command(
             "retained_judge_inventory",
             "experiments.retained_judge_inventory",
-            "Inventory every local and hosted answer on the same inputs, without judging or spending",
+            _ui_text("catalog.inventory_every_local_and_hosted_answer_on_the_same_inputs_withou"),
             (
                 CommandParam("--local-view", "path", required=True, repeat=True),
                 CommandParam("--hosted-view", "path", required=True, repeat=True),
-                CommandParam("--input-limit", "int", help="Zero keeps every hosted input, including missing answers."),
+                CommandParam(
+                    "--input-limit",
+                    "int",
+                    help=_ui_text(
+                        "catalog.zero_keeps_every_hosted_input_including_missing_answers"
+                    ),
+                ),
                 CommandParam("--sample-seed", "int"),
                 CommandParam("--out", "path", required=True),
             ),
@@ -1314,7 +1459,7 @@ def _commands() -> dict[str, Command]:
         Command(
             "retained_inventory_judge_items",
             "experiments.retained_inventory_judge_items",
-            "Prepare all matching saved answers under existing judging funding, without calls",
+            _ui_text("catalog.prepare_all_matching_saved_answers_under_existing_judging_funding"),
             (
                 CommandParam("--inventory", "path", required=True),
                 CommandParam("--local-view", "path", required=True, repeat=True),
@@ -1327,7 +1472,7 @@ def _commands() -> dict[str, Command]:
         Command(
             "retained_inventory_judging",
             "experiments.retained_inventory_judging",
-            "Prepare or resume all funded saved-output Haiku judgments under existing campaign budgets",
+            _ui_text("catalog.prepare_or_resume_all_funded_saved_output_haiku_judgments_under_e"),
             (
                 CommandParam("--items-root", "path"),
                 CommandParam("--judge-model", "str"),
@@ -1347,7 +1492,7 @@ def _commands() -> dict[str, Command]:
         Command(
             "retained_hosted_judge_items",
             "experiments.retained_hosted_judge_items",
-            "Prepare saved hosted answers for their existing Haiku funding, without paid calls",
+            _ui_text("catalog.prepare_saved_hosted_answers_for_their_existing_haiku_funding_wit"),
             (
                 CommandParam("--preparation", "path", required=True),
                 CommandParam("--budget-root", "path", required=True),
@@ -1358,14 +1503,27 @@ def _commands() -> dict[str, Command]:
         Command(
             "retained_response_judge_pair_execute",
             "experiments.retained_response_judge_pair_execute",
-            "Execute one sealed matched local and hosted Haiku judging plan",
+            _ui_text("catalog.execute_one_sealed_matched_local_and_hosted_haiku_judging_plan"),
             (
-                CommandParam("--shared-budget-root", "path", help="Existing campaign judging allocation."),
+                CommandParam(
+                    "--shared-budget-root",
+                    "path",
+                    help=_ui_text("catalog.existing_campaign_judging_allocation"),
+                ),
                 CommandParam("--shared-budget-sha256", "str"),
-                CommandParam("--shared-requests", "path", help="Saved output-specific funded Haiku requests."),
+                CommandParam(
+                    "--shared-requests",
+                    "path",
+                    help=_ui_text("catalog.saved_output_specific_funded_haiku_requests"),
+                ),
                 CommandParam("--shared-requests-sha256", "str"),
-                CommandParam("--matching-workspace-id", "str", help="The other campaign ID owning matched outputs. "
-                    "The selected campaign is included automatically; each verdict and cost belongs to its exact answer."),
+                CommandParam(
+                    "--matching-workspace-id",
+                    "str",
+                    help=_ui_text(
+                        "catalog.the_other_campaign_id_owning_matched_outputs_the_selected_campaig"
+                    ),
+                ),
                 CommandParam("--retain-invalid-verdicts", "flag"),
                 CommandParam("--verify-artifact-sha256", "flag"),
                 CommandParam("--plan", "path", required=True),
@@ -1381,7 +1539,7 @@ def _commands() -> dict[str, Command]:
         Command(
             "ollama_pull",
             "experiments.ollama_pull",
-            "Pull one model through the fixed loopback Ollama daemon",
+            _ui_text("catalog.pull_one_model_through_the_fixed_loopback_ollama_daemon"),
             (
                 CommandParam("--model", "str", required=True),
                 CommandParam("--base-url", "str"),
@@ -1394,7 +1552,7 @@ def _commands() -> dict[str, Command]:
         Command(
             "model_acquire",
             "experiments.model_acquire",
-            "Acquire one reviewed immutable Hugging Face model plan",
+            _ui_text("catalog.acquire_one_reviewed_immutable_hugging_face_model_plan"),
             (
                 CommandParam("--verify-model-sha256", "flag"),
                 CommandParam("--plan", "path", required=True),
@@ -1412,7 +1570,7 @@ def _commands() -> dict[str, Command]:
         Command(
             "webui_selftest",
             "experiments.rig_web",
-            "UI diagnostic only: sleep briefly and exit",
+            _ui_text("catalog.ui_diagnostic_only_sleep_briefly_and_exit"),
             (CommandParam("--selftest-sleep", "float", required=True),),
         ),
     ]
@@ -1428,40 +1586,45 @@ COMMANDS = _commands()
 #: omitted because their validated Build workflows own launch authorization.
 COMMAND_GROUPS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
     (
-        "Receipts and conformance",
+        _ui_text("catalog.receipts_and_conformance"),
         "receipt",
-        "runbook sections 2, 4.1, 17",
+        _ui_text("catalog.runbook_sections_2_4_1_17"),
         ("project_revision", "source_conformance"),
     ),
     (
-        "Prepared attack capture",
+        _ui_text("catalog.prepared_attack_capture"),
         "flask",
-        "capture first, replay in Build",
+        _ui_text("catalog.capture_first_replay_in_build"),
         ("capture_t3mp3st", "harmbench_capture"),
     ),
     (
-        "Acquisition exports",
+        _ui_text("catalog.acquisition_exports"),
         "box",
-        "runbook section 3",
+        _ui_text("catalog.runbook_section_3"),
         ("export_jalmbench", "export_vlsbench", "export_aggregators"),
     ),
     (
-        "Preflight, probes and lanes",
+        _ui_text("catalog.preflight_probes_and_lanes"),
         "play",
-        "runbook sections 8-13",
+        _ui_text("catalog.runbook_sections_8_13"),
         ("rig_check", "live_attestation", "lane_canary"),
     ),
-    ("Analysis and native imports", "flask", "runbook sections 14, 16", ("native_import", "syn_compat", "response_svm")),
     (
-        "Targets and rosters",
+        _ui_text("catalog.analysis_and_native_imports"),
+        "flask",
+        _ui_text("catalog.runbook_sections_14_16"),
+        ("native_import", "syn_compat", "response_svm"),
+    ),
+    (
+        _ui_text("catalog.targets_and_rosters"),
         "coins",
-        "runbook sections 5, 13",
+        _ui_text("catalog.runbook_sections_5_13"),
         ("local_targets", "local_model_readiness"),
     ),
     (
-        "Analysis and reporting",
+        _ui_text("catalog.analysis_and_reporting"),
         "chart",
-        "runbook section 16",
+        _ui_text("catalog.runbook_section_16"),
         (
             "level1_evidence",
             "suite_summary",
@@ -1474,9 +1637,9 @@ COMMAND_GROUPS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
         ),
     ),
     (
-        "Hosted budget and retained judging",
+        _ui_text("catalog.hosted_budget_and_retained_judging"),
         "coins",
-        "runbook sections 19-20",
+        _ui_text("catalog.runbook_sections_19_20"),
         (
             "retained_local_sources",
             "hosted_campaign_budget",
@@ -1495,8 +1658,18 @@ COMMAND_GROUPS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
             "retained_response_judge_pair_execute",
         ),
     ),
-    ("Human audit", "users", "runbook sections 15, 15.1", ("human_review_campaign", "human_audit")),
-    ("Console diagnostics", "pulse", "runbook section 18", ("webui_selftest",)),
+    (
+        _ui_text("catalog.human_audit"),
+        "users",
+        _ui_text("catalog.runbook_sections_15_15_1"),
+        ("human_review_campaign", "human_audit"),
+    ),
+    (
+        _ui_text("catalog.console_diagnostics"),
+        "pulse",
+        _ui_text("catalog.runbook_section_18"),
+        ("webui_selftest",),
+    ),
 )
 
 
@@ -1524,7 +1697,7 @@ def _param_values(
                 continue
             suffix = key[len(prefix) :]
             if not suffix.isdigit() or int(suffix) <= 0:
-                raise ValueError(f"invalid repeat row {key!r}")
+                raise ValueError((_ui_text("catalog.invalid_repeat_row") + f"{key!r}"))
             raw = raw.strip() if isinstance(raw, str) else ""
             if raw:
                 collected.append((int(suffix), raw))
@@ -1543,7 +1716,7 @@ def build_argv(
     registry = COMMANDS if commands is None else commands
     entry = registry.get(command)
     if entry is None:
-        raise ValueError(f"unknown command {command!r}")
+        raise ValueError((_ui_text("catalog.unknown_command") + f"{command!r}"))
     known = {param.flag: param for param in entry.params}
     allowed = set(known)
     for param in entry.params:
@@ -1551,7 +1724,9 @@ def build_argv(
             allowed.update(key for key in values if key.startswith(param.flag + "#"))
     unknown = sorted(set(values) - allowed)
     if unknown:
-        raise ValueError(f"unknown parameter(s) for {command!r}: {unknown}")
+        raise ValueError(
+            (_ui_text("catalog.unknown_parameter_s_for") + f"{command!r}" + ": " + f"{unknown}")
+        )
     if command == "human_audit":
         populated = {
             flag
@@ -1564,15 +1739,27 @@ def build_argv(
             if isinstance(values.get(flag), str) and values[flag].strip()
         }
         if len(populated) != 1:
-            raise ValueError("human_audit requires exactly one preparation or labels mode")
+            raise ValueError(
+                _ui_text("catalog.human_audit_requires_exactly_one_preparation_or_labels_mode")
+            )
         judge_configuration = values.get("--judge-configuration-sha256", "").strip()
         historical_repository = values.get("--historical-code-repository", "").strip()
         if judge_configuration:
-            if not historical_repository or populated & {"--prepare-source-task", "--source-task-labels"}:
-                raise ValueError("judge configuration selection requires a historical common frame")
-            if (len(judge_configuration) != 64
-                or any(c not in "0123456789abcdef" for c in judge_configuration)):
-                raise ValueError("judge configuration SHA-256 must be 64 lowercase hex digits")
+            if not historical_repository or populated & {
+                "--prepare-source-task",
+                "--source-task-labels",
+            }:
+                raise ValueError(
+                    _ui_text(
+                        "catalog.judge_configuration_selection_requires_a_historical_common_frame"
+                    )
+                )
+            if len(judge_configuration) != 64 or any(
+                c not in "0123456789abcdef" for c in judge_configuration
+            ):
+                raise ValueError(
+                    _ui_text("catalog.judge_configuration_sha_256_must_be_64_lowercase_hex_digits")
+                )
         output = values.get("--output", "")
         output = output.strip() if isinstance(output, str) else ""
         prepared_path = values.get("--prepared-rating-form", "")
@@ -1592,29 +1779,33 @@ def build_argv(
         }
         if not labels_mode and analysis_only:
             raise ValueError(
-                "human_audit preparation is deterministic and seedless; "
-                "analysis-only option(s) are invalid: "
+                _ui_text(
+                    "catalog.human_audit_preparation_is_deterministic_and_seedless_analysis_on"
+                )
                 + ", ".join(sorted(analysis_only))
             )
         if labels_mode and not output:
             raise ValueError(
-                "human_audit labels modes require an explicit external --output"
+                _ui_text("catalog.human_audit_labels_modes_require_an_explicit_external_output")
             )
         if bool(prepared_path) != bool(prepared_sha):
             raise ValueError(
-                "--prepared-rating-form and --prepared-rating-form-sha256 must "
-                "be provided together"
+                _ui_text(
+                    "catalog.prepared_rating_form_and_prepared_rating_form_sha256_must_be_prov"
+                )
             )
         if not labels_mode and (prepared_path or prepared_sha):
             raise ValueError(
-                "human_audit preparation modes cannot consume a prepared rating form"
+                _ui_text(
+                    "catalog.human_audit_preparation_modes_cannot_consume_a_prepared_rating_fo"
+                )
             )
         if prepared_sha and (
             len(prepared_sha) != 64
             or any(character not in "0123456789abcdef" for character in prepared_sha)
         ):
             raise ValueError(
-                "--prepared-rating-form-sha256 must be 64 lowercase hex digits"
+                _ui_text("catalog.prepared_rating_form_sha256_must_be_64_lowercase_hex_digits")
             )
     argv = [sys.executable, "-m", entry.module]
     for param in entry.params:
@@ -1625,7 +1816,7 @@ def build_argv(
             continue
         if param.kind == "flag":
             if len(raws) != 1 or raws[0] not in {"on", "true", "1", "yes"}:
-                raise ValueError(f"{param.flag} is a checkbox flag")
+                raise ValueError((f"{param.flag}" + _ui_text("catalog.is_a_checkbox_flag")))
             argv.append(param.flag)
             continue
         for raw in raws:
@@ -1635,9 +1826,15 @@ def build_argv(
                 float(raw)
             elif param.kind == "path":
                 if "\x00" in raw:
-                    raise ValueError(f"invalid path for {param.flag}")
+                    raise ValueError((_ui_text("catalog.invalid_path_for") + f"{param.flag}"))
             if param.choices and raw not in param.choices:
-                raise ValueError(f"{param.flag} must be one of {', '.join(param.choices)}")
+                raise ValueError(
+                    (
+                        f"{param.flag}"
+                        + _ui_text("catalog.must_be_one_of")
+                        + f"{', '.join(param.choices)}"
+                    )
+                )
             argv.extend([param.flag, raw])
     return argv
 
@@ -1647,11 +1844,11 @@ def _contained(root: Path, relative: str) -> Path:
 
     candidate = (relative or "").replace("\\", "/").strip()
     if candidate.startswith("/") or ":" in candidate.split("/", 1)[0]:
-        raise ValueError("artifact paths must be relative to the rig root")
+        raise ValueError(_ui_text("catalog.artifact_paths_must_be_relative_to_the_rig_root"))
     resolved = (root / candidate).resolve()
     root_resolved = root.resolve()
     if resolved != root_resolved and root_resolved not in resolved.parents:
-        raise ValueError("artifact path escapes the rig root")
+        raise ValueError(_ui_text("catalog.artifact_path_escapes_the_rig_root"))
     return resolved
 
 
@@ -1659,23 +1856,23 @@ _BADGE_FIELDS = (
     (
         "evidence_kind",
         {
-            "diagnostic_dry_run": ("diagnostic dry-run", "amber"),
-            "measured_run": ("measured run", "blue"),
+            "diagnostic_dry_run": (_ui_text("catalog.diagnostic_dry_run"), "amber"),
+            "measured_run": (_ui_text("catalog.measured_run"), "blue"),
         },
     ),
     (
         "execution_purpose",
         {
-            "diagnostic_canary": ("diagnostic canary", "amber"),
-            "attestation_probe": ("attestation probe", "amber"),
-            "measured_run": ("measured run", "blue"),
+            "diagnostic_canary": (_ui_text("catalog.diagnostic_canary"), "amber"),
+            "attestation_probe": (_ui_text("catalog.attestation_probe"), "amber"),
+            "measured_run": (_ui_text("catalog.measured_run"), "blue"),
         },
     ),
     (
         "evidence_class",
         {
-            "synthetic_offline": ("synthetic offline", "amber"),
-            "live_diagnostic": ("live diagnostic", "amber"),
+            "synthetic_offline": (_ui_text("catalog.synthetic_offline"), "amber"),
+            "live_diagnostic": (_ui_text("catalog.live_diagnostic"), "amber"),
         },
     ),
     (
@@ -1704,15 +1901,15 @@ def evidence_badges(document: Any) -> list[tuple[str, str]]:
     if merged.get("dry_run") is True:
         badges.append(("dry-run", "amber"))
     if merged.get("campaign_authorized") is False:
-        badges.append(("campaign not authorized", "gray"))
+        badges.append((_ui_text("catalog.campaign_not_authorized"), "gray"))
     if merged.get("empirical_validity_established") is False:
-        badges.append(("no empirical validity", "gray"))
+        badges.append((_ui_text("catalog.no_empirical_validity"), "gray"))
     counts = document.get("counts")
     if isinstance(counts, dict):
         strata = counts.get("planning_strata")
         if isinstance(strata, dict):
             for key, label in (
-                ("structural_not_applicable", "structural N/A"),
+                ("structural_not_applicable", _ui_text("catalog.structural_n_a")),
                 ("missing", "missing"),
                 ("error", "error"),
             ):

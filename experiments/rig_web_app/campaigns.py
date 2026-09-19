@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+
+from .i18n import text as _ui_text
+
 import hashlib
 import heapq
 import math
@@ -72,17 +75,19 @@ def _bounded_file(path: Path, limit: int) -> tuple[bytes | None, str | None]:
 
     try:
         if path.is_symlink():
-            return None, "symlink rejected"
+            return None, _ui_text("campaigns.symlink_rejected")
         with path.open("rb") as handle:
             if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
-                return None, "not a regular file"
+                return None, _ui_text("campaigns.not_a_regular_file")
             data = handle.read(limit + 1)
     except FileNotFoundError:
         return None, None
     except OSError as exc:
-        return None, f"unreadable ({exc.__class__.__name__})"
+        return None, (_ui_text("campaigns.unreadable") + f"{exc.__class__.__name__}" + ")")
     if len(data) > limit:
-        return None, f"larger than {limit // 1024} KiB"
+        return None, (
+            _ui_text("campaigns.larger_than") + f"{limit // 1024}" + _ui_text("campaigns.kib")
+        )
     return data, None
 
 
@@ -102,9 +107,7 @@ def _bounded_single_link_json(path: Path, limit: int) -> dict[str, Any] | None:
             return None
         descriptor = os.open(
             path,
-            os.O_RDONLY
-            | getattr(os, "O_BINARY", 0)
-            | getattr(os, "O_NOFOLLOW", 0),
+            os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0),
         )
         opened = os.fstat(descriptor)
         identity = lambda item: (  # noqa: E731 - compact stat identity
@@ -115,9 +118,7 @@ def _bounded_single_link_json(path: Path, limit: int) -> dict[str, Any] | None:
             item.st_size,
             item.st_mtime_ns,
         )
-        if not stat.S_ISREG(opened.st_mode) or identity(opened) != identity(
-            named_before
-        ):
+        if not stat.S_ISREG(opened.st_mode) or identity(opened) != identity(named_before):
             return None
         chunks: list[bytes] = []
         remaining = opened.st_size
@@ -129,9 +130,7 @@ def _bounded_single_link_json(path: Path, limit: int) -> dict[str, Any] | None:
             remaining -= len(chunk)
         after = os.fstat(descriptor)
         named_after = path.lstat()
-        if identity(opened) != identity(after) or identity(after) != identity(
-            named_after
-        ):
+        if identity(opened) != identity(after) or identity(after) != identity(named_after):
             return None
         value = strict_json_loads(b"".join(chunks).decode("utf-8"))
     except (OSError, UnicodeError, ValueError, TypeError, RecursionError):
@@ -221,7 +220,7 @@ def _framework_named_session_spec(
         directory,
         marker,
         started_at=started_at,
-        owner_label="framework installer",
+        owner_label=_ui_text("campaigns.framework_installer"),
     )
     if explicit is not None:
         return explicit
@@ -288,7 +287,7 @@ def _framework_named_session_spec(
                 socket="",
                 session=session,
                 grace_until=0.0,
-                owner_label="framework installer",
+                owner_label=_ui_text("campaigns.framework_installer"),
             )
         return None
     socket = f"ura-fw-{hashlib.sha256(session.encode('ascii')).hexdigest()[:16]}"
@@ -298,7 +297,7 @@ def _framework_named_session_spec(
         socket=socket,
         session=session,
         grace_until=max(started_at, log_mtime) + _FRAMEWORK_SESSION_LAUNCH_GRACE_SECONDS,
-        owner_label="framework installer",
+        owner_label=_ui_text("campaigns.framework_installer"),
     )
 
 
@@ -320,7 +319,7 @@ def _campaign_named_session_spec(
             directory,
             marker,
             started_at=started_at,
-            owner_label="engineering campaign",
+            owner_label=_ui_text("campaigns.engineering_campaign"),
         )
     return None
 
@@ -355,11 +354,7 @@ def _probe_one_named_session(
             )
         except (OSError, subprocess.SubprocessError):
             return None
-        return (
-            completed.returncode == 0
-            if completed.returncode in {0, 1}
-            else None
-        )
+        return completed.returncode == 0 if completed.returncode in {0, 1} else None
     if screen is None:
         return None
     try:
@@ -441,9 +436,7 @@ def _named_session_liveness(
                 _NAMED_SESSION_CACHE,
                 key=lambda item: _NAMED_SESSION_CACHE[item][0],
             )
-            for spec in oldest[
-                : len(_NAMED_SESSION_CACHE) - _MAX_NAMED_SESSION_CACHE_ENTRIES
-            ]:
+            for spec in oldest[: len(_NAMED_SESSION_CACHE) - _MAX_NAMED_SESSION_CACHE_ENTRIES]:
                 del _NAMED_SESSION_CACHE[spec]
     return results
 
@@ -453,13 +446,13 @@ def _events(path: Path, *, required: bool = False) -> tuple[list[dict[str, Any]]
 
     data, error = _bounded_file(path, _MAX_EVENT_LOG_BYTES)
     if data is None:
-        return [], error or ("missing task log" if required else None)
+        return [], error or (_ui_text("campaigns.missing_task_log") if required else None)
     if not data and required:
-        return [], "empty task log"
+        return [], _ui_text("campaigns.empty_task_log")
     try:
         text = data.decode("utf-8")
     except UnicodeError:
-        return [], "invalid UTF-8"
+        return [], _ui_text("campaigns.invalid_utf_8")
     lines = text.splitlines()
     if data and not data.endswith(b"\n"):
         lines = lines[:-1]
@@ -475,7 +468,7 @@ def _events(path: Path, *, required: bool = False) -> tuple[list[dict[str, Any]]
             parsed.append(value)
         else:
             malformed = True
-    return parsed, "malformed JSON event" if malformed else None
+    return parsed, _ui_text("campaigns.malformed_json_event") if malformed else None
 
 
 def _phase_state(
@@ -542,22 +535,28 @@ def _declared_model_tasks(
     if raw is None:
         return None, ""
     if not isinstance(raw, list):
-        return None, "model_tasks must be a list"
+        return None, _ui_text("campaigns.model_tasks_must_be_a_list")
     if planned_tasks is None:
-        return None, "model_tasks requires a valid planned_tasks declaration"
+        return None, _ui_text("campaigns.model_tasks_requires_a_valid_planned_tasks_declaration")
     planned = set(planned_tasks)
     tasks: list[str] = []
     seen: set[str] = set()
     for value in raw:
         if not isinstance(value, str):
-            return None, "model_tasks contains a non-string value"
+            return None, _ui_text("campaigns.model_tasks_contains_a_non_string_value")
         task = value.strip()
         if not task or len(task) > 256:
-            return None, "model_tasks contains an invalid task name"
+            return None, _ui_text("campaigns.model_tasks_contains_an_invalid_task_name")
         if task not in planned:
-            return None, f"model task {task!r} is not in planned_tasks"
+            return None, (
+                _ui_text("campaigns.model_task")
+                + f"{task!r}"
+                + _ui_text("campaigns.is_not_in_planned_tasks")
+            )
         if task in seen:
-            return None, f"model task {task!r} is duplicated"
+            return None, (
+                _ui_text("campaigns.model_task") + f"{task!r}" + _ui_text("campaigns.is_duplicated")
+            )
         seen.add(task)
         tasks.append(task)
     return tuple(tasks), ""
@@ -574,9 +573,9 @@ def _declared_model_execution_scope(
     if raw is None:
         return "", ""
     if raw != _TARGET_ONLY_MIXED_SCOPE:
-        return "", "unsupported model_execution_scope"
+        return "", _ui_text("campaigns.unsupported_model_execution_scope")
     if planned_tasks != ("controller",) or model_tasks != ("controller",):
-        return "", "target-only scope requires one mixed controller task"
+        return "", _ui_text("campaigns.target_only_scope_requires_one_mixed_controller_task")
     return _TARGET_ONLY_MIXED_SCOPE, ""
 
 
@@ -678,23 +677,19 @@ def _engineering_artifact_links(
         or value.get("campaign_id") != directory.name
         or value.get("campaign_id") != marker_campaign_id
     ):
-        return (), "Engineering artifact-link descriptor is invalid."
+        return (), _ui_text("campaigns.engineering_artifact_link_descriptor_is_invalid")
     raw_links = value.get("links")
-    if (
-        not isinstance(raw_links, list)
-        or not raw_links
-        or len(raw_links) > _MAX_ARTIFACT_LINKS
-    ):
-        return (), "Engineering artifact-link descriptor is invalid."
+    if not isinstance(raw_links, list) or not raw_links or len(raw_links) > _MAX_ARTIFACT_LINKS:
+        return (), _ui_text("campaigns.engineering_artifact_link_descriptor_is_invalid")
 
     try:
         results = directory.parent.parent.resolve(strict=True)
     except OSError:
-        return (), "Engineering artifact-link descriptor is invalid."
+        return (), _ui_text("campaigns.engineering_artifact_link_descriptor_is_invalid")
 
     links: list[tuple[str, str]] = [
         (
-            "Link descriptor",
+            _ui_text("campaigns.link_descriptor"),
             f"engineering/{directory.name}/{_ARTIFACT_LINKS_FILE}",
         )
     ]
@@ -707,7 +702,7 @@ def _engineering_artifact_links(
             "kind",
             "required",
         }:
-            return (), "Engineering artifact-link descriptor is invalid."
+            return (), _ui_text("campaigns.engineering_artifact_link_descriptor_is_invalid")
         label = raw.get("label")
         path_value = raw.get("path")
         kind = raw.get("kind")
@@ -725,7 +720,7 @@ def _engineering_artifact_links(
             or kind not in _ARTIFACT_LINK_KINDS
             or type(required) is not bool
         ):
-            return (), "Engineering artifact-link descriptor is invalid."
+            return (), _ui_text("campaigns.engineering_artifact_link_descriptor_is_invalid")
         relative = PurePosixPath(path_value)
         if (
             not relative.parts
@@ -734,7 +729,7 @@ def _engineering_artifact_links(
             or any(part in {"", ".", ".."} or ":" in part for part in relative.parts)
             or path_value in paths
         ):
-            return (), "Engineering artifact-link descriptor is invalid."
+            return (), _ui_text("campaigns.engineering_artifact_link_descriptor_is_invalid")
         labels.add(label)
         paths.add(path_value)
         current = results
@@ -748,28 +743,28 @@ def _engineering_artifact_links(
                 target_missing = True
                 break
             except (OSError, ValueError, RuntimeError):
-                return (), "Engineering artifact-link descriptor is invalid."
+                return (), _ui_text("campaigns.engineering_artifact_link_descriptor_is_invalid")
             if is_alias:
-                return (), "Engineering artifact-link descriptor is invalid."
+                return (), _ui_text("campaigns.engineering_artifact_link_descriptor_is_invalid")
             try:
                 resolved = current.resolve(strict=True)
             except (OSError, ValueError, RuntimeError):
-                return (), "Engineering artifact-link descriptor is invalid."
+                return (), _ui_text("campaigns.engineering_artifact_link_descriptor_is_invalid")
             is_target = index == len(relative.parts) - 1
             if (
                 resolved != current
                 or results not in resolved.parents
                 or (not is_target and not stat.S_ISDIR(metadata.st_mode))
             ):
-                return (), "Engineering artifact-link descriptor is invalid."
+                return (), _ui_text("campaigns.engineering_artifact_link_descriptor_is_invalid")
         if target_missing:
             if required:
-                return (), "Engineering artifact-link descriptor is invalid."
+                return (), _ui_text("campaigns.engineering_artifact_link_descriptor_is_invalid")
             continue
         if (kind == "directory" and not stat.S_ISDIR(metadata.st_mode)) or (
             kind == "file" and not stat.S_ISREG(metadata.st_mode)
         ):
-            return (), "Engineering artifact-link descriptor is invalid."
+            return (), _ui_text("campaigns.engineering_artifact_link_descriptor_is_invalid")
         links.append((label, path_value))
     return tuple(links), ""
 
@@ -846,32 +841,34 @@ def _load_campaign(
     )
     session_observed: bool | None = None
     marker_declares_named_session = (
-        marker.get("tmux_socket") is not None
-        or marker.get("tmux_session") is not None
+        marker.get("tmux_socket") is not None or marker.get("tmux_session") is not None
     )
     hard_stop_exceeded = (
-        hard_stop_hours is not None
-        and time.time() > started_at + hard_stop_hours * 3600
+        hard_stop_hours is not None and time.time() > started_at + hard_stop_hours * 3600
     )
     if state == "running":
         if session_spec is None:
             if not marker_declares_named_session and hard_stop_exceeded:
                 state = "orphaned"
                 display_state = "orphaned"
-                state_detail = (
-                    "declared hard stop exceeded without a valid exact named-session "
-                    "identity; the retained task log has no terminal event"
+                state_detail = _ui_text(
+                    "campaigns.declared_hard_stop_exceeded_without_a_valid_exact_named_session_i"
                 )
             else:
                 state = "unknown"
                 display_state = "unknown"
                 state_detail = (
-                    "engineering campaign declares an invalid named-session identity; "
+                    _ui_text(
+                        "campaigns.engineering_campaign_declares_an_invalid_named_session_identity"
+                    )
                     if marker_declares_named_session
-                    else "engineering campaign has no valid exact named-session identity; "
+                    else _ui_text(
+                        "campaigns.engineering_campaign_has_no_valid_exact_named_session_identity"
+                    )
                 ) + (
-                    "running state cannot be verified because the retained task log "
-                    "has no terminal event"
+                    _ui_text(
+                        "campaigns.running_state_cannot_be_verified_because_the_retained_task_log_ha"
+                    )
                 )
         else:
             session_observed = (
@@ -882,32 +879,27 @@ def _load_campaign(
             if session_observed is False:
                 state = "orphaned"
                 display_state = "orphaned"
-                state_detail = (
-                    f"{session_spec.owner_label} named session is no longer live; "
-                    "the retained task log has no terminal event"
+                state_detail = f"{session_spec.owner_label}" + _ui_text(
+                    "campaigns.named_session_is_no_longer_live_the_retained_task_log_has_no_term"
                 )
             elif session_observed is None:
                 state = "unknown"
                 display_state = "unknown"
-                state_detail = (
-                    f"{session_spec.owner_label} named-session liveness is unavailable; "
-                    "the retained task log has no terminal event"
+                state_detail = f"{session_spec.owner_label}" + _ui_text(
+                    "campaigns.named_session_liveness_is_unavailable_the_retained_task_log_has_n"
                 )
-    if (
-        state == "running"
-        and hard_stop_exceeded
-    ):
+    if state == "running" and hard_stop_exceeded:
         if session_observed is True and session_spec is not None:
             state_detail = (
-                f"declared hard stop exceeded while the exact "
-                f"{session_spec.owner_label} named session remains live"
+                _ui_text("campaigns.declared_hard_stop_exceeded_while_the_exact")
+                + f"{session_spec.owner_label}"
+                + _ui_text("campaigns.named_session_remains_live")
             )
         else:
             state = "orphaned"
             display_state = "orphaned"
-            state_detail = (
-                "declared hard stop exceeded and exact named-session liveness "
-                "is unavailable; the retained task log has no terminal event"
+            state_detail = _ui_text(
+                "campaigns.declared_hard_stop_exceeded_and_exact_named_session_liveness_is_u"
             )
 
     task_states: dict[str, str] = {}
@@ -999,9 +991,7 @@ def _load_campaign(
         model_pending_tasks = None
     else:
         model_states = {task: task_states.get(task, "pending") for task in model_tasks}
-        model_succeeded_tasks = sum(
-            status in _TASK_SUCCEEDED for status in model_states.values()
-        )
+        model_succeeded_tasks = sum(status in _TASK_SUCCEEDED for status in model_states.values())
         model_skipped_tasks = sum(status in _TASK_SKIPPED for status in model_states.values())
         model_active_tasks = sum(status in _TASK_ACTIVE for status in model_states.values())
         model_pending_tasks = sum(status == "pending" for status in model_states.values())
@@ -1019,11 +1009,13 @@ def _load_campaign(
     if model_execution_present:
         if model_tasks is None:
             model_execution_error = model_execution_error or (
-                "model execution log requires a valid model_tasks declaration"
+                _ui_text("campaigns.model_execution_log_requires_a_valid_model_tasks_declaration")
             )
         for row in model_execution_events:
             if row.get("event") != "model_execution":
-                model_execution_error = model_execution_error or "unsupported model execution event"
+                model_execution_error = model_execution_error or _ui_text(
+                    "campaigns.unsupported_model_execution_event"
+                )
                 continue
             task = row.get("task")
             attempted = row.get("attempted_calls")
@@ -1042,54 +1034,61 @@ def _load_campaign(
                 or successful > attempted
                 or attempted > _MAX_MODEL_EXECUTION_COUNT
             ):
-                model_execution_error = model_execution_error or "invalid model execution event"
+                model_execution_error = model_execution_error or _ui_text(
+                    "campaigns.invalid_model_execution_event"
+                )
                 continue
             if target_only_execution:
                 if execution_role != "target":
                     model_execution_error = model_execution_error or (
-                        "target execution event lacks execution_role=target"
+                        _ui_text("campaigns.target_execution_event_lacks_execution_role_target")
                     )
                     continue
             elif execution_role is not None:
                 model_execution_error = model_execution_error or (
-                    "execution_role requires a declared model_execution_scope"
+                    _ui_text("campaigns.execution_role_requires_a_declared_model_execution_scope")
                 )
                 continue
             normalized_task = task.strip()
             if normalized_task in execution_by_task:
                 model_execution_error = model_execution_error or (
-                    "model execution report duplicates a task"
+                    _ui_text("campaigns.model_execution_report_duplicates_a_task")
                 )
                 continue
             if model_tasks is None or normalized_task not in model_task_set:
                 model_execution_error = model_execution_error or (
-                    "model execution event references an undeclared model task"
+                    _ui_text("campaigns.model_execution_event_references_an_undeclared_model_task")
                 )
                 continue
             task_status = task_states.get(normalized_task)
-            if (
-                (task_status is None or task_status in _TASK_SKIPPED)
-                and (attempted != 0 or successful != 0)
+            if (task_status is None or task_status in _TASK_SKIPPED) and (
+                attempted != 0 or successful != 0
             ):
                 model_execution_error = model_execution_error or (
-                    "positive model execution contradicts a pending or skipped task"
+                    _ui_text(
+                        "campaigns.positive_model_execution_contradicts_a_pending_or_skipped_task"
+                    )
                 )
                 continue
             execution_by_task[normalized_task] = (attempted, successful)
         if not execution_by_task and model_execution_error is None:
-            model_execution_error = "empty model execution log"
+            model_execution_error = _ui_text("campaigns.empty_model_execution_log")
         if model_tasks is not None and state != "running":
             missing_model_tasks = model_task_set - set(execution_by_task)
             if missing_model_tasks:
                 model_execution_error = model_execution_error or (
-                    "terminal model execution report omits declared model task(s): "
+                    _ui_text(
+                        "campaigns.terminal_model_execution_report_omits_declared_model_task_s"
+                    )
                     + ", ".join(sorted(missing_model_tasks))
                 )
     if execution_by_task and model_execution_error is None:
         model_attempted_calls = sum(value[0] for value in execution_by_task.values())
         model_successful_generations = sum(value[1] for value in execution_by_task.values())
         if model_attempted_calls > _MAX_MODEL_EXECUTION_COUNT:
-            model_execution_error = "model execution totals exceed the supported limit"
+            model_execution_error = _ui_text(
+                "campaigns.model_execution_totals_exceed_the_supported_limit"
+            )
             model_attempted_calls = None
             model_successful_generations = None
     else:
@@ -1128,70 +1127,136 @@ def _load_campaign(
         target_call_cap = None
 
     if activity_error:
-        parts = [f"activity status unavailable: {activity_error}"]
+        parts = [(_ui_text("campaigns.activity_status_unavailable") + f"{activity_error}")]
     else:
         parts = [
-            f"task processes: {succeeded_tasks} succeeded; {failed_tasks} failed; "
-            f"{skipped_tasks} skipped; {len(active_tasks)} active",
-            (f"pending: {pending_tasks}" if pending_tasks is not None else "pending: not declared"),
+            (
+                _ui_text("campaigns.task_processes")
+                + f"{succeeded_tasks}"
+                + " succeeded; "
+                + f"{failed_tasks}"
+                + " failed; "
+                + f"{skipped_tasks}"
+                + " skipped; "
+                + f"{len(active_tasks)}"
+                + " active"
+            ),
+            (
+                f"pending: {pending_tasks}"
+                if pending_tasks is not None
+                else _ui_text("campaigns.pending_not_declared")
+            ),
         ]
         if active_tasks and state == "running":
-            parts.append("active task: " + ", ".join(active_tasks))
+            parts.append(_ui_text("campaigns.active_task") + ", ".join(active_tasks))
         if download_tasks and state == "running":
-            parts.append("model download in progress: " + ", ".join(download_tasks))
+            parts.append(
+                _ui_text("campaigns.model_download_in_progress") + ", ".join(download_tasks)
+            )
         if interrupted_tasks:
-            parts.append(f"{len(interrupted_tasks)} interrupted without a terminal task event")
+            parts.append(
+                (
+                    f"{len(interrupted_tasks)}"
+                    + _ui_text("campaigns.interrupted_without_a_terminal_task_event")
+                )
+            )
         if unplanned_tasks:
-            parts.append("unplanned task event(s): " + ", ".join(unplanned_tasks))
+            parts.append(_ui_text("campaigns.unplanned_task_event_s") + ", ".join(unplanned_tasks))
         if terminal is not None:
-            terminal_summary = f"campaign terminal: {display_state}"
+            terminal_summary = _ui_text("campaigns.campaign_terminal") + f"{display_state}"
             if state_detail:
                 terminal_summary += f" - {state_detail}"
             parts.append(terminal_summary)
     if model_declaration_error:
-        parts.append(f"model tasks unavailable: {model_declaration_error}")
+        parts.append((_ui_text("campaigns.model_tasks_unavailable") + f"{model_declaration_error}"))
     elif model_tasks is None:
-        parts.append("model tasks: not declared")
+        parts.append(_ui_text("campaigns.model_tasks_not_declared"))
     elif target_only_execution:
         parts.append(
-            f"target-capable mixed controller: {model_succeeded_tasks} succeeded; "
-            f"{model_failed_tasks} failed; {model_skipped_tasks} skipped; "
-            f"{model_active_tasks} active; pending: {model_pending_tasks}"
+            (
+                _ui_text("campaigns.target_capable_mixed_controller")
+                + f"{model_succeeded_tasks}"
+                + " succeeded; "
+                + f"{model_failed_tasks}"
+                + " failed; "
+                + f"{model_skipped_tasks}"
+                + " skipped; "
+                + f"{model_active_tasks}"
+                + " active; pending: "
+                + f"{model_pending_tasks}"
+            )
         )
     elif not model_tasks:
-        parts.append("model tasks: not applicable - support only")
+        parts.append(_ui_text("campaigns.model_tasks_not_applicable_support_only"))
     else:
         parts.append(
-            f"model tasks: {model_succeeded_tasks} succeeded; "
-            f"{model_failed_tasks} failed; {model_skipped_tasks} skipped; "
-            f"{model_active_tasks} active; pending: {model_pending_tasks}"
+            (
+                _ui_text("campaigns.model_tasks")
+                + f"{model_succeeded_tasks}"
+                + " succeeded; "
+                + f"{model_failed_tasks}"
+                + " failed; "
+                + f"{model_skipped_tasks}"
+                + " skipped; "
+                + f"{model_active_tasks}"
+                + " active; pending: "
+                + f"{model_pending_tasks}"
+            )
         )
-    execution_label = "target execution" if target_only_execution else "model execution"
+    execution_label = (
+        _ui_text("campaigns.target_execution")
+        if target_only_execution
+        else _ui_text("campaigns.model_execution")
+    )
     if model_execution_error:
-        parts.append(f"{execution_label} report invalid: {model_execution_error}")
+        parts.append(
+            (
+                f"{execution_label}"
+                + _ui_text("campaigns.report_invalid")
+                + f"{model_execution_error}"
+            )
+        )
     elif model_tasks == ():
-        parts.append("model execution: not applicable - support only")
+        parts.append(_ui_text("campaigns.model_execution_not_applicable_support_only"))
     elif model_attempted_calls is None:
-        parts.append(f"{execution_label}: not reported")
+        parts.append((f"{execution_label}" + _ui_text("campaigns.not_reported")))
     else:
         if target_only_execution:
             parts.append(
-                "target execution report: "
-                f"{model_successful_generations} successful target generation(s) "
-                f"from {model_attempted_calls} target attempt(s); coverage "
-                f"{model_execution_covered_tasks}/1 mixed controller task"
+                (
+                    _ui_text("campaigns.target_execution_report")
+                    + f"{model_successful_generations}"
+                    + _ui_text("campaigns.successful_target_generation_s_from")
+                    + f"{model_attempted_calls}"
+                    + _ui_text("campaigns.target_attempt_s_coverage")
+                    + f"{model_execution_covered_tasks}"
+                    + _ui_text("campaigns.1_mixed_controller_task")
+                )
             )
         else:
             parts.append(
-                f"model execution report: {model_successful_generations} successful generation(s) "
-                f"from {model_attempted_calls} attempt(s); coverage "
-                f"{model_execution_covered_tasks}/{len(model_tasks or ())} model tasks"
+                (
+                    _ui_text("campaigns.model_execution_report")
+                    + f"{model_successful_generations}"
+                    + _ui_text("campaigns.successful_generation_s_from")
+                    + f"{model_attempted_calls}"
+                    + " attempt(s); coverage "
+                    + f"{model_execution_covered_tasks}"
+                    + "/"
+                    + f"{len(model_tasks or ())}"
+                    + _ui_text("campaigns.model_tasks_2")
+                )
             )
     if target_call_cap is not None:
         calls = "unknown" if call_error else str(reserved_calls)
         parts.append(
-            f"call budget reserved: {calls}/{target_call_cap} "
-            "(not execution evidence)"
+            (
+                _ui_text("campaigns.call_budget_reserved")
+                + f"{calls}"
+                + "/"
+                + f"{target_call_cap}"
+                + _ui_text("campaigns.not_execution_evidence")
+            )
         )
 
     last_detail = ""
@@ -1202,13 +1267,19 @@ def _load_campaign(
     logs = tuple(
         (key, label, path)
         for key, label, path in (
-            ("bootstrap", "Bootstrap activity", bootstrap_path),
+            ("bootstrap", _ui_text("campaigns.bootstrap_activity"), bootstrap_path),
             ("stage2", "Stage 2 activity", stage2_path),
             ("failures", "Stage 2 failures", directory / "stage2-failures.jsonl"),
-            ("calls", "Local call ledger", directory / "local-call-ledger.jsonl"),
+            (
+                "calls",
+                _ui_text("campaigns.local_call_ledger"),
+                directory / "local-call-ledger.jsonl",
+            ),
             (
                 "model",
-                "Target execution report" if target_only_execution else "Model execution report",
+                _ui_text("campaigns.target_execution_report_2")
+                if target_only_execution
+                else _ui_text("campaigns.model_execution_report_2"),
                 model_execution_path,
             ),
         )
@@ -1371,7 +1442,7 @@ def scan_engineering_campaigns(
     """
 
     if (started_from is None) != (started_to is None):
-        raise ValueError("campaign date window requires both bounds")
+        raise ValueError(_ui_text("campaigns.campaign_date_window_requires_both_bounds"))
     if started_from is not None and (
         isinstance(started_from, bool)
         or isinstance(started_to, bool)
@@ -1381,7 +1452,7 @@ def scan_engineering_campaigns(
         or not math.isfinite(float(started_to))
         or float(started_from) > float(started_to)
     ):
-        raise ValueError("invalid campaign date window")
+        raise ValueError(_ui_text("campaigns.invalid_campaign_date_window"))
 
     root = _engineering_root(results_root)
     if root is None:
@@ -1429,7 +1500,7 @@ def scan_engineering_campaigns(
                 inspected_campaigns += 1
                 candidates.append((started_at, metadata.st_mtime_ns, candidate))
     except OSError:
-        return [], "External campaign directory could not be scanned."
+        return [], _ui_text("campaigns.external_campaign_directory_could_not_be_scanned")
 
     newest = heapq.nlargest(
         _MAX_CAMPAIGNS,
@@ -1504,20 +1575,34 @@ def scan_engineering_campaigns(
     omitted = max(0, len(candidates) - len(newest) - len(live_older_directories))
     if omitted:
         notices.append(
-            f"Showing the {_MAX_CAMPAIGNS} newest retained engineering campaigns"
-            f"{' in the selected date range' if started_from is not None else ''}; "
-            f"{omitted} additional retained engineering campaign"
-            f"{' was' if omitted == 1 else 's were'} omitted."
+            (
+                _ui_text("campaigns.showing_the")
+                + f"{_MAX_CAMPAIGNS}"
+                + _ui_text("campaigns.newest_retained_engineering_campaigns")
+                + f"{(_ui_text('campaigns.in_the_selected_date_range') if started_from is not None else '')}"
+                + "; "
+                + f"{omitted}"
+                + _ui_text("campaigns.additional_retained_engineering_campaign")
+                + f"{(' was' if omitted == 1 else 's were')}"
+                + " omitted."
+            )
             + (
-                " Exact-session live controllers outside the recent cap remain included."
+                _ui_text(
+                    "campaigns.exact_session_live_controllers_outside_the_recent_cap_remain_incl"
+                )
                 if started_from is None
                 else ""
             )
         )
     if truncated:
         notices.append(
-            f"The external campaign scan stopped after {_MAX_DIRECTORY_ENTRIES} validated "
-            "campaign markers; later matching campaigns were not inspected."
+            (
+                _ui_text("campaigns.the_external_campaign_scan_stopped_after")
+                + f"{_MAX_DIRECTORY_ENTRIES}"
+                + _ui_text(
+                    "campaigns.validated_campaign_markers_later_matching_campaigns_were_not_insp"
+                )
+            )
         )
     return (
         sorted(campaigns, key=lambda item: item.started_at, reverse=True),

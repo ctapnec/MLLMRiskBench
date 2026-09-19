@@ -9,6 +9,8 @@ single Jobs/Stats record for this operational work.
 
 from __future__ import annotations
 
+from .i18n import text as _ui_text
+
 import os
 import re
 import stat
@@ -130,9 +132,7 @@ class FrameworkRuntimeService:
         self.results_root = results_root.resolve(strict=True)
         self.state_dir = Path(os.path.abspath(state_dir))
         self.lock_path = self.repo_root / "experiments" / DEFAULT_LOCK.name
-        self.installer_path = (
-            self.repo_root / "experiments" / "framework_runtime_installer.py"
-        )
+        self.installer_path = self.repo_root / "experiments" / "framework_runtime_installer.py"
         self.env_root = self.results_root.parent / "framework-venvs"
         self._dispatcher = dispatcher or _default_dispatch
         self._app_python = app_python or Path(sys.executable)
@@ -163,7 +163,9 @@ class FrameworkRuntimeService:
             message = str(error).strip()
             if message and not any(character in message for character in ("/", "\\", "\0")):
                 return message[:500]
-        return "The checked-in framework runtime lock or retained state is unavailable."
+        return _ui_text(
+            "framework_runtimes.the_checked_in_framework_runtime_lock_or_retained_state_is_unavai"
+        )
 
     @staticmethod
     def _latest_attempts(state_root: Path) -> dict[str, RuntimeAttempt]:
@@ -237,7 +239,9 @@ class FrameworkRuntimeService:
             if set(actions) != {str(entry["name"]) for entry in entries} or any(
                 action not in _PLAN_ACTIONS for action in actions.values()
             ):
-                raise FrameworkRuntimeError("installer plan is incomplete")
+                raise FrameworkRuntimeError(
+                    _ui_text("framework_runtimes.installer_plan_is_incomplete")
+                )
             latest = self._latest_attempts(layout.state_root)
             rows = tuple(
                 FrameworkRuntimeRow(
@@ -245,7 +249,7 @@ class FrameworkRuntimeService:
                     display_name=str(entry.get("canonical_name") or entry["name"]),
                     version=str(entry.get("version") or ""),
                     runtime=str(entry["runtime"]),
-                    kind=str(entry.get("kind") or "isolated runtime"),
+                    kind=str(entry.get("kind") or _ui_text("framework_runtimes.isolated_runtime")),
                     plan_action=actions[str(entry["name"])],
                     latest=latest.get(str(entry["name"])),
                 )
@@ -260,7 +264,9 @@ class FrameworkRuntimeService:
                 campaign_route_id=route,
                 campaign_state=campaign.state if campaign is not None else "idle",
                 campaign_status_tag=(
-                    campaign.status_tag if campaign is not None else "not started"
+                    campaign.status_tag
+                    if campaign is not None
+                    else _ui_text("framework_runtimes.not_started")
                 ),
                 rows=rows,
             )
@@ -280,28 +286,47 @@ class FrameworkRuntimeService:
         try:
             resolved = path.resolve(strict=True)
         except OSError as exc:
-            raise FrameworkRuntimeError(f"{label} is unavailable") from exc
+            raise FrameworkRuntimeError(
+                (f"{label}" + _ui_text("framework_runtimes.is_unavailable"))
+            ) from exc
         if not resolved.is_file():
-            raise FrameworkRuntimeError(f"{label} is unavailable")
+            raise FrameworkRuntimeError(
+                (f"{label}" + _ui_text("framework_runtimes.is_unavailable"))
+            )
         return resolved
 
     def launch(self, framework: str, action: str) -> FrameworkRuntimeLaunch:
         if _SAFE_TOKEN.fullmatch(framework) is None or action not in _UI_ACTIONS:
-            raise FrameworkRuntimeError("unsupported framework runtime action")
+            raise FrameworkRuntimeError(
+                _ui_text("framework_runtimes.unsupported_framework_runtime_action")
+            )
         snapshot = self.snapshot()
         if not snapshot.available:
             raise FrameworkRuntimeError(snapshot.message)
         row = next((item for item in snapshot.rows if item.framework == framework), None)
         if row is None:
-            raise FrameworkRuntimeConflict("framework is absent from the current runtime lock")
+            raise FrameworkRuntimeConflict(
+                _ui_text("framework_runtimes.framework_is_absent_from_the_current_runtime_lock")
+            )
         if row.plan_action != action:
             raise FrameworkRuntimeConflict(
-                f"the current plan requires {row.plan_action}, not {action}"
+                (
+                    _ui_text("framework_runtimes.the_current_plan_requires")
+                    + f"{row.plan_action}"
+                    + ", not "
+                    + f"{action}"
+                )
             )
 
-        app_python = self._exact_path(self._app_python, "application Python")
-        installer = self._exact_path(self.installer_path, "framework runtime installer")
-        lock_path = self._exact_path(self.lock_path, "framework runtime lock")
+        app_python = self._exact_path(
+            self._app_python, _ui_text("framework_runtimes.application_python")
+        )
+        installer = self._exact_path(
+            self.installer_path, _ui_text("framework_runtimes.framework_runtime_installer")
+        )
+        lock_path = self._exact_path(
+            self.lock_path, _ui_text("framework_runtimes.framework_runtime_lock")
+        )
         state_root = self.results_root / "engineering" / snapshot.campaign_route_id
         argv = [
             str(app_python),
@@ -322,7 +347,14 @@ class FrameworkRuntimeService:
         ]
         if row.runtime == "python":
             argv.extend(
-                ["--python", str(self._exact_path(self._base_python, "base Python"))]
+                [
+                    "--python",
+                    str(
+                        self._exact_path(
+                            self._base_python, _ui_text("framework_runtimes.base_python")
+                        )
+                    ),
+                ]
             )
         environment = {
             "HOME": str(self.state_dir),
@@ -337,14 +369,18 @@ class FrameworkRuntimeService:
         try:
             dispatched = self._dispatcher(argv, environment, self.repo_root)
         except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
-            raise FrameworkRuntimeError("could not launch the named runtime session") from exc
+            raise FrameworkRuntimeError(
+                _ui_text("framework_runtimes.could_not_launch_the_named_runtime_session")
+            ) from exc
         if (
             len(dispatched.stdout.encode("utf-8")) > _MAX_DISPATCH_OUTPUT
             or len(dispatched.stderr.encode("utf-8")) > _MAX_DISPATCH_OUTPUT
         ):
-            raise FrameworkRuntimeError("installer dispatcher returned an oversized response")
+            raise FrameworkRuntimeError(
+                _ui_text("framework_runtimes.installer_dispatcher_returned_an_oversized_response")
+            )
         if dispatched.returncode != 0:
-            message = "framework runtime launch was rejected"
+            message = _ui_text("framework_runtimes.framework_runtime_launch_was_rejected")
             try:
                 failure = strict_json_loads(dispatched.stderr.strip())
                 candidate = failure.get("error") if isinstance(failure, dict) else None
@@ -360,7 +396,9 @@ class FrameworkRuntimeService:
         try:
             response = strict_json_loads(dispatched.stdout.strip())
         except (TypeError, ValueError, RecursionError) as exc:
-            raise FrameworkRuntimeError("installer dispatcher returned invalid JSON") from exc
+            raise FrameworkRuntimeError(
+                _ui_text("framework_runtimes.installer_dispatcher_returned_invalid_json")
+            ) from exc
         expected = {
             "schema",
             "launcher",
@@ -379,7 +417,9 @@ class FrameworkRuntimeService:
             or not isinstance(response.get("session_name"), str)
             or _SAFE_TOKEN.fullmatch(response["session_name"]) is None
         ):
-            raise FrameworkRuntimeError("installer dispatcher returned an invalid session")
+            raise FrameworkRuntimeError(
+                _ui_text("framework_runtimes.installer_dispatcher_returned_an_invalid_session")
+            )
         return FrameworkRuntimeLaunch(
             launcher=str(response["launcher"]),
             session_name=str(response["session_name"]),
@@ -391,9 +431,13 @@ def runtime_action_form(data: Mapping[str, str]) -> tuple[str, str]:
     """Validate the entire two-field UI form without accepting duplicate meanings."""
 
     if set(data) != {"framework", "action"}:
-        raise FrameworkRuntimeError("runtime action requires exactly framework and action")
+        raise FrameworkRuntimeError(
+            _ui_text("framework_runtimes.runtime_action_requires_exactly_framework_and_action")
+        )
     framework = data["framework"]
     action = data["action"]
     if _SAFE_TOKEN.fullmatch(framework) is None or action not in _UI_ACTIONS:
-        raise FrameworkRuntimeError("unsupported framework runtime action")
+        raise FrameworkRuntimeError(
+            _ui_text("framework_runtimes.unsupported_framework_runtime_action")
+        )
     return framework, action

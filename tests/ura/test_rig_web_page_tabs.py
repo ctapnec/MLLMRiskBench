@@ -154,6 +154,7 @@ def test_rig_web_core_does_not_embed_local_campaign_policy(tmp_path: Path) -> No
     core_root = repo_root / "experiments" / "rig_web_app"
     boundary_files = [
         *sorted(core_root.glob("*.py")),
+        *sorted((core_root / "locales").glob("*.json")),
         repo_root / "experiments" / "rig_web.py",
         repo_root / "experiments" / "rig" / "budgets.example.json",
     ]

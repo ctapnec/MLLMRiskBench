@@ -3295,7 +3295,7 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
     ]
     assert "tabindex='0'" in unknown_badge_tag
     assert "title=" not in unknown_badge_tag
-    assert "label.textContent=value==='auto'?'fit unknown'" in page
+    assert "label.textContent=value==='auto'?\"fit unknown\"" in page
     assert "badge.textContent" not in page
     assert "16-bit fit unknown" not in unknown_row
 
