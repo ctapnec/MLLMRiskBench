@@ -311,11 +311,31 @@ def stop(app, operation):
 
 def retry(app, operation):
     child = app._operations.get(operation.get('preparation'))
+    stages = ('collection_job', 'local_preparation', 'local_execution', 'haiku_preparation', 'haiku_execution')
+    pending = {operation.get(key) for key in stages}
+    if child:
+        pending.update((child.get('current_job'), child.get('execution_job')))
+        for item in child.get('connection_operations', []):
+            pending.add(item.get('probe'))
+            for key in ('preparation', 'check'):
+                nested = app._operations.get(item.get(key))
+                if nested:
+                    pending.update((nested.get('current_job'), nested.get('execution_job')))
+    # Check every owned launch before changing any stage or restarting a worker.
+    # The parent may not yet have published a diagnostic's durable launch id.
+    for job_id in sorted(key for key in pending if key):
+        job = app.jobs.get(job_id)
+        if job and job.state() in ACTIVE:
+            raise ValueError('The previous job is still active or stopping; wait before resuming')
+        if job is None and (app.state_dir/job_id).exists():
+            raise ValueError('Saved job files require console recovery before resuming')
     if child and child['kind'] == 'direct':
         for item in child.get('connection_operations', []):
-            probe = app.jobs.get(item.get('probe'))
+            prepared = app._operations.get(item.get('preparation'))
+            probe = app.jobs.get(item.get('probe') or (prepared or {}).get('execution_job'))
             if probe and probe.state() in {'failed','stopped','interrupted'}:
-                prepared = app._operations[item['preparation']]
+                if prepared is None:
+                    raise ValueError('The saved diagnostic preparation is unavailable')
                 prepared['resume_job'] = probe.job_id
                 prepared.pop('execution_job',None)
                 app._save_operation(prepared)
@@ -328,17 +348,13 @@ def retry(app, operation):
         app._retry_operation(child['id'])
     # Successful stages are immutable. Failed execution needs its checkpoint
     # continuation, never a new campaign or a repeated completed collection.
-    for key in ('collection_job', 'local_preparation', 'local_execution', 'haiku_preparation', 'haiku_execution'):
+    for key in stages:
         job_id = operation.get(key)
         if not job_id:
             continue
         job = app.jobs.get(job_id)
-        if job and job.state() in ACTIVE:
-            raise ValueError('The previous job is still active or stopping; wait before resuming')
         if job and job.state() == 'complete' and job.exit_code() == 0:
             continue
-        if job is None and (app.state_dir/job_id).exists():
-            raise ValueError('Saved job files require console recovery before resuming')
         if key == 'collection_job' and child['kind'] == 'direct' and job is not None:
             child['resume_job'] = job_id
             child.pop('execution_job',None)

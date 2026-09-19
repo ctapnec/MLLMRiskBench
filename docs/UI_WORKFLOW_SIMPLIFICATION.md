@@ -191,3 +191,11 @@ manual paths and manual admission records still require a new review. Small
 retained configuration files are compared without scanning model weights or
 contacting a local serving daemon merely to reopen completed results. Create a
 new campaign when intentionally repeating identical conditions.
+
+Stop and resume cover nested diagnostic execution, including the interval
+between the child's durable launch record and the parent's progress handoff.
+The parent owns that process even while its preparation still reads ready.
+Resume checks all owned launches before changing stages or starting workers;
+an active or unreconciled process cannot leave a partially resumed workflow.
+Once stopped, the diagnostic continues from its retained execution reference.
+Operators do not need a separate internal recovery task.

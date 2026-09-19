@@ -452,14 +452,22 @@ class OperationsMixin:
                 return
             operation['status'] = 'stopped'
             self._save_operation(operation)  # Prevent the next handoff first.
+            pending = {operation['current_job'], operation.get('execution_job')}
             for item in operation.get('connection_operations', []):
                 for key in ('preparation','check'):
                     child = self._operations.get(item.get(key))
                     if child and child['status'] == 'preparing':
                         self._stop_operation(child['id'])
-            job = self.jobs.get(operation['current_job'])
-            if job is not None and job.state() == 'running':
-                self.stop_job(job.job_id)
+                    if child:
+                        # Launch identity is durable before the parent records
+                        # its probe/check handoff. A ready preparation may
+                        # therefore own an active diagnostic execution.
+                        pending.add(child.get('execution_job'))
+                pending.add(item.get('probe'))
+            for job_id in sorted(key for key in pending if key):
+                job = self.jobs.get(job_id)
+                if job is not None and job.state() in {'running', 'queued', 'starting', 'retry_wait', 'retry_waiting'}:
+                    self.stop_job(job.job_id)
 
     def _retry_operation(self, operation_id):
         with self._app_lock:

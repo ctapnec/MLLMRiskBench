@@ -1,5 +1,8 @@
 """One reviewed start owns collection and selected saved-answer assessment."""
 import json
+import os
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -175,6 +178,113 @@ def test_failed_diagnostic_resumes_inside_campaign_without_operator_handoff(app,
     assert probe['resume_job']=='failed-probe' and 'execution_job' not in probe
     assert item==dict(preparation=probe['id'])
     assert selection['status']==operation['status']=='preparing'
+
+
+@pytest.mark.parametrize('published',[False,True])
+def test_stop_covers_diagnostic_before_connection_handoff(app,monkeypatch,published):
+    monkeypatch.setattr(app,'_builder_model_acquisition_required',lambda p:False)
+    operation,selection=prepared(app,kind='direct')
+    probe=app._operations[app._start_operation('direct',dict(selection['params'],mode='attestation_probe'))]
+    probe.update(status='ready',execution_job='active-probe')
+    child(app,'active-probe','run_matrix',state='running',code=None)
+    item=dict(preparation=probe['id'])
+    if published:item['probe']='active-probe'
+    selection.update(status='preparing',connection_operations=[item])
+    operation.update(step=1,status='preparing',execution_authorized=True)
+    stopped=[]
+    def stop(key):
+        assert operation['status']==selection['status']=='stopped'
+        stopped.append(key)
+        child(app,key,'run_matrix',state='stopped',code=143)
+    monkeypatch.setattr(app,'stop_job',stop)
+    app._stop_operation(operation['id'])
+    assert stopped==['active-probe']
+    assert probe['execution_job']=='active-probe', 'Keep the diagnostic recovery identity'
+
+
+def test_resume_recovers_diagnostic_launch_before_parent_handoff(app,monkeypatch):
+    monkeypatch.setattr(app,'_builder_model_acquisition_required',lambda p:False)
+    operation,selection=prepared(app,kind='direct')
+    probe=app._operations[app._start_operation('direct',dict(selection['params'],mode='attestation_probe'))]
+    probe.update(status='ready',execution_job='interrupted-probe')
+    child(app,'interrupted-probe','run_matrix',state='interrupted',code=143)
+    item=dict(preparation=probe['id'])
+    selection.update(status='stopped',connection_operations=[item])
+    operation.update(step=1,status='stopped',execution_authorized=True)
+    app._retry_operation(operation['id'])
+    assert probe['resume_job']=='interrupted-probe' and 'execution_job' not in probe
+    assert item==dict(preparation=probe['id'])
+    assert selection['status']==operation['status']=='preparing'
+
+
+def test_resume_waits_for_unpublished_diagnostic_without_mutating_work(app,monkeypatch):
+    import copy
+    monkeypatch.setattr(app,'_builder_model_acquisition_required',lambda p:False)
+    operation,selection=prepared(app,kind='direct')
+    probe=app._operations[app._start_operation('direct',dict(selection['params'],mode='attestation_probe'))]
+    probe.update(status='ready',execution_job='stopping-probe')
+    child(app,'stopping-probe','run_matrix',state='running',code=None)
+    selection.update(status='stopped',connection_operations=[dict(preparation=probe['id'])])
+    operation.update(step=1,status='stopped',execution_authorized=True)
+    before=copy.deepcopy(app._operations);workers=[]
+    monkeypatch.setattr(app,'_ensure_operation_worker',lambda key:workers.append(key))
+    with pytest.raises(ValueError,match='still active|still stopping'):
+        app._retry_operation(operation['id'])
+    assert app._operations==before and not workers
+
+
+@pytest.mark.skipif(os.name!='posix',reason='POSIX process-group integration runs on the rig')
+@pytest.mark.parametrize('width',[1440,390])
+def test_browser_stop_and_resume_owns_unpublished_real_process(app,monkeypatch,browser,width):
+    from urllib.parse import parse_qsl,urlsplit
+    from experiments.rig_web_app.artifacts import Job
+    from test_rig_web_busy_browser import _burst
+    monkeypatch.setattr(app,'_builder_model_acquisition_required',lambda p:False)
+    operation,selection=prepared(app,kind='direct')
+    probe=app._operations[app._start_operation('direct',dict(selection['params'],mode='attestation_probe'))]
+    directory=app.state_dir/'unpublished-probe';directory.mkdir()
+    # An idle real child substitutes for inference. Nothing contacts a provider
+    # or loads a model, but the actual UI and process-group stop path are used.
+    process=subprocess.Popen([sys.executable,'-c','import threading; threading.Event().wait(30)'],
+                             start_new_session=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+    job=Job(job_id='unpublished-probe',command='run_matrix',argv=[],directory=directory,process=process)
+    app.jobs[job.job_id]=job
+    probe.update(status='ready',execution_job=job.job_id)
+    selection.update(status='preparing',connection_operations=[dict(preparation=probe['id'])])
+    operation.update(status='preparing',step=1,execution_authorized=True)
+    page=browser.new_page(viewport=dict(width=width,height=1000));held=[];errors=[]
+    page.on('pageerror',lambda error:errors.append(str(error)))
+    def reply(request):
+        url=urlsplit(request.request.url)
+        status,mime,body=app.handle(request.request.method,url.path,
+            dict(parse_qsl(request.request.post_data or '')))
+        if status==303:request.fulfill(status=status,headers={'Location':mime},body=body)
+        else:request.fulfill(status=status,content_type=mime,body=body)
+    def route(request):
+        if request.request.method=='POST' and request.request.url.endswith('/stop'):held.append(request)
+        else:reply(request)
+    page.route('http://handoff.test/**',route)
+    try:
+        page.goto('http://handoff.test/operations/'+operation['id'])
+        assert _burst(page,'form[action$="/stop"] button')==dict(visible=True,inert=True)
+        assert len(held)==1 and process.poll() is None
+        reply(held.pop())
+        page.get_by_role('button',name='Resume campaign',exact=True).wait_for()
+        page.wait_for_function('!window.uraBusy.isBusy()')
+        assert process.poll() is not None and job.stop_error is None
+        assert (directory/'stop-request.json').is_file()
+        assert operation['status']==selection['status']=='stopped'
+        page.get_by_role('button',name='Resume campaign',exact=True).click()
+        page.get_by_role('button',name='Stop campaign',exact=True).wait_for()
+        page.wait_for_function('!window.uraBusy.isBusy()')
+        assert probe['resume_job']==job.job_id and 'execution_job' not in probe
+        assert len(app.jobs)==1 and not errors
+        assert page.locator('body > nav').is_visible()
+        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
+    finally:
+        page.close()
+        if process.poll() is None:process.kill()
+        process.wait(timeout=5)
 
 
 def test_unchecked_assessment_stays_unchecked_after_save(app):

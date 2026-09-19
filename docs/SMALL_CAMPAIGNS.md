@@ -189,6 +189,8 @@ diagnostic output and error remain available; they are not benchmark results.
 ## 6. Stop or recover without discarding answers
 
 - **Stop campaign** stops active work and prevents later stages.
+  This includes a connection probe that has just started. Wait for the stop to
+  complete before resuming; the saved probe and answer references are retained.
 - **Resume campaign** continues interrupted work using saved checkpoints.
   Read the cause first; completed answers and valid judgments stay saved.
 - If Haiku exceeds its ceiling, collection stays saved. Use **Campaigns -> your
