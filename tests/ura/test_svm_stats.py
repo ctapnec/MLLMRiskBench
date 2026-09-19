@@ -29,7 +29,7 @@ def test_retained_study_visible_in_stats_without_job_or_new_computation(app, mon
     owner = app.db.create_workspace('Local and hosted source', 'mixed')
     app.db.register_svm_study('svm', 'Recorded classifier study', [owner])
     monkeypatch.setattr(app, 'start_job', lambda *a, **kw: pytest.fail('Stats must not start analysis'))
-    code, _, body = app.handle('GET', '/stats', dict(view='svm', campaign_id=owner))
+    code, _, body = app.handle('GET', '/stats?view=svm&campaign_id='+owner)
     page = body.decode()
     assert code == 200 and 'Recorded classifier study' in page
     assert '100 selected text answers; 40 independent input groups' in page

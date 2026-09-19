@@ -133,9 +133,9 @@ def figure(rows):
         if isinstance(ci, list) and len(ci) == 2 and all(isinstance(v, (int, float)) and math.isfinite(v) for v in ci):
             lo, hi = [16 + 360 * v for v in ci]
             marks.append(f"<path d='M {lo:.3f} {y+17} v 8 M {lo:.3f} {y+21} H {hi:.3f} M {hi:.3f} {y+17} v 8' "
-                "fill='none' stroke='var(--text,#111827)' stroke-width='2'/>"
+                "fill='none' stroke='var(--ink,#111827)' stroke-width='2'/>"
                 f"<text x='180' y='{y+54}'>95% CI {score(ci[0])} - {score(ci[1])}</text>")
-    return (f"<svg xmlns='http://www.w3.org/2000/svg' class='campaign-figure' role='img' viewBox='0 0 410 {height}' "
+    return (f"<svg xmlns='http://www.w3.org/2000/svg' class='campaign-figure' style='max-width:560px' role='img' viewBox='0 0 410 {height}' "
         "aria-label='SVM held-out macro-F1'><title>SVM held-out macro-F1</title>"
         "<desc>Scale zero to one. Lines show recorded input-cluster bootstrap 95 percent intervals, when available. "
         "Tasks and feature sets remain separate. Recorded teacher agreement is not human-validated safety.</desc>"
@@ -176,7 +176,7 @@ def response(app, query):
     body += '<section class="card"><h2>SVM results</h2><p>Predictions of recorded judge labels, not model safety scores or independent human judgments. '
     body += 'Studies, input populations, tasks and evaluation splits are kept separate. Opening this page does not train models or call providers.</p>'
     if not item:
-        body += '<p>No indexed SVM studies in this selection. Start a study from a campaign\'s SVM analysis tab.</p></section>'
+        body += '<p>No indexed SVM studies in this selection. Start a study from a campaign\'s SVM analysis tab.</p><div class="action-row"><a href="/stats?view=svm">Show studies from all campaigns</a></div></section>'
         return 200, 'text/html; charset=utf-8', _page('SVM results', body, active='Stats')
     try:
         root, saved, report = load(app, item['key'])
