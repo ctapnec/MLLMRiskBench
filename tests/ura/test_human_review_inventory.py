@@ -78,6 +78,21 @@ def test_hosted_posthoc_verdict_uses_exact_saved_sample_key(indexed):
     with pytest.raises(ValueError,match='output identity'):read_campaign(database,owner,root)
 
 
+def test_finalized_checkpoint_references_match_identity_not_old_line_number(indexed):
+    database,owner,root,add=indexed
+    original=json.loads((root/'final.judge.jsonl').read_text())['judgment']
+    other=dict(original,run_id='different-run',attempt_id='other')
+    # The former first checkpoint row is now the second final row.
+    (root/'final.jsonl').write_text(json.dumps(other)+'\n'+json.dumps(original)+'\n')
+    with sqlite3.connect(database) as db:
+        db.execute('UPDATE campaign_judgments SET source_ref=? WHERE campaign_id=? AND response_id=?',
+            (str(root/'final.checkpoint.jsonl')+':1',owner,'final:attempt'))
+    output=next(r for r in read_campaign(database,owner,root)['outputs'] if r['response_id']=='final:attempt')
+    assert output['judgments']['local-cascade-test']['label']=='refusal'
+    (root/'final.jsonl').write_text(json.dumps(other)+'\n')
+    with pytest.raises(ValueError,match='identity is unavailable'):read_campaign(database,owner,root)
+
+
 def test_inventory_does_not_cross_scan_assignments_for_each_judgment(indexed, monkeypatch):
     database,owner,root,_=indexed
     with sqlite3.connect(database) as db:

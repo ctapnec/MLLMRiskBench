@@ -46,7 +46,7 @@ def test_opt_in_survives_save_reopen_and_can_be_disabled(app):
     plain.pop('campaign_guide')
     app._save_build_campaign(plain)
     assert 'campaign_guide' not in app.db.workspace_definition(owner)
-    assert 'campaign-guide-dialog' not in app.handle('GET', location)[2].decode()
+    assert "data-guide-enabled='false'" in app.handle('GET', location)[2].decode()
     assert not app.db.load_jobs()
 
 

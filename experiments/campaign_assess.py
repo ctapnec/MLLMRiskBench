@@ -61,7 +61,10 @@ def candidates(snapshot, mode, judge, limit):
 
 
 def prepare(args):
-    root=args.out.resolve();root.mkdir(parents=True,exist_ok=True)
+    root=args.out.resolve()
+    if not root.is_relative_to(args.results_root.resolve()):
+        raise ValueError('Choose an assessment output inside the campaign results store')
+    root.mkdir(parents=True,exist_ok=True)
     request={key:str(getattr(args,key)) for key in ('database','campaign','results_root','kind','judge_model','limit','model_store','max_cost_microusd')}
     for key in ('api_config','pricing_config'):
         path=getattr(args,key)

@@ -5,6 +5,7 @@ import pytest
 
 from test_human_review_inventory import indexed  # noqa: F401
 from test_operator_operations import app  # noqa: F401
+from test_rig_web_busy_browser import browser  # noqa: F401
 from experiments import campaign_assess as subject
 from experiments.rig_web_app.human_review_inventory import read_campaign
 from experiments.rig_web_app.campaign_assessment import page
@@ -33,7 +34,7 @@ def test_indexed_assessment_preserves_exact_outputs_and_skips_existing_judges(in
 def test_preparation_resumes_unchanged_selection_but_not_another_request(indexed,tmp_path):
     database,owner,root,_=indexed;manifests(root)
     args=SimpleNamespace(database=database,campaign=owner,results_root=root,kind='local',judge_model='',limit=0,
-        model_store='',max_cost_microusd=0,api_config=None,pricing_config=None,out=tmp_path/'assessment')
+        model_store='',max_cost_microusd=0,api_config=None,pricing_config=None,out=root/'assessment')
     first=subject.prepare(args)
     assert first['selected_outputs']==0 and first['target_calls']==first['judge_calls']==0
     assert subject.prepare(args)==first
@@ -53,6 +54,38 @@ def test_campaign_assessment_front_door_does_not_require_old_preparation(app):
     assert 'Original local rules and guardrail' in rendered and 'Haiku' in rendered
     assert 'Maximum pending answers' in rendered and '/assessment/prepare' in rendered
     assert 'retained_programs_job' not in rendered and 'body' in rendered
+
+
+@pytest.mark.parametrize('width',[1440,390])
+def test_assessment_browser_hides_irrelevant_fields_and_blocks_duplicate_requests(app,browser,width):
+    from urllib.parse import urlsplit
+    owner=app.db.create_workspace('Saved campaign','local')
+    view=browser.new_page(viewport=dict(width=width,height=1000));held=[];errors=[]
+    view.on('pageerror',lambda exc:errors.append(str(exc)))
+    def route(request):
+        if request.request.method=='POST':held.append(request)
+        else:
+            path=urlsplit(request.request.url)
+            status,mime,body=app.handle('GET',path.path+('?'+path.query if path.query else ''))
+            request.fulfill(status=status,content_type=mime,body=body)
+    view.route('http://assessment.test/**',route)
+    try:
+        view.goto('http://assessment.test/assessment?campaign_id='+owner)
+        assert view.locator('body > nav').is_visible()
+        evaluator=view.get_by_label('Evaluator',exact=True)
+        cost=view.get_by_label('Maximum assessment spending (USD)',exact=True)
+        assert not cost.is_visible()
+        evaluator.select_option('haiku');assert cost.is_visible()
+        evaluator.select_option('local');assert not cost.is_visible()
+        assert view.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
+        state=view.get_by_role('button',name='Prepare assessment and review',exact=True).evaluate("e=>{e.click();e.click();return {busy:uraBusy.isBusy(),inert:document.querySelector('main').inert};}")
+        assert state==dict(busy=True,inert=True)
+        view.wait_for_timeout(100);assert len(held)==1
+        held[0].fulfill(status=400,content_type='text/html',body=app.handle('GET','/assessment?campaign_id='+owner)[2])
+        view.wait_for_url('**/assessment/prepare')
+        view.wait_for_function('!uraBusy.isBusy()')
+        assert not errors and not app.db.load_jobs()
+    finally:view.close()
 
 
 def test_haiku_preparation_and_resume_use_existing_executor_without_target_calls(indexed,tmp_path,monkeypatch):
@@ -76,7 +109,7 @@ def test_haiku_preparation_and_resume_use_existing_executor_without_target_calls
     execute=subject.executor.execute
     monkeypatch.setattr(subject.executor,'execute',lambda **kw:execute(**kw,judge_factory=lambda *args:fake))
     args=SimpleNamespace(database=database,campaign=owner,results_root=root,kind='haiku',judge_model=judge,limit=2,
-        model_store='',max_cost_microusd=1_000_000,api_config=api,pricing_config=pricing,out=tmp_path/'assessment')
+        model_store='',max_cost_microusd=1_000_000,api_config=api,pricing_config=pricing,out=root/'assessment')
     result=subject.prepare(args)
     assert result['selected_outputs']==2 and result['status']=='prepared' and fake.calls==0
     subject.execute(args)
@@ -104,7 +137,7 @@ def test_local_assessment_uses_original_cascade_and_resumes_without_another_call
             return value,[value]
     monkeypatch.setattr(native,'source_runtime',lambda source:object())
     monkeypatch.setattr(native,'source_cascade',lambda condition,runtime:Cascade())
-    destination=tmp_path/'local-assessment';destination.mkdir()
+    destination=root/'local-assessment';destination.mkdir()
     prepared=dict(campaign=owner,model_store='existing-store')
     subject.local_execute(destination,prepared,items,database)
     subject.local_execute(destination,prepared,items,database)

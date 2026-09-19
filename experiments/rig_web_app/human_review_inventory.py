@@ -14,7 +14,7 @@ from experiments import human_audit as audit
 from .workspace_contexts import response_identity
 
 
-def _location(reference, root):
+def _location(reference, root, *, allow_missing=False):
     path, separator, number = reference.rpartition(':')
     if not separator or not number.isdigit():
         path, number = reference, None
@@ -25,20 +25,38 @@ def _location(reference, root):
     path = Path(path)
     if not path.is_absolute():
         path = root/path
-    path = path.resolve(strict=True)
-    if not path.is_file() or not path.is_relative_to(root):
+    path = path.resolve(strict=not allow_missing)
+    if (not path.is_file() and (not allow_missing or path.exists())) or not path.is_relative_to(root):
         raise ValueError('Review source is outside the campaign results store')
     return path, number
 
 
-def _records(references, root):
+def _records(references, root, identities=None):
     """Read each selected file once, stopping at its final requested line."""
     wanted = defaultdict(dict)
     for reference in references:
-        path, number = _location(reference, root)
-        wanted[path][number] = None
+        path, number = _location(reference, root, allow_missing=True)
+        wanted[path][number] = reference
     result = {}
     for path, lines in wanted.items():
+        if not path.exists() and path.name.endswith('.checkpoint.jsonl'):
+            final=path.with_name(path.name.removesuffix('.checkpoint.jsonl')+'.jsonl').resolve(strict=True)
+            if not final.is_relative_to(root):
+                raise ValueError('Finalized review source is outside the campaign results store')
+            by_identity={}
+            with final.open(encoding='utf-8') as stream:
+                for line in stream:
+                    if not line.strip():continue
+                    value=json.loads(line);record=value.get('judgment',value.get('response',value))
+                    key=record['run_id']+':'+record['attempt_id']
+                    if key in by_identity:raise ValueError('Finalized review output identity is duplicated')
+                    by_identity[key]=value
+            for number,reference in lines.items():
+                identity=(identities or {}).get(reference)
+                if identity not in by_identity:raise ValueError('Finalized review output identity is unavailable')
+                result[path,number]=by_identity[identity]
+            continue
+        lines={number:None for number in lines}
         if None in lines:
             if len(lines) != 1:
                 raise ValueError('Conflicting JSON and JSONL source references')
@@ -88,9 +106,11 @@ def read_campaign(database: Path, campaign: str, results_root: Path, *, include_
             judges[row['response_id']].append(row)
     references = {json.loads(row['details'])['source_ref'] for row in selected.values()}
     references.update(row['source_ref'] for group in judges.values() for row in group)
-    records = _records(references, root)
+    identities={json.loads(row['details'])['source_ref']:row['response_id'] for row in selected.values()}
+    identities.update({row['source_ref']:row['response_id'] for group in judges.values() for row in group})
+    records = _records(references, root, identities)
     def record(reference):
-        return records[_location(reference, root)]
+        return records[_location(reference, root, allow_missing=True)]
     attempts_by_file = {}
     manifests = {}
     outputs, unavailable = [], []
@@ -100,7 +120,9 @@ def read_campaign(database: Path, campaign: str, results_root: Path, *, include_
         if identity != response['run_id']+':'+response['attempt_id'] or response['target']!=assignment['model']:
             raise ValueError('Indexed response differs from its retained identity')
         attempt = saved.get('attempt')
-        path = _location(reference, root)[0]
+        path = _location(reference, root, allow_missing=True)[0]
+        if not path.exists() and path.name.endswith('.checkpoint.jsonl'):
+            path=path.with_name(path.name.removesuffix('.checkpoint.jsonl')+'.jsonl')
         if attempt is None:
             if not path.name.endswith('.responses.jsonl'):
                 raise ValueError('Response source has no retained input')
