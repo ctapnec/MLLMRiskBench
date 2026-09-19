@@ -7413,14 +7413,21 @@ def test_group_label_codec_escapes_separators_and_keeps_plain_labels_stable():
         decode_group_label("source=airbench\\")
 
 
-def test_group_values_with_separators_round_trip_through_aggregation_and_consumers():
+@pytest.mark.parametrize("approximate", [False, True])
+def test_group_values_with_separators_round_trip_through_aggregation_and_consumers(approximate):
     # P3-05: AIR-Bench sets risk_subtype to "<cate-idx> | <l4-name>". Grouping
     # by it must carry the exact value in every EvalResult.group_by instead of a
     # truncated value plus a phantom key, and the Level-2 / suite consumers that
     # re-select the supporting judgments by group_by equality must find them.
     subtype = "1.1.1 | Network intrusion"
     corpus = [
-        datapoint.model_copy(update={"risk_subtype": subtype})
+        datapoint.model_copy(update={
+            "risk_subtype": subtype,
+            "meta": {**datapoint.meta, **({
+                "common_metrics_eligible": False,
+                "required_metric": "synthetic_fixture_metric",
+            } if approximate else {})},
+        })
         for datapoint in synth_corpus(12)
         if "tool" not in datapoint.modalities
     ]
@@ -7430,11 +7437,11 @@ def test_group_values_with_separators_round_trip_through_aggregation_and_consume
         JudgeCascade([RuleJudge(), LLMJudge(judge_target=MockTarget())]),
         AttackBudget(max_turns=1, seed=0),
         [0],
-        approximate_common_metrics=True,
+        approximate_common_metrics=approximate,
     )
     judgments, _ = runner.run(corpus, started_at="2026-08-20T00:00:00Z")
     assert judgments and all(j.raw.get("risk_subtype") == subtype for j in judgments)
-    assert any(j.raw.get("approximate_security_decision") is not None for j in judgments)
+    assert any(j.raw.get("approximate_security_decision") is not None for j in judgments) == approximate
     keys = ["source", "effective_modality", "expected_behavior", "risk_subtype"]
     results = runner.aggregate(judgments, group_keys=keys)
     assert results

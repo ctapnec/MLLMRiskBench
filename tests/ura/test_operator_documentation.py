@@ -90,7 +90,10 @@ def test_old_guides_are_short_redirects_not_diverging_recipes():
 def test_instruction_sequences_have_no_missing_or_restarted_steps():
     text = prose(ROOT / 'docs/SMALL_CAMPAIGNS.md')
     for section in re.split(r'^#{1,6} ', text, flags=re.MULTILINE):
-        steps = [int(value) for value in re.findall(r'^(\d+)\.\s', section, re.MULTILINE)]
+        # Splitting removes the heading marker, not its number. The heading
+        # itself is not the first numbered action in the section.
+        body = '\n'.join(section.splitlines()[1:])
+        steps = [int(value) for value in re.findall(r'^(\d+)\.\s', body, re.MULTILINE)]
         assert steps == list(range(1, len(steps) + 1)), (section.splitlines()[0], steps)
     sections = re.findall(r'^### (\d+\.\d+)\.', text, re.MULTILINE)
     assert sections == [f'{chapter}.{step}' for chapter, count in ((8, 6), (9, 5), (10, 4))
@@ -98,6 +101,7 @@ def test_instruction_sequences_have_no_missing_or_restarted_steps():
 
 
 def test_sequence_check_detects_the_previous_restarted_list_error(monkeypatch):
+    test_instruction_sequences_have_no_missing_or_restarted_steps()
     original = Path.read_text
     guide = ROOT / 'docs/SMALL_CAMPAIGNS.md'
 
@@ -118,6 +122,7 @@ def test_sequence_check_detects_the_previous_restarted_list_error(monkeypatch):
     'USD 0.027046', 'One new Haiku verdict',
 ])
 def test_preservation_check_detects_meaningful_omissions(monkeypatch, omission):
+    test_combined_guide_preserves_local_actions_and_reference_limits()
     original = Path.read_text
     guide = ROOT / 'docs/SMALL_CAMPAIGNS.md'
     pattern = re.compile(r'\s+'.join(re.escape(word) for word in omission.split()))
@@ -133,6 +138,7 @@ def test_preservation_check_detects_meaningful_omissions(monkeypatch, omission):
 
 
 def test_link_check_detects_a_missing_section(monkeypatch):
+    test_operator_markdown_links_and_section_anchors_resolve()
     original = Path.read_text
     guide = ROOT / 'docs/SMALL_CAMPAIGNS.md'
 
