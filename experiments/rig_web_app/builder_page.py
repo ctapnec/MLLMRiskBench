@@ -2323,14 +2323,16 @@ class BuilderPageMixin:
             "<code id='buildpreview'>run_matrix (initializing current choices)</code>"
             "<div class='campaign-actions'><button form='builder' type='submit' class='ghost' data-save-campaign "
             "formaction='/build/save'>Save campaign</button>"
-            "<button form='builder' type='submit'>Compose &amp; review</button></div>"
+            "<button form='builder' type='submit' data-review-campaign>Review campaign</button></div>"
             "</div>"
         )
         from .builder_sources import source_panel
+        from .campaign_flow import panel as campaign_panel
+        general_panel += campaign_panel(self, dict(prefill))
         general_panel += self._operation_links(prefill.get('campaign_id', ''))
         from .campaign_assessment import panel as assessment_panel
         general_panel += assessment_panel(prefill.get('campaign_id',''))
-        general_panel += source_panel(self, dict(prefill))
+        general_panel += source_panel(self, dict(prefill), unified=True)
         force_default = (
             " data-force-default='true'"
             if errors or framework_runtime_state or framework_runtime_error
@@ -2691,7 +2693,7 @@ class BuilderPageMixin:
             )
             + "</div></fieldset></div>"
             + "<div class='buildbar'><button type='submit' class='ghost' data-save-campaign formaction='/build/save'>Save campaign</button>"
-            "<button type='submit'>"
+            "<button type='submit' data-review-campaign>"
             + _icon("play", size=15)
             + "Compose &amp; review</button></div>"
             "</section>"

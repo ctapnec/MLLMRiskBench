@@ -70,7 +70,7 @@ def source_arguments(rows: list[dict], results_root: Path, output: Path) -> dict
     return values
 
 
-def source_panel(app, params: dict[str, str]) -> str:
+def source_panel(app, params: dict[str, str], *, unified=False) -> str:
     """Preparation is a distinct action, not an ignored Runner input switch."""
     selected = params.get("retained_source_campaign", "")
     campaigns = app.db.workspaces()
@@ -137,7 +137,8 @@ def source_panel(app, params: dict[str, str]) -> str:
     automatic = ''
     if selected:
         automatic = budget_panel(app, params, automatic=True)
-        automatic += ("<section class='card' id='automatic-comparison'><h2>Prepare and review the comparison</h2>"
+        if not unified:
+            automatic += ("<section class='card' id='automatic-comparison'><h2>Prepare and review the comparison</h2>"
             "<p>Input extraction, forecasting, replay preparation and execution setup run automatically on one progress page. "
             "You will review the workload and costs before any generation starts. Select enough saved inputs and "
             "request capacity for at least two whole input clusters: a connection check and separate measured inputs.</p>"
@@ -149,8 +150,12 @@ def source_panel(app, params: dict[str, str]) -> str:
     # required part of a new operator workflow.
     hidden = ''.join("<input type='hidden' form='builder' name='"+field+"' value='"+escape(params[field])+"'>"
         for field in ('retained_replays_job', 'retained_programs_job') if params.get(field))
-    return (content + "</section>" + automatic + hidden + collection_panel(params) + native_judging_panel(app,params)
-            + haiku_judging_panel(app,params))
+    legacy = collection_panel(params) + native_judging_panel(app,params) + haiku_judging_panel(app,params)
+    if unified:
+        legacy = ('<details class="card"><summary>Earlier prepared collections and assessments</summary>'+legacy+'</details>'
+                  if params.get('retained_programs_job') else '')
+        return '<div data-saved-inputs>'+content+'</section>'+automatic+hidden+'</div>'+legacy
+    return content + '</section>' + automatic + hidden + legacy
 
 
 def prepare_selected_inputs(app, params: dict[str, str]):

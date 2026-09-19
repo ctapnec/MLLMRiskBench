@@ -22,6 +22,14 @@ class BuilderCaptureMixin:
         "work_kind",
         "campaign_name",
         "campaign_guide",
+        "campaign_flow",
+        "campaign_inputs",
+        "campaign_local",
+        "campaign_haiku",
+        "campaign_judge_model",
+        "campaign_judge_cost",
+        "campaign_collection_cost",
+        "campaign_operation",
         "modality_scope",
         "setup_mode",
         "automatic_caps",
@@ -585,6 +593,9 @@ class BuilderCaptureMixin:
                 and str(value).strip()
             )
         }
+        if params.get('campaign_flow') == 'on':
+            params['campaign_local'] = 'on' if form.get('campaign_local') == 'on' else 'off'
+            params['campaign_haiku'] = 'on' if form.get('campaign_haiku') == 'on' else 'off'
         # UI filter state is saved independently of the selected corpus/model
         # identities. An explicit empty scope must not become the legacy All.
         if "modality_scope" in form:

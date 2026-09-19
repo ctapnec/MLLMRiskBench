@@ -3209,15 +3209,22 @@ class LifecycleMixin:
         self._model_acquisition_workflows[job.job_id] = workflow
         return job
 
-    def _start_model_acquisition_run(self, acquisition_job_id: str, *, reserved_job_id: str | None = None) -> Job:
+    def _start_model_acquisition_run(self, acquisition_job_id: str, *, reserved_job_id: str | None = None,
+                                     resume_job_id: str | None = None) -> Job:
         workflow = self._model_acquisition_workflows.get(acquisition_job_id)
         acquisition_job = self.jobs.get(acquisition_job_id)
+        resume_job = self.jobs.get(resume_job_id) if resume_job_id else None
+        if resume_job_id and (resume_job is None or resume_job.command != 'run_matrix'
+                or resume_job.state() not in {'failed','stopped','interrupted'}
+                or not any(op.get('resume_job') == resume_job_id and op.get('jobs', [None])[-1] == acquisition_job_id
+                           for op in self._operations.values())):
+            raise ValueError('Only the campaign-owned interrupted execution can resume its acquisition')
         if (
             workflow is None
             or acquisition_job is None
             or acquisition_job.command != "model_acquire"
             or acquisition_job.state() != "complete"
-            or workflow.get("consumed") is True
+            or (workflow.get("consumed") is True and resume_job is None)
         ):
             raise ValueError("completed model acquisition is unavailable")
         plan_path, plan_sha256, plan = self._workflow_plan(workflow)
@@ -3259,7 +3266,7 @@ class LifecycleMixin:
                 **({'reserved_job_id': reserved_job_id} if reserved_job_id else {}),
             )
         except BaseException:
-            workflow["consumed"] = False
+            workflow["consumed"] = resume_job is not None
             self._persist_model_acquisition_workflow(workflow)
             raise
         return job
@@ -3498,6 +3505,12 @@ class LifecycleMixin:
         # allowlist and differ only in content-identity projection.
         try:
             launch_argv = build_argv(command, values, commands=self.commands)
+            operation_id = (builder_params or {}).get('campaign_operation')
+            operation = self._operations.get(operation_id) if operation_id else None
+            if command == 'run_matrix' and operation and operation.get('spending_policy'):
+                launch_argv = [launch_argv[0],str(_REPO_ROOT/'experiments'/'campaign_spending.py'),
+                    '--policy',operation['spending_policy'],'--runner-root',str(self.repo_root),
+                    '--',*launch_argv[3:]]
             if command in {"response_svm", "campaign_assess"}:
                 # Console-owned analysis does not advance the measured Runner.
                 # Use this release's tool, including its automatic study mode.
@@ -4142,6 +4155,21 @@ class LifecycleMixin:
                 return 303, '/jobs/'+job.job_id, b''
             if method == 'GET' and path.startswith('/operations/'):
                 return 200, 'text/html; charset=utf-8', self._operation_page(path.removeprefix('/operations/'))
+            if method == 'POST' and path == '/operations/start-campaign':
+                data = dict(form or {})
+                if set(data) != {'launch_ticket'}:
+                    raise ValueError('Review the campaign before starting')
+                ticket = self._consume_launch_ticket(data['launch_ticket'], purpose='campaign-start')
+                if ticket is None:
+                    raise ValueError('This start was already used or expired; reopen the campaign')
+                with self._app_lock:
+                    operation = self._operations[ticket[0]['operation']]
+                    if operation['kind'] != 'campaign' or operation['status'] != 'ready' or operation.get('execution_authorized'):
+                        raise ValueError('This campaign has already started or is not ready')
+                    operation.update(execution_authorized=True, step=1, status='preparing')
+                    self._save_operation(operation)
+                    self._ensure_operation_worker(operation['id'])
+                return 303, '/operations/'+operation['id'], b''
             if method == 'POST' and path == '/operations/start-experiment':
                 data = dict(form or {})
                 if set(data) != {'launch_ticket'}:
@@ -4597,6 +4625,14 @@ class LifecycleMixin:
                 return 303, ('/operations/'+operation_id if operation_id else f"/jobs/{job.job_id}"), b""
             if method == "POST" and path in {"/build", "/build/review"}:
                 data = dict(form or {})
+                if (data.get('campaign_flow') == 'on' and data.get('mode') == 'measured'
+                        and (data.get('campaign_id') or data.get('work_kind') == 'campaign')
+                        and not any(data.get(key) for key in ('confirm','launch_ticket','preflight_only'))):
+                    from .campaign_flow import settings
+                    params = settings(self, self._runtime_builder_params(self._builder_params(data)))
+                    params = self._save_build_campaign(params)
+                    operation_id = self._start_operation('campaign', params)
+                    return 303, '/operations/'+operation_id, b''
                 confirm_value = data.pop("confirm", "")
                 preflight_value = data.pop("preflight_only", "")
                 launch_ticket = data.pop("launch_ticket", "")

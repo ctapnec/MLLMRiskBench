@@ -57,7 +57,7 @@ def prepared_collection(app, params, *, for_execution=False):
     return receipt
 
 
-def collection_review(app, params):
+def collection_launch_values(app, params):
     owner = params.get('campaign_id','')
     receipt = prepared_collection(app,params,for_execution=True)
     workers = params.get('retained_collection_workers','2') or '2'
@@ -112,6 +112,12 @@ def collection_review(app, params):
             # runs its original revision in a detached source-only checkout.
             values['--expected-commit'] = argument(old, '--expected-commit')
             values['--resume-from'] = str(previous_root)
+    return values, rows, history, workers
+
+
+def collection_review(app, params):
+    owner = params.get('campaign_id','')
+    values, rows, history, workers = collection_launch_values(app, params)
     action = 'Continue saved collection' if history is not None else 'Start prepared collection'
     ticket = app._new_launch_ticket({'campaign_id':owner,'values':json.dumps(values),
         'previous_job':history['job_id'] if history is not None else ''},purpose='matched-collection')

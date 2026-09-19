@@ -16,6 +16,7 @@ from .ui import _page
 
 # These functions already own command construction and artifact semantics.
 _STEPS = {
+    'campaign': (),
     'attack-capture': (('Preparing attack material', 'operations', 'prepare_transport_check'),),
     'transport-check': (
         ('Waiting for your diagnostic probe', 'operations', 'prepare_transport_check'),
@@ -42,6 +43,7 @@ _STEPS = {
 _DIRECT = ('Planning installed models', 'Preparing installed models', 'Checking the workload',
            'Preparing execution', 'Finishing model preparation')
 _TITLES = {'direct': 'Prepare run', 'matched': 'Prepare hosted comparison', 'attack-capture':'Prepare attack material',
+           'campaign': 'Campaign',
            'local-judging': 'Prepare local judging', 'haiku-judging': 'Prepare Haiku judging',
            'paired-haiku': 'Prepare sampled Haiku comparison', 'transport-check':'Finish diagnostic probe'}
 
@@ -88,7 +90,7 @@ class OperationsMixin:
                     value = json.loads(raw)
                     if (value['kind'] not in _TITLES or value['id'] != path.parent.name
                             or not re.fullmatch('[a-f0-9]{32}', value['id'])
-                            or value['status'] not in {'preparing', 'ready', 'failed', 'stopped'}
+                            or value['status'] not in {'preparing', 'ready', 'failed', 'stopped', 'complete'}
                             or not isinstance(value['params'], dict)
                             or not isinstance(value['jobs'], list)
                             or not isinstance(value['current_job'], str)
@@ -130,7 +132,7 @@ class OperationsMixin:
         with self._app_lock:
             for operation in self._operations.values():
                 reusable = operation['status'] == 'preparing' or (
-                    operation['status'] == 'ready' and kind in {'direct', 'matched', 'transport-check'})
+                    operation['status'] in {'ready', 'complete'} and kind in {'direct', 'matched', 'transport-check', 'campaign'})
                 if operation['signature'] == signature and reusable:
                     return operation['id']
             operation = dict(id=uuid4().hex, kind=kind, params=params, signature=signature,
@@ -204,6 +206,8 @@ class OperationsMixin:
 
     @staticmethod
     def _operation_labels(operation):
+        if operation['kind'] == 'campaign':
+            return ('Preparing campaign', 'Collecting answers', 'Local assessment', 'Haiku assessment', 'Results ready')
         if operation['kind'] == 'direct':
             return _DIRECT if operation.get('acquisition') else ('Checking the workload',)
         return tuple(item[0] for item in _STEPS[operation['kind']])
@@ -212,6 +216,10 @@ class OperationsMixin:
         if operation['status'] != 'preparing':
             return
         try:
+            if operation['kind'] == 'campaign':
+                from .campaign_flow import advance
+                advance(self, operation)
+                return
             if operation['current_job']:
                 job = self.jobs.get(operation['current_job'])
                 if job is None:
@@ -344,6 +352,10 @@ class OperationsMixin:
             operation = self._operations.get(operation_id)
             if operation is None or operation['status'] != 'preparing':
                 raise ValueError('Only an active preparation can be stopped')
+            if operation['kind'] == 'campaign':
+                from .campaign_flow import stop
+                stop(self, operation)
+                return
             operation['status'] = 'stopped'
             self._save_operation(operation)  # Prevent the next handoff first.
             for item in operation.get('connection_operations', []):
@@ -360,6 +372,10 @@ class OperationsMixin:
             operation = self._operations.get(operation_id)
             if operation is None or operation['status'] not in {'failed', 'stopped'}:
                 raise ValueError('Only interrupted preparation can be continued')
+            if operation['kind'] == 'campaign':
+                from .campaign_flow import retry
+                retry(self, operation)
+                return
             job = self.jobs.get(operation['current_job'])
             if job is not None and job.state() in {'running', 'queued', 'starting', 'retry_wait', 'retry_waiting'}:
                 raise ValueError('The previous preparation is still stopping. Wait for it to finish.')
@@ -396,6 +412,8 @@ class OperationsMixin:
 
     def _operation_review(self, operation):
         params = dict(operation['params'])
+        if operation.get('campaign_parent'):
+            return _page('Campaign preparation ready','<h1>Preparation ready</h1><p>Collection and judging are controlled by your campaign.</p><a href="/operations/'+operation['campaign_parent']+'">Return to campaign progress</a>',active='Campaigns')
         if operation.get('execution_job'):
             return _page('Experiment started','<h1>Experiment started</h1>'+self._campaign_banner(params.get('campaign_id',''))+
                 '<p>Connection checks are saved separately. Your measured job is available below.</p><p><a href="/jobs/'+html.escape(operation['execution_job'])+'">Open measured job and results</a></p>',active='Build')
@@ -454,6 +472,9 @@ class OperationsMixin:
         operation = self._operations.get(operation_id)
         if operation is None:
             raise ValueError('This operation is unavailable')
+        if operation['kind'] == 'campaign':
+            from .campaign_flow import progress
+            return progress(self, operation)
         if operation['status'] == 'ready':
             return self._operation_review(operation)
         escape = html.escape
@@ -481,13 +502,15 @@ class OperationsMixin:
         return _page('Preparing work', body+'</ul></details>', active='Build')
 
     def _operation_links(self, owner):
+        children = {row.get('preparation') for row in self._operations.values() if row['kind'] == 'campaign'}
         selected = sorted((row for row in self._operations.values() if row['params'].get('campaign_id', '') == owner),
             key=lambda row:row.get('created_at', 0))
+        selected = [row for row in selected if row['id'] not in children]
         if not selected:
             return ''
         body = '<section class="card"><h2>Prepared and active work</h2><ul>'
         for row in selected[-8:][::-1]:
-            action = 'Review and start' if row['status'] == 'ready' else 'View progress' if row['status'] == 'preparing' else 'Inspect problem'
+            action = 'Review and start' if row['status'] == 'ready' else 'View progress' if row['status'] in {'preparing','complete'} else 'Inspect problem'
             body += '<li>'+html.escape(_TITLES[row['kind']])+' - '+html.escape(row['status'])+' - <a href="/operations/'+row['id']+'">'+action+'</a></li>'
         return body+'</ul></section>'
 

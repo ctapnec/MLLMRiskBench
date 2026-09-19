@@ -50,17 +50,22 @@ def prepare(app,data):
     if ticket is None:raise ValueError('Reopen the assessment form')
     owner=ticket[0]['campaign_id'];kind=data.get('kind');limit=int(data.get('limit','0'))
     if kind not in {'local','haiku'} or limit<0:raise ValueError('Choose an evaluator and a nonnegative answer limit')
-    root=(app.results_root/'rig-web'/'campaign-assessment'/uuid4().hex).resolve()
+    values=prepare_values(app,owner,kind=kind,limit=limit,judge=data.get('judge_model',''),cost=data.get('cost',''))
+    return app.start_job('campaign_assess',values,campaign_id=owner)
+
+
+def prepare_values(app,owner,*,kind,limit=0,judge='',cost='',root=None):
+    app.db.require_workspace(owner)
+    root=root or (app.results_root/'rig-web'/'campaign-assessment'/uuid4().hex).resolve()
     root.mkdir(parents=True,mode=0o700)
     values={'--database':str(app.db.path),'--campaign':owner,'--results-root':str(app.results_root),
             '--kind':kind,'--limit':str(limit),'--out':str(root)}
     if os.environ.get('URA_MODEL_STORE'):
         values['--model-store']=os.environ['URA_MODEL_STORE']
     if kind=='haiku':
-        judge=data.get('judge_model','')
         if judge not in _choices(app):raise ValueError('Choose a configured Haiku judge')
         try:
-            cost=Decimal(data.get('cost',''))*1_000_000
+            cost=Decimal(cost)*1_000_000
             if not cost.is_finite() or cost<=0 or cost!=cost.to_integral_value():raise ValueError('cost')
         except (InvalidOperation,ValueError):raise ValueError('Choose a positive USD ceiling with at most six decimal places')
         _,_,_,configs=app._selected_api_config_snapshot(dict(api=judge,judges='',mode='measured'))
@@ -69,7 +74,7 @@ def prepare(app,data):
             app._write_private_workflow_file(root/name,(json.dumps(value)+'\n').encode())
         values.update({'--judge-model':judge,'--max-cost-microusd':str(int(cost)),
                        '--api-config':str(root/'api.json'),'--pricing-config':str(root/'pricing.json')})
-    return app.start_job('campaign_assess',values,campaign_id=owner)
+    return values
 
 
 def reviewed(app,owner,job_id):

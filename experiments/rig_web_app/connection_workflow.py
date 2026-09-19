@@ -141,7 +141,8 @@ def launch(app, operation):
     operation['execution_job']=job_id
     app._save_operation(operation)
     if operation['acquisition']:
-        return app._start_model_acquisition_run(operation['jobs'][-1],reserved_job_id=job_id)
+        kwargs = {'resume_job_id':operation['resume_job']} if operation.get('resume_job') else {}
+        return app._start_model_acquisition_run(operation['jobs'][-1],reserved_job_id=job_id,**kwargs)
     snapshot=app._operation_snapshot(operation)
     command, values, params=app._compose_from_builder(params,execution_snapshot=snapshot)
     artifact=app._materialize_prepared_attacker_config(params,snapshot_payload=snapshot.get('attacker_config'),artifact_snapshots=snapshot)
