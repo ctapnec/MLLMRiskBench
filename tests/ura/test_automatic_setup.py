@@ -129,6 +129,14 @@ def test_completed_campaign_review_reuses_original_after_output_and_receipt_refr
     assert status==303 and reopened==location
     assert len(app._operations)==1 and not app.jobs
     assert app._operations[operation['id']]['params']==original
+    # The unfixed production route left an unexecuted duplicate. Restore order
+    # must not offer its Start button ahead of matching completed results.
+    stale=dict(operation,id='f'*32,status='ready',signature='historical-duplicate',
+               params=dict(original,out=refreshed['out']),
+               original_params=dict(original,out=refreshed['out']))
+    app._operations={stale['id']:stale,**app._operations}
+    status,reopened,_=app.handle('POST','/build/review',form)
+    assert status==303 and reopened==location
     for change in ({'limit':'3'},{'seeds':'9'},{'api':'openai:other'},
                    {'corpora':'other'},{'_api_config_snapshot_sha256':'c'*64},
                    {'source_conformance_sha':'b'*64},

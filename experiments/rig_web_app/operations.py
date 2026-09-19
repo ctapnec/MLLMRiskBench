@@ -169,7 +169,13 @@ class OperationsMixin:
             return {key:value for key,value in values.items()
                     if key != 'out' and not key.startswith(('att_path', 'att_sha'))}
         with self._app_lock:
-            for operation in self._operations.values():
+            candidates = self._operations.values()
+            if kind == 'campaign':
+                # Historical duplicate preparations can precede completed work
+                # in filesystem restore order. Never offer another Start just
+                # because that unexecuted preparation was restored first.
+                candidates = sorted(candidates, key=lambda row: (row['status'] != 'complete', row['created_at']))
+            for operation in candidates:
                 reusable = operation['status'] == 'preparing' or (
                     operation['status'] in {'ready', 'complete'} and kind in {'direct', 'matched', 'transport-check', 'campaign'})
                 same_campaign = (kind == 'campaign' and operation['kind'] == kind
