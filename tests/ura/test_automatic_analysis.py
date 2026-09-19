@@ -173,6 +173,13 @@ def test_capture_defaults_use_installed_source_and_own_venv_without_installing(a
     assert actual['hcap_artifact_out']!=prepared_inputs.capture_defaults(app,'harmbench',{})['hcap_artifact_out']
 
 
+def test_unavailable_installed_capture_reports_problem_without_an_internal_job(app,monkeypatch):
+    monkeypatch.setattr(prepared_inputs,'capture_defaults',lambda *a:(_ for _ in ()).throw(RuntimeError('runtime unavailable')))
+    status,_,body=app.handle('POST','/build/harmbench/prepare',{})
+    assert status==200 and b'Installed capture settings are unavailable' in body
+    assert not app.jobs
+
+
 def test_completed_capture_attaches_without_copying_and_preserves_concurrent_edits(app,monkeypatch):
     owner=app.db.create_workspace('Capture','local')
     params=dict(campaign_id=owner,attackers='harmbench')

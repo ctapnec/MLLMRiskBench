@@ -534,7 +534,7 @@ class BuilderCaptureMixin:
             from .prepared_inputs import capture_defaults
             try:
                 params = capture_defaults(self, kind, params)
-            except (OSError, ValueError, KeyError, StopIteration) as exc:
+            except (OSError, RuntimeError, ValueError, KeyError, StopIteration) as exc:
                 return 200, 'text/html; charset=utf-8', self._build_page(
                     prefill={**params, 'attackers':kind},
                     errors={prefix+'revision':'Installed capture settings are unavailable: '+str(exc)})

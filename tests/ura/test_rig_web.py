@@ -1887,7 +1887,8 @@ def test_prepared_capture_forms_validate_preview_and_start_exact_commands(
                 "confirm": "yes",
             },
         )
-        assert status == 303 and location == "/jobs/capture-job"
+        assert status == 303 and location.startswith("/operations/")
+        assert app._operations[location.rsplit('/',1)[-1]]['params']['capture_job']=='capture-job'
         assert captured[-1][0] == "capture_t3mp3st"
         assert captured[-1][1]["--out"] == str(results / "t3-captures")
         assert captured[-1][1]["--framework-lock"] == str(framework_lock)
@@ -1975,7 +1976,8 @@ def test_prepared_capture_forms_validate_preview_and_start_exact_commands(
                 "confirm": "yes",
             },
         )
-        assert status == 303 and location == "/jobs/capture-job"
+        assert status == 303 and location.startswith("/operations/")
+        assert app._operations[location.rsplit('/',1)[-1]]['params']['capture_job']=='capture-job'
         command, values = captured[-1]
         assert command == "harmbench_capture"
         assert [values["--method"], values["--method#1"]] == ["PEZ", "PAP-top5"]
