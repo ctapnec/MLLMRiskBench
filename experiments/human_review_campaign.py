@@ -10,6 +10,12 @@ import gzip
 import hashlib
 import json
 from pathlib import Path
+import sys
+
+# This analysis tool can run from a newer console than the measured Runner.
+# Import its own matching readers without changing the generation checkout.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from experiments import human_audit as audit
 from experiments.human_audit_media import prepare_media_index

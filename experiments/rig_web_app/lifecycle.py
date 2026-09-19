@@ -3511,7 +3511,7 @@ class LifecycleMixin:
                 launch_argv = [launch_argv[0],str(_REPO_ROOT/'experiments'/'campaign_spending.py'),
                     '--policy',operation['spending_policy'],'--runner-root',str(self.repo_root),
                     '--',*launch_argv[3:]]
-            if command in {"response_svm", "campaign_assess"}:
+            if command in {"response_svm", "campaign_assess", "human_review_campaign", "human_audit"}:
                 # Console-owned analysis does not advance the measured Runner.
                 # Use this release's tool, including its automatic study mode.
                 launch_argv = [launch_argv[0], str(_REPO_ROOT / "experiments" / (command+".py")), *launch_argv[3:]]
@@ -3644,7 +3644,7 @@ class LifecycleMixin:
                 "argv": argv,
                 "supervised": os.name == "posix",
             }
-            if command in {"response_svm", "campaign_assess"}:
+            if command in {"response_svm", "campaign_assess", "human_review_campaign", "human_audit"}:
                 command_document['analysis_code_repository'] = str(_REPO_ROOT)
             if campaign_id:
                 from .workspace_store import activity_role  # noqa: PLC0415

@@ -93,6 +93,34 @@ def test_finalized_checkpoint_references_match_identity_not_old_line_number(inde
     with pytest.raises(ValueError,match='identity is unavailable'):read_campaign(database,owner,root)
 
 
+def test_review_launch_uses_console_reader_with_older_runner_and_finalized_responses(indexed, tmp_path):
+    import time
+    from experiments.rig_web import RigWebApp
+    database,owner,root,_=indexed
+    saved=json.loads((root/'checkpoint.responses.checkpoint.jsonl').read_text())
+    (root/'checkpoint.responses.jsonl').write_text(json.dumps(saved['response'])+'\n')
+    (root/'checkpoint.attempts.jsonl').write_text(json.dumps(saved['attempt'])+'\n')
+    (root/'checkpoint.responses.checkpoint.jsonl').unlink()
+    runner=tmp_path/'older-runner';runner.mkdir()
+    package=runner/'experiments';package.mkdir()
+    (package/'__init__.py').write_text("raise RuntimeError('Older Runner analysis must not be imported')\n")
+    app=RigWebApp(results_root=root,state_dir=tmp_path/'web',repo_root=runner,gpu_hardware={},system_hardware={})
+    try:
+        job=app.start_job('human_review_campaign',{'--database':str(database),'--campaign':owner,
+            '--results-root':str(root),'--mode':'common','--clusters':'0','--output':str(root/'review.csv'),
+            '--acknowledge-sensitive-content':'on'})
+        deadline=time.monotonic()+20
+        while job.state()=='running' and time.monotonic()<deadline:time.sleep(.1)
+        app._reconcile()
+        assert job.exit_code()==0, (job.directory/'stderr.log').read_text()
+        assert (root/'review.csv').is_file()
+        command=json.loads((job.directory/'command.json').read_text())
+        assert command['analysis_code_repository']!=str(runner)
+        assert 'Saved answer checkpoint' in (root/'review.csv').read_text()
+        assert not (root/'checkpoint.responses.checkpoint.jsonl').exists()
+    finally:app.close()
+
+
 def test_inventory_does_not_cross_scan_assignments_for_each_judgment(indexed, monkeypatch):
     database,owner,root,_=indexed
     with sqlite3.connect(database) as db:
