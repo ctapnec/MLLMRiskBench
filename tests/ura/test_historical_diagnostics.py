@@ -89,7 +89,8 @@ def test_historical_conditions_remain_separate_not_pooled(tmp_path, cells, monke
 @pytest.mark.parametrize("change", [None, "missing", "duplicate", "manifest", "artifacts", "signature", "source"])
 def test_auxiliary_accessor_requires_exact_original_inventory(tmp_path, cells, monkeypatch, change):
     auxiliary = copy.deepcopy(cells)
-    partition = {"cells": copy.deepcopy(cells), "analysis_cells": auxiliary, "validator_commit": "a" * 40}
+    partition = {"cells": copy.deepcopy(cells), "analysis_cells": auxiliary, "validator_commit": "a" * 40,
+                 "artifact_checks": {"mode": "metadata_and_records", "unchanged_historical_full_checks": False}}
     if change == "missing":
         auxiliary.pop()
     elif change == "duplicate":

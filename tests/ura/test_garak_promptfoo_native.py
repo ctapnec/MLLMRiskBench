@@ -193,6 +193,7 @@ def test_garak_handles_omitted_defaults_but_rejects_threshold_drift(
         )
 
     records[0].pop("run.eval_threshold")
+    _write_jsonl(report, records)
     with pytest.raises(ExternalEngineOutputError, match="omitted non-default"):
         GarakAttacker(
             target_name="target-model",

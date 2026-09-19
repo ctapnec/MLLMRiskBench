@@ -130,7 +130,8 @@ def test_automatic_fields_hidden_and_no_manual_receipts_on_save(browser,campaign
         page.locator('#setup-mode').select_option('automatic')
         page.get_by_role('tab',name='General',exact=True).click()
         page.get_by_role('button',name='Save campaign',exact=True).filter(visible=True).click()
-        page.wait_for_url('**/campaigns/**')
+        page.wait_for_url('**/build?campaign_id=*&saved=1#build-general')
+        assert page.get_by_role('button',name='Review campaign',exact=True).filter(visible=True).count() == 1
         assert 'att_path1' not in submissions[-1] and 'out' not in submissions[-1]
         saved=app.db.workspace_definition(params['campaign_id'])
         assert saved['att_path1'] and saved['att_path2']

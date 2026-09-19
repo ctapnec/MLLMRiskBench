@@ -41,7 +41,7 @@ def test_stale_receipt_rejected_before_private_files_or_acquisition_job(state, m
         app._compose_from_builder(params)
     assert not list(app.results_root.rglob('*.json'))
     # Exercise the plan controller, including a previously reviewed snapshot.
-    monkeypatch.setattr(app,'_validate_builder',lambda params:{})
+    monkeypatch.setattr(app,'_validate_builder',lambda params,**kwargs:{})
     params,snapshot,_=app._capture_execution_config_snapshot(params)
     with pytest.raises(ValueError,match='Use current project receipt'):
         app._start_model_acquisition_plan(dict(params,_model_acquisition_next='preflight'),
@@ -97,8 +97,8 @@ def test_refresh_button_keeps_other_choices_and_is_explicitly_saved(browser,stat
         assert app.db.workspace_definition(owner)==saved, 'Click alone must not save'
         page.get_by_role('tab',name='General',exact=True).click()
         page.get_by_role('button',name='Save campaign',exact=True).filter(visible=True).click()
-        page.wait_for_url('**/campaigns/*?section=definition')
-        page.get_by_role('link',name='Configure in Build',exact=True).click()
+        page.wait_for_url('**/build?campaign_id='+owner+'&saved=1#build-general')
+        page.reload()
         for field,value in latest.items():assert page.locator('[name='+field+']').input_value()==value
         assert page.locator('[name=modality_scope]').input_value()=='text,image'
         assert page.locator('.armbox[data-arm=xstest_full]').is_checked()

@@ -2,6 +2,7 @@
 from pathlib import Path
 import re
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlsplit
 
 from experiments.rig_web import RigWebApp
 
@@ -29,7 +30,8 @@ def test_save_reopen_keeps_editable_locators_but_durable_job_state_is_redacted(t
     try:
         status, location, _ = app.handle('POST', '/build/save', params)
         assert status == 303
-        owner = location.split('/campaigns/', 1)[1].split('?', 1)[0]
+        assert urlsplit(location).path == '/build'
+        owner = parse_qs(urlsplit(location).query)['campaign_id'][0]
         saved = app.db.workspace_definition(owner)
         for field, digest_field in fields.items():
             assert saved[field] == params[field]

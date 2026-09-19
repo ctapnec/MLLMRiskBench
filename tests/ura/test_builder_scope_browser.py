@@ -1,5 +1,5 @@
 """Saved Build scope and discoverable execution controls, using a real browser."""
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qs, parse_qsl, urlsplit
 
 import pytest
 
@@ -64,8 +64,15 @@ def test_save_reopen_and_validation_keep_scope_and_execution_controls(browser, a
         assert page.locator('#sample-arm-prerequisite').is_visible() == (not scope)
         assert not page.locator('.sample-range-field').is_visible(), 'No unvalidated slider maximum'
         for name in ('seeds','max_queries','max_turns','target_answer_retries',
-                     'cap_target','cap_judge','cap_http','deadline','local_budget_hours'):
+                     'deadline','local_budget_hours'):
             assert page.locator('[name='+name+']').is_visible(), name
+        assert page.locator('[name=automatic_caps]').is_checked()
+        overrides = page.locator('details').filter(has=page.get_by_text('Manual call-limit overrides',exact=True))
+        assert not page.locator('[name=cap_target]').is_visible()
+        overrides.locator('summary').click()
+        for name in ('cap_target','cap_judge','cap_http'):
+            assert page.locator('[name='+name+']').is_visible()
+        overrides.locator('summary').click()
         assert page.locator('#automatic-output-note').is_visible()
         assert not page.locator('[name=out]').is_visible()
 
@@ -84,11 +91,11 @@ def test_save_reopen_and_validation_keep_scope_and_execution_controls(browser, a
         check_execution()
         page.get_by_role('tab', name='General', exact=True).click()
         page.get_by_role('button', name='Save campaign', exact=True).filter(visible=True).click()
-        page.wait_for_url('**/campaigns/*?section=definition')
-        owner = page.url.split('/campaigns/')[1].split('?')[0]
+        page.wait_for_url('**/build?campaign_id=*&saved=1#build-general')
+        owner = parse_qs(urlsplit(page.url).query)['campaign_id'][0]
         assert app.db.workspace_definition(owner)['modality_scope'] == ','.join(scope)
         assert submissions[-1][1]['modality_scope'] == ','.join(scope)
-        page.get_by_role('link', name='Configure in Build', exact=True).click()
+        page.reload()
         assert selected() == scope
         assert page.locator('.armbox[data-arm=xstest_full]').is_checked() == bool(scope)
         check_execution()
@@ -96,7 +103,7 @@ def test_save_reopen_and_validation_keep_scope_and_execution_controls(browser, a
         assert selected() == scope
         check_execution()
         # Missing target causes an inline validation re-render, not execution.
-        page.get_by_role('button', name='Compose & review', exact=True).filter(visible=True).click()
+        page.get_by_role('button', name='Review campaign', exact=True).filter(visible=True).click()
         page.wait_for_url('**/build/review')
         assert selected() == scope
         check_execution()

@@ -96,11 +96,12 @@ def test_old_guides_are_short_redirects_not_diverging_recipes():
 def test_preservation_check_detects_meaningful_omissions(monkeypatch, omission):
     original = Path.read_text
     guide = ROOT / 'docs/SMALL_CAMPAIGNS.md'
-    assert omission in original(guide, encoding='utf-8')
+    pattern = re.compile(r'\s+'.join(re.escape(word) for word in omission.split()))
+    assert pattern.search(original(guide, encoding='utf-8'))
 
     def read(path, *args, **kwargs):
         text = original(path, *args, **kwargs)
-        return text.replace(omission, 'REMOVED') if path == guide else text
+        return pattern.sub('REMOVED', text) if path == guide else text
 
     monkeypatch.setattr(Path, 'read_text', read)
     with pytest.raises(AssertionError):
