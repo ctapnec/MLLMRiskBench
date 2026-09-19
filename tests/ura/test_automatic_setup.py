@@ -193,16 +193,28 @@ def test_completed_matched_review_rechecks_existing_forecast_settings(campaign,m
     from experiments.rig_web_app import builder_replays
     app,params,_=campaign
     monkeypatch.setattr(app,'_ensure_operation_worker',lambda *a:None)
-    params=dict(params,setup_mode='automatic',campaign_inputs='saved')
+    params=dict(params,setup_mode='automatic',campaign_inputs='saved',retained_pricing_date='2026-09-19')
     parent=app._operations[app._start_operation('campaign',params)]
     child=app._operations[app._start_operation('matched',dict(params,retained_budget_job='budget'))]
     parent.update(status='complete',preparation=child['id'])
-    def same(app,p):assert p['retained_budget_job']=='budget'
+    def same(app,p):
+        assert p['retained_budget_job']=='budget'
+        assert p['retained_pricing_date']=='2026-09-19'
     monkeypatch.setattr(builder_replays,'prepared_sources',same)
     assert app._start_operation('campaign',params)==parent['id']
+    assert app._start_operation('campaign',dict(params,retained_pricing_date='2026-09-20'))==parent['id']
     def changed(*a):raise ValueError('Model settings or pricing date changed')
     monkeypatch.setattr(builder_replays,'prepared_sources',changed)
     assert app._start_operation('campaign',params)!=parent['id']
+
+
+def test_unstarted_matched_review_keeps_forecast_date_significant(campaign,monkeypatch):
+    app,params,_=campaign
+    monkeypatch.setattr(app,'_ensure_operation_worker',lambda *a:None)
+    params=dict(params,setup_mode='automatic',campaign_inputs='saved',retained_pricing_date='2026-09-19')
+    first=app._start_operation('campaign',params)
+    app._operations[first]['status']='ready'
+    assert app._start_operation('campaign',dict(params,retained_pricing_date='2026-09-20'))!=first
 
 
 @pytest.mark.parametrize('width',[1440,390])

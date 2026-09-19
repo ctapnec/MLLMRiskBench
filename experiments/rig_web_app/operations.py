@@ -163,11 +163,13 @@ class OperationsMixin:
         # choices as well as the exact frozen signature when reopening a
         # campaign. Manual paths/receipts remain significant; execution still
         # uses the original, unchanged snapshot, never these refreshed values.
-        def selection(values):
+        def selection(values, *, completed=False):
             if kind != 'campaign' or values.get('setup_mode') != 'automatic':
                 return values
             return {key:value for key,value in values.items()
-                    if key != 'out' and not key.startswith(('att_path', 'att_sha'))}
+                    if key != 'out' and not key.startswith(('att_path', 'att_sha'))
+                    and not (completed and values.get('campaign_inputs') == 'saved'
+                             and key == 'retained_pricing_date')}
         with self._app_lock:
             candidates = self._operations.values()
             if kind == 'campaign':
@@ -179,7 +181,8 @@ class OperationsMixin:
                 reusable = operation['status'] == 'preparing' or (
                     operation['status'] in {'ready', 'complete'} and kind in {'direct', 'matched', 'transport-check', 'campaign'})
                 same_campaign = (kind == 'campaign' and operation['kind'] == kind
-                    and selection(operation.get('original_params', operation['params'])) == selection(params))
+                    and selection(operation.get('original_params', operation['params']), completed=operation['status']=='complete')
+                    == selection(params, completed=operation['status']=='complete'))
                 if (reusable and (operation['signature'] == signature or same_campaign)
                         and (kind != 'campaign' or self._campaign_configuration_matches(operation, params))):
                     return operation['id']
@@ -220,7 +223,12 @@ class OperationsMixin:
                 if not child['params'].get('retained_budget_job'):
                     return True
                 from .builder_replays import prepared_sources
-                prepared_sources(self, dict(child['params'], **params))
+                current = dict(child['params'], **params)
+                if operation['status'] == 'complete':
+                    # A new calendar day does not repeat a completed campaign.
+                    # Unstarted work still requires the current forecast date.
+                    current['retained_pricing_date'] = child['params'].get('retained_pricing_date', '')
+                prepared_sources(self, current)
                 return True
             manifest = child.get('snapshot_manifest', {})
             current = {}
