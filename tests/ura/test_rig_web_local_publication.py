@@ -33,7 +33,7 @@ def append(path, record):
         stream.write(json.dumps(record)+"\n")
 
 
-@pytest.mark.parametrize("model", ["ollama:example", "vllm:example"])
+@pytest.mark.parametrize("model", ["ollama:example", "vllm:example", "anthropic:example", "openai:example"])
 def test_native_publication_uses_durable_output_and_retains_input_identity(tmp_path, model):
     db, campaign, manifest, dp, record, paths = example(tmp_path, model)
     kwargs = dict(run_config=manifest["config"]["run"], manifest=SimpleNamespace(model_dump=lambda **k: manifest),

@@ -1823,6 +1823,13 @@ class PagesMixin:
             failure = ("<div class='notice amber'><strong>Execution " + state + ".</strong><p>"
                        + html.escape(job.failure or "No terminal process record is available. Saved outputs remain available; review them before continuing.")
                        + "</p></div>")
+        try:
+            publication=json.loads((job.directory/'campaign-publication.json').read_text())
+            if publication.get('status')=='publication_pending':
+                failure += ('<div class="notice amber"><strong>Campaign results publication needs attention.</strong><p>'
+                    + html.escape(publication.get('reason','Saved records are not yet indexed.'))
+                    + ' Saved generation artifacts remain available. Do not regenerate answers to repair the index.</p></div>')
+        except (OSError,ValueError):pass
         activity = (
             "<div class='notice blue'><strong>Model download in progress.</strong> "
             "This indicator comes from explicit job activity metadata and is "

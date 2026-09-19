@@ -66,7 +66,8 @@ class LocalCheckpointPublication:
                 raise ValueError("Recovery output differs from its original retained input")
             choice = original
         identity = self.run_id + ":" + aid
-        assignment = dict(assignment_id="local-"+identity, model=self.model,
+        prefix='local-' if self.model.startswith(('ollama:','vllm:')) else 'direct-'
+        assignment = dict(assignment_id=prefix+identity, model=self.model,
             input_id=_sha(choice), condition_id=self.condition, modality=choice["modality"],
             framework=choice["framework"], corpus=choice["corpus"], response_id=identity,
             evidence_class=self.evidence)
@@ -133,7 +134,7 @@ class LocalCheckpointPublication:
 def run_with_workspace_publication(runner, corpus, *, campaign_id="", database=None,
                                    checkpoint, response_checkpoint, **kwargs):
     """Compose publication after existing durable callbacks; preserve resumes."""
-    if not campaign_id or not kwargs["run_config"]["model_spec"].startswith(("ollama:", "vllm:")):
+    if not campaign_id:
         return runner.run(corpus, **kwargs)
     try:
         publisher = LocalCheckpointPublication(campaign_id=campaign_id, database=database,

@@ -294,6 +294,11 @@ def _local_artifact_paths(source: dict) -> tuple[dict, dict | None]:
 
 
 def local_generation_condition(run: dict) -> str:
+    if not run.get('model_spec','').startswith(('ollama:','vllm:')):
+        settings={k:v for k,v in (run.get('api_config') or {}).items()
+            if k not in {'api_key','api_key_env','key_env','authorization','token'}}
+        value=dict(target=run['model_spec'],settings=settings,max_output_tokens=settings.get('max_tokens'))
+        return 'generation-'+hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':'),allow_nan=False).encode()).hexdigest()[:24]
     settings = {key: run.get(key) for key in (
         "model_spec", "local_identity", "dtype", "resolved_quantization", "target_answer_retries",
         "project_revision", "engine_runtime")}
@@ -317,8 +322,10 @@ def local_response_row(response: dict, condition: str, reference: str) -> dict:
     truncated = raw.get("output_truncated")
     if truncated is None and stop in {"truncated", "normal_stop"}:
         truncated = stop == "truncated"
-    return dict(response_id=identity, assignment_id="local-"+identity,
-        condition_id=condition, outcome="missing" if failed or not visible else "usable",
+    policy=raw.get('provider_refusal') is True or raw.get('provider_policy_rejection') is True or bool(legacy_provider_policy_basis(response))
+    prefix='local-' if response['target'].startswith(('ollama:','vllm:')) else 'direct-'
+    return dict(response_id=identity, assignment_id=prefix+identity,
+        condition_id=condition, outcome="policy" if policy else "missing" if failed or not visible else "usable",
         truncated=truncated, source_ref=reference,
         context_tokens=_first(generation, ("context_tokens", "max_model_len", "num_ctx")),
         output_allowance=_first(generation, ("max_output_tokens", "max_tokens", "num_predict")),

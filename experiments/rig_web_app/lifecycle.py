@@ -265,6 +265,8 @@ class LifecycleMixin:
             job, stored = self._job_from_db_row(row)
             self.jobs[job_id] = job
             self._restore_job_execution(job)
+            if job.state() in {'complete','failed','stopped','interrupted'}:
+                self._publish_direct_hosted_job(job)
             if job.restored_state == "orphaned" and stored != "orphaned":
                 self.db.upsert_job(job)  # persist orphaned across restarts
 
@@ -548,6 +550,7 @@ class LifecycleMixin:
                     usage_rows = []
             if self.db.record_terminal(job, job.pin, usage_rows, state=state, exit_code=code):
                 job.run_recorded = True
+                self._publish_direct_hosted_job(job)
                 if job.command == "ollama_pull" and code == 0:
                     automatic_ollama_readiness.append(job)
         for parent in automatic_ollama_readiness:
@@ -557,6 +560,28 @@ class LifecycleMixin:
                 # Discovery can be temporarily unavailable immediately after a
                 # pull. A later reconciliation retries this idempotent handoff.
                 continue
+
+    def _publish_direct_hosted_job(self, job):
+        if job.command!='run_matrix' or '--api' not in job.argv or '--preflight-only' in job.argv:
+            return
+        owner=self.db.workspace_for_job(job.job_id)
+        if not owner:return
+        marker=job.directory/'campaign-publication.json'
+        try:
+            if marker.exists() and json.loads(marker.read_text()).get('status')=='published':return
+        except (OSError,ValueError):pass
+        try:
+            from .workspace_direct import publish
+            directory=self.repo_root/_argv_out_dir(job.argv)
+            models=set(job.argv[job.argv.index('--api')+1].split(','))
+            counts=publish(self.db,owner,directory,models)
+            result=dict(status='published',**counts)
+        except (OSError,ValueError,KeyError,TypeError) as exc:
+            result=dict(status='publication_pending',reason=str(exc)[:500])
+        try:
+            temporary=marker.with_suffix('.tmp')
+            temporary.write_text(json.dumps(result)+'\n');temporary.replace(marker)
+        except OSError:pass
 
     def _start_automatic_ollama_readiness(self, parent: Job) -> Job | None:
         """Start exactly one readiness job after one successful Ollama pull."""
