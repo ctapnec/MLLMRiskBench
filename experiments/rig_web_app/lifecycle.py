@@ -1893,7 +1893,7 @@ class LifecycleMixin:
         if command in {"hosted_retained_inputs", "hosted_selected_replays",
                        "retained_judge_inventory", "retained_inventory_judge_items",
                        "retained_inventory_judging", "retained_response_judge_pair",
-                       "retained_response_judge_pair_execute"}:
+                       "retained_response_judge_pair_execute", "human_review_campaign", "human_audit"}:
             # Original conversion needs the operator-configured corpus locators,
             # not provider keys or the contents of the credentials file.
             sources = self._load_registry("source-instances.json", "rig/source-instances.example.json")

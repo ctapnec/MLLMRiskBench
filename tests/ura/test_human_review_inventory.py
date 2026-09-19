@@ -121,6 +121,19 @@ def test_review_launch_uses_console_reader_with_older_runner_and_finalized_respo
     finally:app.close()
 
 
+def test_review_preparation_finds_media_manifest_after_response_finalization(indexed):
+    from experiments import human_review_campaign
+    database,owner,root,_=indexed
+    saved=json.loads((root/'checkpoint.responses.checkpoint.jsonl').read_text())
+    (root/'checkpoint.responses.jsonl').write_text(json.dumps(saved['response'])+'\n')
+    (root/'checkpoint.attempts.jsonl').write_text(json.dumps(saved['attempt'])+'\n')
+    (root/'checkpoint.responses.checkpoint.jsonl').unlink()
+    report=human_review_campaign.prepare(read_campaign(database,owner,root),root/'review.csv',
+        mode='common',clusters=0,results_root=root)
+    assert report['selected_outputs']==2 and report['human_ratings']==0
+    assert 'Saved answer checkpoint' in (root/'review.csv').read_text()
+
+
 def test_inventory_does_not_cross_scan_assignments_for_each_judgment(indexed, monkeypatch):
     database,owner,root,_=indexed
     with sqlite3.connect(database) as db:

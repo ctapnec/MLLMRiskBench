@@ -274,6 +274,23 @@ def test_finished_runs_discovered_without_cross_campaign_or_failed_run_sources(t
     finally:app.close()
 
 
+@pytest.mark.parametrize('command',['human_review_campaign','human_audit'])
+def test_review_preparation_receives_configured_media_locators_not_provider_keys(tmp_path,monkeypatch,command):
+    app=RigWebApp(results_root=tmp_path/'runs',state_dir=tmp_path/'state',repo_root=tmp_path,gpu_hardware={},system_hardware={})
+    try:
+        monkeypatch.setattr(app,'_load_registry',lambda *args:{'image_arm':{'path_env':'URA_TEST_REVIEW_IMAGES'}})
+        monkeypatch.setenv('URA_TEST_REVIEW_IMAGES',str(tmp_path/'images'))
+        monkeypatch.setenv('URA_MEDIA_ROOTS',str(tmp_path/'media'))
+        monkeypatch.setenv('ANTHROPIC_API_KEY','test-only-secret')
+        monkeypatch.setenv('HF_TOKEN','test-only-secret')
+        env=app._generic_child_environment(command,{})
+        assert env['URA_TEST_REVIEW_IMAGES']==str(tmp_path/'images')
+        assert env['URA_MEDIA_ROOTS']==str(tmp_path/'media')
+        assert 'ANTHROPIC_API_KEY' not in env and 'HF_TOKEN' not in env
+        assert 'URA_TEST_REVIEW_IMAGES' not in app._generic_child_environment('figures',{})
+    finally:app.close()
+
+
 def test_preparation_uses_one_live_completion_snapshot_before_database_watcher(tmp_path,monkeypatch):
     from types import SimpleNamespace
     app=RigWebApp(results_root=tmp_path/'runs',state_dir=tmp_path/'state',repo_root=tmp_path,gpu_hardware={},system_hardware={})
