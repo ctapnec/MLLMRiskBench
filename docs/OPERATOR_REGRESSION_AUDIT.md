@@ -19,15 +19,23 @@ to exhaust it. Verification artifacts stay outside version control.
 
 This matrix began before the unified campaign flow. The subsequent real local,
 fresh hosted and matched hosted acceptance is recorded in RA-756 and RA-757
-of the development ledger. The broader 19 September re-audit remains open:
-its first complete rig suite produced 5,251 passes, 136 failures and 10 skips.
+of the development ledger. The broader 19 September re-audit began with a
+complete rig suite that produced 5,251 passes, 136 failures and 10 skips.
 Do not treat earlier focused acceptance as a clean result for that suite.
 Failures and corrected reruns are retained separately; production campaigns
 are not rerun to repair test fixtures.
 
 Subsequent affected-file passes reduced failures to 67, then 11, then zero
-(527 selected tests at the last of these passes). The final full suite is
-pending. Test corrections retain the original boundaries: actual readiness
+(527 selected tests at the last of these passes). The second complete sweep
+produced 5,396 passes, two failures and 10 skips. Both remaining failures were
+test defects: the document numbering parser counted its section heading as an
+action, and the raw Tools required-field count included a hidden internal
+controller. A subsequent 41-test affected-file pass resolved both and checked
+the corrected positive and negative cases. The failed sweep is preserved as
+failed, not relabelled as one all-green full run. The skipped cases require
+Windows job objects or junctions; they were not executed on Windows.
+
+Test corrections retain the original boundaries: actual readiness
 profiles precede local execution, paid answer retries remain zero, missing
 database identity prevents an orphaned launch, and abstentions do not enter a
 decision-rate denominator. The historical analysis self-test accepts a copied
@@ -35,16 +43,16 @@ unchanged configuration while retaining changed-content rejection.
 
 | Workflow | Required checks | Current audit state |
 | --- | --- | --- |
-| Direct local campaign and single run | Automatic preparation, one start, stop/restart, retained scope | Re-audit pending |
-| Direct hosted campaign | Real route, bounded calls, failure classification, usage | Live acceptance pending |
-| Matched hosted campaign | Same inputs, automatic handoffs, no repeated paid work | Re-audit pending |
-| Saved-output judging | Output-specific labels, duplicate preparations, interrupted execution | UI-owned configuration resume fixed; cross-preparation deduplication audit pending |
-| Jobs | Substantive work separated from technical stages, truthful state, recovery | Work/technical views and scoped navigation verified; recovery audit pending |
-| Stats comparisons | Selected campaigns/jobs, denominators, conditions, exports | Campaign selector and matched-input charts verified; arbitrary cross-job selection pending |
+| Direct local campaign and single run | Automatic preparation, one start, stop/restart, retained scope | Rig suite reconciled; preceding live acceptance retained; Build visibility follow-up described below |
+| Direct hosted campaign | Real route, bounded calls, failure classification, usage | Rig regressions passed; preceding fresh-input live acceptance retained |
+| Matched hosted campaign | Same inputs, automatic handoffs, no repeated paid work | Rig regressions passed; preceding retained-input live acceptance retained |
+| Saved-output judging | Output-specific labels, duplicate submissions, interrupted execution | Assessment and recovery regressions passed; raw internal controller no longer exposed |
+| Jobs | Substantive work separated from technical stages, truthful state, recovery | Recovery, liveness, database failure and work/technical view regressions passed |
+| Stats comparisons | Selected campaigns/jobs, denominators, conditions, exports | Scoped comparison and export regressions passed; both selector scopes inspected in production |
 | SVM in Stats | Existing and new studies, held-out scores, baselines, class/group support, intervals | Rig regressions, real-data and deployed desktop/mobile acceptance passed |
-| Human review and Guide | Evaluation form, return navigation, no lost state, accurate links | Re-audit pending |
-| Common UI | Busy state, errors, stop handling, desktop/mobile, spacing | Re-audit pending |
-| Performance | No repeated reconstruction/hashing, bounded readers, no unused workers | Re-audit pending |
+| Human review and Guide | Evaluation form, return navigation, no lost state, accurate links | Synthetic workflow regressions and read-only production navigation passed; no research ratings fabricated |
+| Common UI | Busy state, errors, stop handling, desktop/mobile, spacing | Desktop/mobile regressions and production sweep passed; visual visibility finding retained below |
+| Performance | No repeated reconstruction/hashing, bounded readers, no unused workers | Cache and bounded-reader regressions passed; installed environments reused without model-file scans |
 
 Track findings and evidence in the thesis project's development ledger. Thesis
 chapters describe methods and findings academically, not audit chronology.
@@ -59,17 +67,35 @@ full, not silently replaced by shorter current instructions.
 
 The rig document checks cover links, section anchors, numbering, redirects,
 retained actions, reference results and qualifications. Deliberate removal of
-seven required passages and one section link is detected. The final first
-affected pass included 11 document checks within 93 passing tests. This is
-supplemented by semantic comparison and browser regression; it does not close
-the outstanding broad-suite findings.
+seven required passages, one section link and one numbered-step correction is
+detected. The current 13 document checks also cover the full numbered comparison,
+human-review and SVM sections. These are supplemented by section-by-section
+semantic comparison and browser regression. Exact comparison with the earlier
+committed documents established that all 1,845 lines of the historical workspace
+and walkthrough bodies were preserved. Automated phrase matching alone does not
+establish completeness or usability.
 
 The Jobs/Stats pass ran 122 focused regressions and eight detecting reversals.
 Real-data Chromium acceptance inspected 7,541 retained answers in 397 SVM input
 groups, filtering, CSV export, campaign-comparison navigation and Jobs at
-desktop/mobile widths. This pass made no target or judge calls. It does not
-complete the remaining end-to-end audit or consume its USD 5 allowance.
+desktop/mobile widths. This pass made no target or judge calls and did not
+consume the additional acceptance allowance.
 
 Production acceptance preserved existing campaign drafts, jobs, responses and
 judgments. The retained mixed local/hosted classifier study is visible under
 both campaigns. No production write request or model call was made by acceptance.
+
+The post-deployment sweep checked 42 pages across desktop and mobile sizes,
+including both historical campaigns, the saved Qwen draft, Jobs, Tools, Compare,
+SVM and human evaluation. It found no JavaScript errors, horizontal page overflow
+or stuck busy overlay. Database counts and saved draft values were unchanged:
+seven campaigns, 154 jobs, 268 campaign memberships, five drafts, 66,398 responses
+and 88,047 judgments. These checks do not establish that all possible UI states
+are correct: subsequent screenshot inspection identified a hidden Save campaign
+button made visible by shared button styling. The shared hidden-state correction
+is undergoing a separate desktop/mobile switching and fix-reversal check.
+
+Audit records remain outside Git under runs/engineering/campaign-reaudit-20260919.
+Keep initial failures and corrected results together. Do not add these operational
+records to the thesis narrative or report repeated regression totals as unique
+tests. No original campaign was rerun and no paid calls were made in this re-audit.

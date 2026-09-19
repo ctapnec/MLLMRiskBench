@@ -53,7 +53,8 @@ def test_single_run_hides_campaign_actions_in_every_build_tab(browser, app, widt
             for tab in ('General', 'Pipeline', 'Evaluation', 'Execution', 'Admission'):
                 page.get_by_role('tab', name=tab, exact=True).click()
                 visible = page.locator('[data-save-campaign]').filter(visible=True)
-                assert visible.count() == (1 if kind == 'campaign' else 0), (kind, tab)
+                expected = int(kind == 'campaign' and tab in ('General', 'Execution'))
+                assert visible.count() == expected, (kind, tab)
                 assert page.locator('[hidden]').evaluate_all(
                     "nodes=>nodes.every(n=>getComputedStyle(n).display==='none')"
                 ), (kind, tab)
