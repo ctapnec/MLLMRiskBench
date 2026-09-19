@@ -7474,15 +7474,17 @@ def test_group_values_with_separators_round_trip_through_aggregation_and_consume
             judgment.attempt_id for judgment in expected_support
             if judgment.raw.get("approximate_security_decision") is not None
         ]
-    # Plain group values keep the historical label and identities unchanged.
+    # Native plain groups keep the historical label. Approximate metrics add
+    # their required scope fields, while retaining each requested dimension.
     plain_keys = ["source", "effective_modality", "expected_behavior"]
     plain = runner.aggregate(judgments, group_keys=plain_keys)
     assert plain
-    assert all(
-        result.provenance["bucket"]
-        == "|".join(f"{key}={result.group_by[key]}" for key in plain_keys)
-        for result in plain
-    )
+    for result in plain:
+        decoded = decode_group_label(result.provenance["bucket"])
+        assert all(decoded[key] == result.group_by[key] for key in plain_keys)
+        if not approximate:
+            assert result.provenance["bucket"] == "|".join(
+                f"{key}={result.group_by[key]}" for key in plain_keys)
 
 
 @pytest.mark.parametrize(
