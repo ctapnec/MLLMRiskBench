@@ -89,7 +89,8 @@ def test_assessment_browser_hides_irrelevant_fields_and_blocks_duplicate_request
 
 
 @pytest.mark.parametrize('ui_owned_config', [False, True])
-def test_haiku_preparation_and_resume_use_existing_executor_without_target_calls(indexed,tmp_path,monkeypatch,ui_owned_config):
+@pytest.mark.parametrize('interrupt_first', [False, True])
+def test_haiku_preparation_and_resume_use_existing_executor_without_target_calls(indexed,tmp_path,monkeypatch,ui_owned_config,interrupt_first):
     from ura.data_models import Response,DialogTurn
     database,owner,root,_=indexed;manifests(root)
     judge='anthropic:claude-haiku-4-5-20251001'
@@ -123,10 +124,29 @@ def test_haiku_preparation_and_resume_use_existing_executor_without_target_calls
     assert result['selected_outputs']==2 and result['status']=='prepared' and fake.calls==0
     assert subject.prepare(args)==result
     assert all(getattr(args,name+'_config').read_bytes()==raw for name,raw in originals.items())
+    other=SimpleNamespace(**dict(vars(args),out=root/'other-assessment'))
+    assert subject.prepare(other)['selected_outputs']==2
+    if interrupt_first:
+        def interrupt_after_saved(**kwargs):
+            execute(**kwargs,judge_factory=lambda *a:fake)
+            raise RuntimeError('console interrupted after durable answer')
+        monkeypatch.setattr(subject.executor,'execute',interrupt_after_saved)
+        with pytest.raises(RuntimeError,match='console interrupted'):subject.execute(args)
+        assert fake.calls==1
+        monkeypatch.setattr(subject.executor,'execute',lambda **kw:execute(**kw,judge_factory=lambda *a:fake))
+        subject.execute(other)
     subject.execute(args)
     assert fake.calls==2 and (args.out/'completion.json').is_file()
     subject.execute(args)
     assert fake.calls==2
+    subject.execute(other)
+    assert fake.calls==2
+    completed=json.loads((other.out/'completion.json').read_text())
+    assert completed['reused_outputs']==(1 if interrupt_first else 2)
+    assert completed['executed_outputs']==(1 if interrupt_first else 0)
+    import sqlite3
+    with sqlite3.connect(database) as connection:
+        assert connection.execute('SELECT count(*) FROM campaign_costs').fetchone()[0]==2
     pending,_=subject.candidates(read_campaign(database,owner,root,include_records=True),'haiku',judge,0)
     assert pending==[]
 
@@ -152,6 +172,8 @@ def test_local_assessment_uses_original_cascade_and_resumes_without_another_call
     prepared=dict(campaign=owner,model_store='existing-store')
     subject.local_execute(destination,prepared,items,database)
     subject.local_execute(destination,prepared,items,database)
+    another=root/'other-local-assessment';another.mkdir()
+    subject.local_execute(another,prepared,items,database)
     assert len(calls)==1
     verdicts=list((destination/'local-verdicts').glob('*.json'))
     assert len(verdicts)==1 and json.loads(verdicts[0].read_text())['judgment']['run_id']==item['row']['run_id']

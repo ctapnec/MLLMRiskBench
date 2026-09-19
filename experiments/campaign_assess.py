@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import sqlite3
 import sys
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'src'))
@@ -133,12 +134,17 @@ def local_execute(root,prepared,items,database):
     from ura.judges.base import JudgeCascadeDecisionError
     from ura.data_models import Response
     db=ConsoleDB(database);cache={};done=0
+    existing=indexed_verdicts(database,prepared['campaign'])
     destination=root/'local-verdicts';destination.mkdir(exist_ok=True)
     try:
         for item in items:
             row=item['row'];source=item['source'];manifest=source['manifest'];condition=manifest['config']['components']['judge_cascade']
             identity='local-cascade-indexed-'+retained._sha(dict(cascade=condition,scope='common-text-proxy',revision=manifest['config']['run']['project_revision']))[:24]
             path=destination/(row['retained_row_sha256']+'.json')
+            if not path.exists() and (source['response_id'],identity) in existing:
+                done+=1
+                print(json.dumps(dict(assessed=done,selected=len(items),reused=True)),flush=True)
+                continue
             if path.exists():
                 artifact=read(path)
                 if artifact['response']!=source['response'] or artifact['judge_id']!=identity:
@@ -177,6 +183,73 @@ def local_execute(root,prepared,items,database):
         db.close()
 
 
+def indexed_verdicts(database, campaign):
+    """One indexed read, not reconstruction of the retained campaign."""
+    with sqlite3.connect(database) as connection:
+        return {(response, judge): reference for response, judge, reference in connection.execute(
+            "SELECT response_id,judge_id,source_ref FROM campaign_judgments "
+            "WHERE campaign_id=? AND status='valid'", (campaign,))}
+
+
+def execute_haiku(root, prepared, items, database):
+    """Reuse exact output/condition verdicts across prepared assessments.
+
+    Each newly executed answer has its own durable executor checkpoint. A
+    stopped assessment can therefore skip answers another assessment finished
+    meanwhile, without changing a retained plan or inventing zero-cost calls.
+    """
+    from experiments.rig_web_app.workspace_judgments import retained_judge_identity
+    mapping={i['row']['retained_row_sha256']:i for i in items}
+    def reconcile(_view, plan, _source):
+        from experiments.retained_inventory_judging import _selected_items
+        return _selected_items(plan,mapping)
+    current=indexed_verdicts(database,prepared['campaign'])
+    reused=[];executed=0
+    for filename in prepared['plans']:
+        plan=retained.validate_plan(read(root/filename));condition=plan['judge_condition']
+        legacy=root/(Path(filename).stem+'-judgments')
+        if (legacy/'execution.json').exists():
+            # Existing executions keep their original plan and accounting.
+            executor.execute(plan_path=root/filename,runner_view=root,source_receipt=root/'source.json',
+                api_config=root/'api.json',pricing_config=root/'pricing.json',out=legacy,
+                selection_reconciler=reconcile,retain_invalid_verdicts=True,
+                workspace_ids=[prepared['campaign']],console_db=database)
+            executed+=len(plan['selected'])
+            continue
+        pricing=retained.load_pricing_condition(root/'pricing.json',
+            expected_sha256=condition['pricing_config_sha256'],judge_model=condition['model'],
+            as_of=condition['pricing_as_of'])
+        judge_id=retained_judge_identity(condition)
+        normalized,_=executor._load_api_config(root/'api.json',judge_model=condition['model'],
+            expected_sha256=condition['api_config_sha256'])
+        from ura.judges.llm import LLMJudge
+        bounds=executor._cost_bounds(LLMJudge(executor._build_haiku_judge(condition['model'],normalized)),
+            [(i['row'],i['prompt'],i['text']) for i in items],max_output_tokens=512)
+        for row in plan['selected']:
+            response=row['run_id']+':'+row['attempt_id']
+            directory=root/'answers'/row['retained_row_sha256']
+            # Resume our own checkpoint first: it may have a saved verdict
+            # whose index publication was interrupted. Never repeat that call.
+            if not (directory/'execution'/'execution.json').exists() and (response,judge_id) in current:
+                reused.append(dict(response_id=response,judge_id=judge_id,source_ref=current[(response,judge_id)]))
+                continue
+            directory.mkdir(parents=True,exist_ok=True)
+            individual=directory/'plan.json'
+            if not individual.exists():
+                one=retained.build_plan([row],population_audit=dict(validated_joined_rows=1,
+                    eligible_usable_outputs=1,excluded_missing_outputs=0,excluded_source_authoritative_rows=0),
+                    source_descriptor=plan['source'],judge_model=condition['model'],
+                    api_config_sha256=condition['api_config_sha256'],pricing_condition=pricing,limit=1,
+                    max_cost_microusd=bounds[row['retained_row_sha256']]*4)
+                executor._write_new(individual,one)
+            executor.execute(plan_path=individual,runner_view=root,source_receipt=root/'source.json',
+                api_config=root/'api.json',pricing_config=root/'pricing.json',out=directory/'execution',
+                selection_reconciler=reconcile,retain_invalid_verdicts=True,
+                workspace_ids=[prepared['campaign']],console_db=database)
+            executed+=1
+    return dict(executed_outputs=executed,reused_outputs=len(reused),reused_verdicts=reused)
+
+
 def execute(args):
     root=args.out.resolve(strict=True);prepared=read(root/'result.json')
     if prepared['status']!='prepared':
@@ -184,20 +257,20 @@ def execute(args):
     items=read(root/'items.json');source=read(root/'source.json')
     if source['items_sha256']!=hashlib.sha256((root/'items.json').read_bytes()).hexdigest():
         raise ValueError('Prepared response selection changed')
-    if prepared['kind']=='local':
-        with executor._exclusive_lock(root/'execution'):
-            local_execute(root,prepared,items,args.database)
-    else:
-        mapping={i['row']['retained_row_sha256']:i for i in items}
-        def reconcile(_view,plan,_source):
-            from experiments.retained_inventory_judging import _selected_items
-            return _selected_items(plan,mapping)
-        for filename in prepared['plans']:
-            executor.execute(plan_path=root/filename,runner_view=root,source_receipt=root/'source.json',
-                api_config=root/'api.json',pricing_config=root/'pricing.json',out=root/(Path(filename).stem+'-judgments'),
-                selection_reconciler=reconcile,retain_invalid_verdicts=True,
-                workspace_ids=[prepared['campaign']],console_db=args.database)
-    executor._write_atomic(root/'completion.json',dict(status='complete',selected_outputs=len(items),target_calls=0))
+    # Serialize only this campaign/evaluator, including CLI launches. Different
+    # campaigns and local versus hosted assessment remain independent.
+    lock=args.database.resolve().parent/'assessment-locks'/retained._sha(
+        dict(campaign=prepared['campaign'],kind=prepared['kind'],judge=prepared.get('judge_model','')))
+    lock.mkdir(parents=True,exist_ok=True)
+    with executor._exclusive_lock(lock):
+        if prepared['kind']=='local':
+            (root/'execution').mkdir(exist_ok=True)
+            with executor._exclusive_lock(root/'execution'):
+                local_execute(root,prepared,items,args.database)
+            counts={}
+        else:
+            counts=execute_haiku(root,prepared,items,args.database)
+        executor._write_atomic(root/'completion.json',dict(status='complete',selected_outputs=len(items),target_calls=0,**counts))
 
 
 def main(argv=None):
