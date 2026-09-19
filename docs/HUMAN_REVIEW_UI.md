@@ -157,6 +157,9 @@ free text. No decision is prefilled as a successful human rating.
 - Use the existing backend-request spinner and duplicate-request guard.
   Autosave must report success or error, preserve unsaved input on failure and
   avoid overwriting a newer draft from another tab. No provider calls are made.
+  Personal and completed-independent-rating downloads use the same guarded
+  export handler as campaign statistics. It releases the spinner on completion,
+  HTTP error or timeout and permits retry without leaving the study page.
 - Statistics distinguish assignment completion, rater agreement, adjudication
   and automated-versus-human comparison. Sampling support and undecided cases
   accompany estimates. Do not pool source-task outcomes with common labels or
@@ -167,6 +170,14 @@ free text. No decision is prefilled as a successful human rating.
   identities, and reads each referenced artifact file once per preparation.
   It must not manufacture a successful original grid from post-hoc judgments.
   Missing source context is reported, never filled from an unrelated output.
+  Completed-run choices exclude preflights, dry runs and diagnostic probes.
+  Review preparation and analysis use the console's analysis release even when
+  measured execution remains pinned to an older Runner. A finalized checkpoint
+  is resolved by its exact saved output identity, not its former line number;
+  its neighboring media manifest keeps the same name. The child receives the
+  configured corpus/media locations, without provider credentials, so installed
+  images can be connected automatically. These are preparation-time lookups,
+  not scans during navigation or model-weight checks.
   The campaign selector offers all indexed measured outputs, including those
   from finished imported campaigns. Preparation freezes the selected outputs
   and their output-specific judgments. Zero clusters requests the minimum

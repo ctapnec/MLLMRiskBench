@@ -151,6 +151,23 @@ provider credentials. Regression now launches a real analysis child against
 an incompatible older Runner fixture and finalized response files. No target
 generation, provider call or human rating is needed for that regression.
 
+The live personal-review export also exposed a stuck navigation spinner after
+the CSV arrived. Both personal and independent-rating links now use the shared
+guarded export handler. Browser regression covers successful download, an HTTP
+503, release of the busy state and retry on desktop and mobile. No failed
+preparation is relabelled as successful; corrected preparations remain separate.
+
+The final deployed console passed 72 read-only desktop/mobile page checks,
+including both historical campaigns and all three new QA campaigns. The new
+matched image pair and historical text/image matrices agree with their CSV
+exports. Real personal review loads its assigned image, retains the main header,
+and exports without a stuck spinner. No production human ratings were submitted.
+The final affected export/browser pass passed 59 tests; removing the handler
+fails both desktop and mobile cases. Re-preparing Haiku assessment selected zero
+answers and skipped all four existing valid local-answer verdicts, without
+generation or paid judging. No unresolved medium/high finding remains in these
+exercised scenarios; this does not establish universal correctness.
+
 Evidence and initial failures remain under
 `runs/engineering/guide-live-regression-20260919`, outside Git. The focused
 follow-ups supplement the complete suite; their overlapping totals are not
