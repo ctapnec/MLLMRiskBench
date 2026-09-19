@@ -283,7 +283,7 @@ class OperationsMixin:
             plan_id = operation['jobs'][0 if step == 1 else 3]
             workflow = self._model_acquisition_workflows[plan_id]
             existing = workflow.get('acquisition_job_id')
-            if existing and self.jobs[existing].state() != 'failed':
+            if existing and self.jobs[existing].state() not in {'failed', 'stopped', 'interrupted'}:
                 return self.jobs[existing]
             reserved = self._job_id_factory()
             operation.update(current_job=reserved, launch_pending=True)
@@ -317,8 +317,15 @@ class OperationsMixin:
             if operation is None or operation['status'] not in {'failed', 'stopped'}:
                 raise ValueError('Only interrupted preparation can be continued')
             job = self.jobs.get(operation['current_job'])
-            if job is not None and job.state() in {'running', 'queued', 'starting'}:
+            if job is not None and job.state() in {'running', 'queued', 'starting', 'retry_wait', 'retry_waiting'}:
                 raise ValueError('The previous preparation is still stopping. Wait for it to finish.')
+            if job is None and operation['current_job']:
+                # start_job records identity before spawning. A failure before
+                # creating its directory is therefore safe to retry; retained
+                # launch files require reconciliation, not a duplicate launch.
+                if (self.state_dir / operation['current_job']).exists():
+                    raise ValueError('The interrupted job has saved launch files. Reopen the console to restore its status before continuing.')
+                operation.update(current_job='', launch_pending=False)
             if job is not None and job.state() != 'complete':
                 if operation['kind'] == 'transport-check' and operation['step'] == 0:
                     raise ValueError('The diagnostic probe did not complete. Open its saved job and recover the probe first; connection checking will not regenerate it.')

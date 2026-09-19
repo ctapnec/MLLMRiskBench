@@ -3128,7 +3128,7 @@ class LifecycleMixin:
         prior_acquisition_id = str(workflow.get("acquisition_job_id", ""))
         if prior_acquisition_id:
             prior = self.jobs.get(prior_acquisition_id)
-            if prior is None or prior.state() != "failed":
+            if prior is None or prior.state() not in {"failed", "stopped", "interrupted"}:
                 raise ValueError("this reviewed acquisition plan was already launched")
         _command, values, _rebound = self._compose_model_acquisition_lane(workflow)
         self._discard_unlaunched_local_config(values)

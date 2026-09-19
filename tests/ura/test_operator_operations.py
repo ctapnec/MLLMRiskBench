@@ -164,6 +164,37 @@ def test_corrupt_operation_metadata_cannot_crash_startup(app):
     assert not app._operations
 
 
+def test_retry_before_job_registration_clears_only_an_unlaunched_identity(app, monkeypatch):
+    monkeypatch.setattr(app, '_builder_model_acquisition_required', lambda p:False)
+    operation = app._operations[app._start_operation('direct', {})]
+    operation.update(status='failed', current_job='not-launched', launch_pending=True)
+    app._retry_operation(operation['id'])
+    assert operation['current_job'] == '' and not operation['launch_pending']
+    operation.update(status='failed', current_job='retained-launch', launch_pending=True)
+    (app.state_dir/'retained-launch').mkdir()
+    with pytest.raises(ValueError, match='saved launch files'):
+        app._retry_operation(operation['id'])
+    assert operation['status'] == 'failed' and operation['current_job'] == 'retained-launch'
+
+
+@pytest.mark.parametrize('state', ['stopped', 'interrupted'])
+def test_stopped_acquisition_continues_from_same_plan(app, monkeypatch, state):
+    monkeypatch.setattr(app, '_builder_model_acquisition_required', lambda p:True)
+    operation = app._operations[app._start_operation('direct', {})]
+    operation.update(status='stopped', step=1, jobs=['plan'], current_job='old')
+    child(app, 'old', state=state, code=1)
+    app._model_acquisition_workflows['plan'] = dict(acquisition_job_id='old')
+    launched = []
+    def acquire(plan, **kwargs):
+        launched.append(plan)
+        return child(app, kwargs['reserved_job_id'])
+    monkeypatch.setattr(app, '_start_model_acquisition_download', acquire)
+    app._retry_operation(operation['id'])
+    app._advance_operation(operation)
+    assert launched == ['plan'] and operation['step'] == 1
+    assert operation['failed_jobs'] == ['old']
+
+
 def test_completed_probe_saves_connection_check_without_an_operator_handoff(app, monkeypatch):
     probe = child(app, 'probe', command='run_matrix', state='running', code=None)
     probe.argv = ['python','-m','experiments.run_matrix','--attestation-probe']
