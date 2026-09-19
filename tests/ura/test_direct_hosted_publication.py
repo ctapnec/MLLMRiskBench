@@ -47,6 +47,17 @@ def test_direct_hosted_import_rejects_different_target_before_publication(tmp_pa
     finally:db.close()
 
 
+def test_mixed_job_keeps_local_publication_separate(tmp_path):
+    db,owner,manifest,_=saved(tmp_path)
+    manifest['config']['run']['model_spec']='vllm:example'
+    manifest['run_id']='another-run'
+    (tmp_path/'local.manifest.json').write_text(json.dumps(manifest))
+    try:
+        assert subject.publish(db,owner,tmp_path,{'anthropic:example'})['responses']==1
+        assert [r['model'] for r in db._query('SELECT * FROM campaign_assignments')]==['anthropic:example']
+    finally:db.close()
+
+
 def test_terminal_or_startup_publication_runs_once_without_repeating_generation(tmp_path,monkeypatch):
     db,owner,_,_=saved(tmp_path)
     directory=tmp_path/'job';directory.mkdir()

@@ -17,6 +17,7 @@ def publish(db,owner,directory,models):
     for path in sorted(directory.glob('*.manifest.json')):
         manifest=json.loads(path.read_text());run=manifest['config']['run']
         model=run['model_spec'];run_id=manifest['run_id']
+        if model.startswith(('ollama:','vllm:')):continue
         if model not in models:raise ValueError('Direct publication target differs from its job')
         condition=local_generation_condition(run);judge=local_judge_condition(run)
         stem=path.name.removesuffix('.manifest.json')
