@@ -93,7 +93,15 @@ seven campaigns, 154 jobs, 268 campaign memberships, five drafts, 66,398 respons
 and 88,047 judgments. These checks do not establish that all possible UI states
 are correct: subsequent screenshot inspection identified a hidden Save campaign
 button made visible by shared button styling. The shared hidden-state correction
-is undergoing a separate desktop/mobile switching and fix-reversal check.
+passed the remaining 104 selected browser/layout checks. Its new test initially
+misstated which tabs carry the campaign action; the corrected 20-test affected
+pass succeeded, and reversing the styling fix fails both desktop and mobile
+cases. Console 7f63edd then passed another 42-page production sweep, including
+run/campaign/run switching across Build tabs. The screenshots were inspected,
+not just checked for page-load success.
+
+There are no unresolved medium/high findings from these exercised scenarios.
+This is a bounded acceptance statement, not a claim of universal correctness.
 
 Audit records remain outside Git under runs/engineering/campaign-reaudit-20260919.
 Keep initial failures and corrected results together. Do not add these operational
