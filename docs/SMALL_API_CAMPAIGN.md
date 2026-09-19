@@ -466,6 +466,22 @@ post-hoc selection, not attack success, safety or a universal optimum. Preserve
 the selection rule in reporting; the CSV includes it beside the exact chosen
 generation identities. No retained data or original campaign settings change.
 
+### 8.6. Optional: compare two individual measured jobs
+
+1. Click **Stats -> Compare campaigns -> Compare individual measured jobs**.
+2. Choose **Left job** and **Right job**, then click **Compare job outputs**.
+   The list identifies each job's campaign and recorded state.
+3. Read **Input overlap**, then **Outcomes by model, condition and task**.
+   Missing outputs, policy refusals and truncation remain distinct. Token totals
+   show how many outputs have recorded usage; unknown usage is not zero.
+4. Click **Export these job statistics (CSV)** for the displayed breakdown.
+
+This view uses indexed measured outcomes, not every planned request. A recovered
+job sharing an output directory cannot be credited independently; use
+**Compare whole campaigns** for that history. Unindexed jobs cannot acquire
+results merely because their names resemble a campaign. For paired judging
+and safety rates, use the campaign comparison described in sections 8.2-8.5.
+
 ## 9. Human evaluation: review answers yourself or organize an independent study
 
 The default page lets you evaluate saved answers yourself. A separate

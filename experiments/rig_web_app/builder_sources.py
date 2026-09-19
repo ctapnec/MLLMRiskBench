@@ -131,8 +131,6 @@ def source_panel(app, params: dict[str, str]) -> str:
         content += "<p><a href='/jobs/" + escape(job_id) + "'>Open the input preparation job and its artifacts</a></p>"
         content += "<input type='hidden' form='builder' name='retained_sources_job' value='" + escape(job_id) + "'>"
     from .builder_budget import budget_panel
-    from .builder_replays import replay_panel
-    from .builder_programs import program_panel
     from .builder_collection import collection_panel
     from .builder_native_judging import native_judging_panel
     from .builder_haiku_judging import haiku_judging_panel

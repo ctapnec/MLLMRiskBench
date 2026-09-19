@@ -75,8 +75,21 @@ work view links to hidden technical stages; failures are not deleted.
 **Stats -> Compare campaigns** opens the exact-input comparison flow from two
 selected campaigns. Input-union composition charts distinguish matched,
 left-only, right-only and ambiguous inputs. They are coverage diagrams, not
-pooled success rates. Arbitrary cross-job matching remains unavailable without
-indexed input ownership; standalone job reports remain separately accessible.
+pooled success rates. **Compare individual measured jobs** selects indexed
+outputs using the recorded job output directory and campaign ownership. It
+shows input overlap, usability, missingness, policy outcomes, truncation and
+known token usage separately by model, condition and task, with a CSV export.
+Shared recovery directories are not attributed to one execution. Unindexed
+historical jobs require their campaign reports. Saved-outcome counts are not
+the denominator of all scheduled inputs.
+
+Assessment execution rechecks the exact answer and judging condition, not
+only the earlier preparation snapshot. A second prepared assessment reuses
+valid verdicts completed in the meantime. New Haiku assessments checkpoint
+each answer using the existing retained executor, so an interruption followed
+by another assessment cannot duplicate completed paid work. Reuse is recorded
+as a reference, never a fictitious call or a new zero-cost charge. The original
+configuration bytes are preserved when copied into an assessment directory.
 
 **Stats -> SVM results** presents retained classifier studies, including the
 historical shared local/hosted study. Held-out metrics, baselines, class/group

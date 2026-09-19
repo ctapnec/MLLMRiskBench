@@ -178,6 +178,14 @@ regenerating it. Probe execution, recovery, transport forms, measured results,
 charts and exports were checked on desktop and mobile. This is reference
 evidence, not an instruction to recreate a historical failure.
 
+For individual measured runs, open **Stats -> Compare campaigns -> Compare
+individual measured jobs**. Choose **Left job** and **Right job**, then click
+**Compare job outputs**. The input-overlap chart and per-condition table keep
+missing outputs, refusals, truncation and known token usage separate. **Export
+these job statistics (CSV)** downloads that selection. Shared recovery output
+directories require whole-campaign comparison; saved outcomes do not represent
+all planned inputs. See [the API guide's job-comparison steps](SMALL_API_CAMPAIGN.md#86-optional-compare-two-individual-measured-jobs).
+
 ## 8. Optional: compare these answers with a hosted model
 
 The local demonstration is complete after section 7. This optional continuation
