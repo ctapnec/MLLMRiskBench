@@ -124,8 +124,8 @@ def test_analysis_resolves_named_selection_and_bounds_threads(app, monkeypatch):
     command,values,kw=captured[0]
     assert command=='response_svm' and values['--study']=='on'
     assert values['--database']==str(app.db.path) and values['--campaign#1']==source
-    assert [key for key in values if key.startswith('--run-id')]==['--run-id']
-    assert values['--run-id']=='real-run' and kw['campaign_id']==owner
+    assert '--source-root' not in values and '--run-id' not in values
+    assert values['--source-campaign']==source and kw['campaign_id']==owner
 
 
 @pytest.mark.parametrize('width',[1440,390])

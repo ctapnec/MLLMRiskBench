@@ -1045,6 +1045,7 @@ def _commands() -> dict[str, Command]:
                 CommandParam("--package", "flag"),
                 CommandParam("--predict", "flag"),
                 CommandParam("--study", "flag"),
+                CommandParam("--source-campaign", "str"),
                 CommandParam("--database", "path"),
                 CommandParam("--candidates", "path"),
                 CommandParam("--source-root", "path", repeat=True),

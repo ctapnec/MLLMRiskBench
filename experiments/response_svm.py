@@ -74,7 +74,12 @@ def study(args):
     if not candidates.exists():
         if args.candidates:raise ValueError('The selected source candidates are unavailable')
         print(json.dumps(dict(stage='saved_inputs',status='running')),flush=True)
-        rows=candidates_from_cells(read_sources(args.source_root,args.run_id))
+        if args.source_campaign:
+            from experiments.response_svm_sources import indexed_candidates
+            rows,source_report=indexed_candidates(args.database,args.source_campaign)
+            checkpoint(root/'source-metadata.json',source_report)
+        else:
+            rows=candidates_from_cells(read_sources(args.source_root,args.run_id))
         checkpoint(candidates,rows)
     export=['--export','--database',str(args.database),'--candidates',str(candidates),
         '--matched-campaign',args.matched_campaign,'--judge-condition',args.judge_condition]
@@ -122,6 +127,7 @@ def main(argv=None):
     parser.add_argument("--database", type=Path)
     parser.add_argument("--candidates", type=Path)
     parser.add_argument("--source-root", type=Path, action="append",default=[])
+    parser.add_argument("--source-campaign",help="Read indexed local attempts without corpus reconstruction")
     parser.add_argument("--run-id", action="append",default=[])
     parser.add_argument("--campaign", action="append", default=[])
     parser.add_argument("--matched-campaign")
@@ -140,7 +146,7 @@ def main(argv=None):
     parser.add_argument("--holdout-corpus", action="append", default=[])
     args = parser.parse_args(argv)
     if args.study:
-        if not all((args.database,args.campaign,args.matched_campaign,args.judge_condition)) or not (args.candidates or args.source_root):
+        if not all((args.database,args.campaign,args.matched_campaign,args.judge_condition)) or not (args.candidates or args.source_root or args.source_campaign):
             parser.error('Study needs selected campaigns, a judge and saved source inputs')
         return study(args)
     if args.export and not all((args.database, args.candidates, args.campaign,

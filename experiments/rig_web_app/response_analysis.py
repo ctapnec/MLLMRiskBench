@@ -96,13 +96,7 @@ def start(app, data):
     rows=source_runs(app.db,source)
     if not rows:raise ValueError('Choose a saved local source campaign')
     out=(app.results_root/'rig-web'/'response-analysis'/uuid4().hex).resolve()
-    values=source_arguments(rows,app.results_root,out)
-    # An indexed run can span conditions/corpora. Select it once, retaining all
-    # source directories needed to locate its original rows.
-    for key in list(values):
-        if key.startswith('--run-id'):del values[key]
-    for i,key in enumerate(dict.fromkeys(r['run_id'] for r in rows)):
-        values['--run-id'+(f'#{i}' if i else '')]=key
+    values={'--source-campaign':source,'--out':str(out)}
     values.update({'--study':'on','--database':str(app.db.path),'--campaign':owner,
         '--matched-campaign':matched,'--judge-condition':data['teacher'],'--seed':str(seed),'--bootstrap':str(bootstrap)})
     if data.get('include_source')=='on' and source!=owner:values['--campaign#1']=source
