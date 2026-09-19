@@ -44,7 +44,10 @@ def _guidance(app, params):
     owner = params.get('campaign_id', '')
     base = '/build?campaign_id=' + quote(owner, safe='') if owner else '/build?work_kind=campaign'
     campaign = '/campaigns/' + quote(owner, safe='') if owner else base
-    link = lambda tab, target='': base + '#' + (target or 'build-' + tab)
+    def link(tab, target=''):
+        if target == 'retained-inputs' and params.get('campaign_inputs') != 'saved':
+            target = 'campaign-workflow'
+        return base + '#' + (target or 'build-' + tab)
     tool = lambda command: '/commands?cmd=' + command + ('&campaign_id=' + owner if owner else '')
     matched = params.get('campaign_inputs') == 'saved' or (
         not params.get('campaign_flow') and bool(params.get('retained_source_campaign')))
@@ -80,7 +83,7 @@ def _guidance(app, params):
         ('Inputs', 'Choose a small, interpretable input selection',
          'For fresh inputs, select your corpora and attacks in Pipeline, then set the per-arm limit, '
          'sampling policy and seeds in Execution. Keep text and image counts explicit. For reused inputs, '
-         'select the source campaign and saved runs, then set request caps in General. Prepare comparison and review '
+         'choose saved inputs in General -> Campaign workflow, select the source campaign and runs, then set request caps. Review campaign '
          'handles input extraction and the following preparation stages automatically. It makes no generation calls. '
          'HarmBench, T3MP3ST, NanoGCG and IDEATOR have additional preparation controls when selected. '
          'Follow the chosen attacker panel before measured execution; corpus selection alone does not prepare an attack.',
@@ -212,7 +215,8 @@ def _guidance(app, params):
                 'automatically without target or judge generation. Token counting may contact the selected provider. '
                 'Review required diagnostics, measured requests, output allowances and collection/Haiku spending limits. '
                 'Keep Admission on Automatic; no receipt rows or preparation jobs need coordinating.',
-                [('Open campaign choices',link('general','campaign-workflow')),('Review the campaign',link('general','pipeline-review'))]),
+                [('Open campaign choices',link('general','campaign-workflow')),('Review the campaign',link('general','pipeline-review')),
+                 ('Inspect automatic connection settings',link('admission','transport-evidence'))]),
             'Run': ('Start once and follow campaign progress',
                 'Click Start campaign on the completed review. Required checks, collection and selected saved-answer '
                 'assessment proceed on one progress page. Stop campaign prevents later stages and stops active work. '

@@ -254,6 +254,7 @@ def review(app, operation):
     body = '<h1>Review campaign</h1>'+app._campaign_banner(params['campaign_id'])
     body += '<section class="card"><h2>Collection and evaluation</h2><p>One start runs the required checks, '
     body += 'collects answers and completes the selected assessments. No calls have been made by preparation.</p>'
+    body += '<p>Models: '+html.escape(', '.join(filter(None,(params.get('api'),params.get('local')))))+'</p>'
     eligible = True
     if child['kind'] == 'matched':
         from .builder_collection import collection_launch_values
@@ -340,6 +341,7 @@ def progress(app, operation):
         body += '<p>Collection and selected assessment stages have finished. Coverage reports retain missing answers, exclusions and invalid verdicts.</p>'
     else:
         body += '<p class="notice amber">'+html.escape(operation.get('error') or 'Campaign stopped.')+'</p><form class="action-row" method="post" action="/operations/'+operation['id']+'/retry"><button>Resume campaign</button></form>'
+        body += '<p><a href="/build?campaign_id='+owner+'#campaign-workflow">Change the reported campaign choice</a></p>'
     body += '<p><a href="/campaigns/'+owner+'?section=results">Results</a> | <a href="/campaigns/'+owner+'?section=judging">Judging</a> | <a href="/campaigns/'+owner+'?section=costs">Costs</a></p></section>'
     for kind in ('local', 'haiku'):
         summary = operation.get(kind+'_summary')

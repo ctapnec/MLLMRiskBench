@@ -120,7 +120,7 @@ def test_completed_judging_preparation_is_not_a_completed_judgment(command):
 def test_guide_covers_all_build_sections_and_optional_campaign_analysis(app):
     saved = app._save_build_campaign(draft(campaign_guide='on'))
     content = campaign_guide.render(app, saved)
-    for target in ('retained-inputs','local-hardware','target-models','evaluation-judges','transport-evidence','local-serving'):
+    for target in ('campaign-workflow','local-hardware','target-models','evaluation-judges','transport-evidence','local-serving'):
         assert '#' + target in content
     for topic in ('Runtimes', 'Human review', 'SVM analysis', 'Recovery'):
         assert topic in content
@@ -168,7 +168,7 @@ def test_browser_checkbox_modal_keyboard_steps_links_and_single_run(browser, app
         page.get_by_role('button', name='4. Settings', exact=True).click()
         assert 'Choose evaluation' in page.locator('.campaign-guide-section:visible').inner_text()
         page.locator('[data-guide-next]').click()
-        assert 'Prepare and review' in page.locator('.campaign-guide-section:visible').inner_text()
+        assert 'Review the complete campaign' in page.locator('.campaign-guide-section:visible').inner_text()
         page.locator('[data-guide-back]').click()
         page.keyboard.press('Escape')
         assert not dialog.is_visible()
@@ -263,7 +263,8 @@ def test_guide_links_reveal_scroll_and_focus_exact_controls_including_same_hash(
         destination('sample-size-control','build-execution')
         topic('3. Inputs')
         page.get_by_role('link',name='Select saved source runs',exact=True).click()
-        destination('retained-inputs','build-general')
+        destination('campaign-workflow','build-general')
+        assert page.locator('[name=campaign_inputs]').input_value() == 'fresh', 'A help link must not change the scientific input selection'
         topic('5. Prepare')
         page.get_by_role('link',name='Check transport evidence',exact=True).click()
         destination('transport-evidence','build-admission')
@@ -279,8 +280,8 @@ def test_guide_links_reveal_scroll_and_focus_exact_controls_including_same_hash(
 
 
 @pytest.mark.parametrize('field,target', [
-        ('retained_sources_job','automatic-comparison'),('retained_budget_job','automatic-comparison'),
-        ('retained_replays_job','automatic-comparison')])
+        ('retained_sources_job','campaign-workflow'),('retained_budget_job','campaign-workflow'),
+        ('retained_replays_job','campaign-workflow')])
 def test_matched_guide_preparation_links_follow_available_prerequisites(app,field,target):
     steps,_,_,_=campaign_guide._guidance(app,draft(api='google:flash',retained_source_campaign='source',**{field:'prepared'}))
     prepare=next(step for step in steps if step[0]=='Prepare')
