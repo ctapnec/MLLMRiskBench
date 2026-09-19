@@ -4,6 +4,24 @@ For the normal graphical workflow, use the
 [UI campaign walkthrough](../docs/UI_CAMPAIGN_WALKTHROUGH.md). This runbook keeps
 the detailed CLI equivalents and historical execution distinctions.
 
+For new measured campaigns, Build General offers one Campaign workflow: choose
+installed corpora/frameworks or saved local inputs, select saved-answer
+assessment and applicable spending ceilings, then Review campaign and Start
+campaign. Preparation, diagnostics, collection and selected assessment share
+one durable progress page. Internal jobs are technical details, not operator
+handoffs. Single-run and historical continuation controls remain available.
+See [the small API guide](../docs/SMALL_API_CAMPAIGN.md) and
+[the local guide](../docs/SMALL_LOCAL_CAMPAIGN.md).
+
+Direct hosted collection uses the existing Runner through the campaign spending
+controller. Its per-attempt admission covers retries, bridge callback threads
+and recycled Runner subprocesses. Counted request allowances and frozen prices
+are retained separately from actual provider usage. Unused conservative
+allowance is not an incurred cost, and a continuation does not reset allowance.
+Independent Haiku assessment has its own reviewed ceiling and exact-output
+checkpoints. Collection remains saved if later assessment exceeds that ceiling.
+No new answer retries, model checksum scans or runtime installations are added.
+
 Console-managed Linux jobs retain their own lifecycle state across console
 restarts. Monitoring resumes without repeating the command. An unexpected
 process loss is reported as interrupted, with saved outputs preserved; an

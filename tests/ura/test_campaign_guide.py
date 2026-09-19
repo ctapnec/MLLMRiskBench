@@ -100,7 +100,7 @@ def test_matched_and_local_suggestions_are_distinct_and_links_do_not_execute(app
     assert all(urlsplit(href).path in {'/build', '/config', '/config/secrets', '/commands', '/jobs', '/campaigns', '/stats'} for href in links.hrefs)
     assert '/stats?view=svm' in links.hrefs
     assert all(not urlsplit(href).fragment or urlsplit(href).fragment in {
-        'build-general','build-evaluation','target-models','input-corpora','retained-inputs',
+        'build-general','build-evaluation','target-models','input-corpora','retained-inputs','campaign-workflow',
         'local-hardware','framework-runtimes','attack-frameworks','sample-size-control',
         'evaluation-judges','execution-budgets','local-serving','cfg-editor','pipeline-review','transport-evidence','automatic-comparison'
     } for href in links.hrefs)
@@ -266,7 +266,7 @@ def test_guide_links_reveal_scroll_and_focus_exact_controls_including_same_hash(
         destination('campaign-workflow','build-general')
         assert page.locator('[name=campaign_inputs]').input_value() == 'fresh', 'A help link must not change the scientific input selection'
         topic('5. Prepare')
-        page.get_by_role('link',name='Check transport evidence',exact=True).click()
+        page.get_by_role('link',name='Inspect automatic connection settings',exact=True).click()
         destination('transport-evidence','build-admission')
         assert page.locator('#setup-mode').is_visible()
         assert not page.locator('#advanced-setup-fields').is_visible()

@@ -22,7 +22,10 @@ execution and scoring eligibility are also separate: use the current retained
 source review, not a historical acquisition record, to determine admission.
 
 For your first small hosted run, follow the
-[click-by-click Flash campaign instructions](docs/SMALL_API_CAMPAIGN.md).
+[small API campaign instructions](docs/SMALL_API_CAMPAIGN.md). Local and hosted
+campaigns share Review campaign, Start campaign and automatic selected assessment.
+The [results and analysis reference](docs/CAMPAIGN_RESULTS_AND_ANALYSIS.md) covers
+optional comparisons, human evaluation and SVM analysis separately.
 Use the [UI campaign walkthrough](docs/UI_CAMPAIGN_WALKTHROUGH.md) for the broader
 workflow and interpretation of retained results.
 The detailed [campaign workspace guide](docs/CAMPAIGN_WORKSPACES.md) records the

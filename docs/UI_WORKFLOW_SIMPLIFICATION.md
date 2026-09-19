@@ -1,6 +1,7 @@
 # Operator workflows
 
-Status: ordinary preparation flows deployed on 19 September 2026. Direct runs,
+Status: shared campaign execution is under rig acceptance; not yet deployed.
+Ordinary preparation flows were deployed on 19 September 2026. Direct runs,
 matched hosted collection, local/Haiku judging and personal review now advance
 without manual internal job handoffs. The coverage table below also records
 the wider design scope. SVM studies now combine extraction, export, evaluation
@@ -19,6 +20,16 @@ handoffs. Reopening or refreshing must not duplicate work. Preparation must not
 silently make target or judge calls. Any necessary diagnostic generations belong
 in the reviewed execution workload, not an undisclosed preparation step.
 
+The shared campaign flow extends this through collection and selected
+saved-answer assessment. General owns the input-source choice and assessment
+selection; both fresh and retained inputs use Review campaign and Start
+campaign. An existing operation record owns its child preparation and jobs.
+The operator does not choose a controller, copy preparation IDs, refresh a
+pricing date, authorize intermediate stages separately or start the selected
+judges after collection. Stop prevents later stages; Resume uses the existing
+collection and assessment checkpoints. Old manually prepared work remains
+inspectable and retains its original continuation path.
+
 ## Coverage and acceptance
 
 | Flow | Operator decisions | Internal work to automate |
@@ -35,8 +46,9 @@ in the reviewed execution workload, not an undisclosed preparation step.
 
 Advanced CLI forms remain available for debugging and exceptional imports.
 They are collapsed together under Tools, not presented as the ordinary flow.
-Compose & review begins no-call preparation directly, without a second Prepare
-confirmation. Real model calls still require the resulting execution start.
+Review campaign begins preparation directly, without a second Prepare
+confirmation. Real model calls require Start campaign. Single runs retain
+Compose & review and their own explicit start.
 Normal flows use named saved objects and system-derived paths. They do not ask
 for database filenames, receipt hashes, campaign IDs or intermediate output
 directories.
@@ -104,11 +116,16 @@ historical shared local/hosted study. Held-out metrics, baselines, class/group
 counts and uncertainty remain separate by study, task and split. Reading or
 exporting these results never starts training or provider calls.
 
-Direct hosted review displays priced cost scenarios, not an exact monetary
-ceiling: inputs assume 4,096 tokens, and quarter/full output allowances are
-shown before HTTP retries. Missing prices are explicit. The matched-input
-route retains its counted-request budget review. Do not present these distinct
-estimates as interchangeable guarantees.
+Direct hosted projections still display labelled quarter/full-output scenarios,
+not exact future input counts. New campaigns also supply a collection allowance:
+the existing provider attempt hook counts each actual request before it can
+spend, using frozen route settings and prices. Diagnostics and retries share
+the same durable allowance. Bridge callback threads and the existing GPU
+recycling subprocesses retain that admission. Saved-input preparation retains
+its counted selection and must fit the chosen ceiling before start. Neither
+method establishes a provider invoice or infers current account balances.
+Haiku assessment has a separate ceiling, frozen configuration and reusable
+per-answer checkpoints; an over-budget assessment does not repeat collection.
 
 The rig checks cover stage progression, frozen configuration, launcher
 integration, restart, stop/resume, reuse and concurrent draft edits. Reversing
