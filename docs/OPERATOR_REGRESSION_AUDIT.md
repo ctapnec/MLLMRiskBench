@@ -203,3 +203,34 @@ exercised scenarios. No new paid call, model generation, runtime installation
 or model-weight scan was required. The initial five technical preparation jobs
 remain separate evidence; original campaign answers and judgments are unchanged.
 Evidence: `runs/engineering/boundary-regression-20260919`, outside Git.
+
+## Interrupted diagnostic ownership follow-up
+
+A further pass found a stop/resume race: a connection diagnostic could already
+be running before its parent saved the handoff reference. Stop now follows the
+child's saved execution identity as well. Resume checks every owned process
+before changing stages, and recovers an interrupted diagnostic from that same
+identity without requiring an operator to manage an internal job.
+
+The existing 250-case pass succeeded before four new fault-window cases exposed
+the defect. The corrected affected suite passed 254 tests. Two additional
+desktop/mobile browser cases terminate a real isolated idle subprocess through
+the actual Stop handler, check duplicate-click blocking and spinner release,
+then preserve its recovery identity. Reverting the fix fails all six new cases.
+The clean-release pass passed 93 tests. These overlapping passes are not a
+count of unique tests, and the isolated subprocess produces no research data.
+
+Production comparisons exercise All models with minimum-output, maximum-output,
+highest-usable-response and all-condition selections. Jointly valid chart counts
+agree with CSV exports; local/hosted campaign, corpus and modality scopes remain
+separate. Cost exports agree with the indexed attempt counts and known charges,
+without treating unknown charges as zero or claiming invoice reconciliation.
+No new model generation, paid call, model-weight scan or runtime installation
+was needed. Campaign records and saved drafts remain unchanged.
+
+Post-deployment desktop/mobile checks also retain all comparison selections
+through Next and browser Back; adjacent CSV pages contain distinct condition
+pairs. No medium/high finding remains open in these exercised scenarios. This
+is bounded acceptance, not a claim that no further defect can exist.
+
+Evidence: `runs/engineering/operator-variant-regression-20260919`, outside Git.
