@@ -155,10 +155,14 @@ def _guidance(app, params):
          'inspect its denominator and coverage. Missing judgments are not substituted. Keep '
          'missing responses and historical replacements explicit. Export figures and their counts '
          'from Overview and Judging, and the exact paired counts from Compare. Definition is the editable '
-         'draft, not a replacement for each job\'s recorded execution settings.',
+         'draft, not a replacement for each job\'s recorded execution settings. Stats -> Compare campaigns '
+         'also links to individual measured-job comparisons: select two indexed jobs with separate output '
+         'directories to inspect input overlap, outcomes, truncation and token usage. Shared recovery '
+         'histories require campaign comparison; saved-output counts are not all scheduled inputs.',
          [(label, campaign + '?section=' + section if owner else link('general'))
           for label, section in [('Inspect results', 'results'), ('Compare matched inputs', 'compare'),
-              ('Inspect costs', 'costs'), ('Coverage figures and exports', 'overview'), ('Inspect the saved draft', 'definition')]]),
+              ('Inspect costs', 'costs'), ('Coverage figures and exports', 'overview'), ('Inspect the saved draft', 'definition')]]
+          + [('Compare individual measured jobs', '/stats?view=compare&scope=jobs')]),
         ('Human review', 'Evaluate saved answers or arrange independent review',
          'For active or finished campaigns, open Human evaluation and use Review saved answers for your own evaluation: choose Saved results, '
          'name the review, choose its rubric and source-cluster count, acknowledge sensitive content and click '

@@ -2,6 +2,7 @@ import json
 import pytest
 from test_operator_operations import app  # noqa: F401
 from experiments.rig_web_app import stats_jobs
+from test_rig_web_busy_browser import browser  # noqa: F401
 
 
 def seed(app):
@@ -67,3 +68,36 @@ def test_scope_cannot_include_diagnostics_or_unknown_jobs(app):
     assert [r['job_id'] for r in stats_jobs.choices(app)]==['one']
     with pytest.raises(ValueError,match='indexed measured job'):
         stats_jobs.response(app,dict(left_job='two'))
+
+
+@pytest.mark.parametrize('width',[390,1440])
+def test_job_comparison_browser_selection_and_guarded_export(app,browser,width):
+    from urllib.parse import urlsplit,parse_qs
+    from experiments.rig_web_app import ui
+    seed(app)
+    page=browser.new_page(viewport=dict(width=width,height=1000),accept_downloads=True)
+    errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
+    def route(item):
+        url=urlsplit(item.request.url)
+        if url.path=='/static/style.css':return item.fulfill(status=200,content_type='text/css',body=ui._STYLE)
+        if url.path=='/static/favicon.svg':return item.fulfill(status=204)
+        query={k:v[-1] for k,v in parse_qs(url.query).items()}
+        status,mime,body=stats_jobs.response(app,query)
+        item.fulfill(status=status,content_type=mime,body=body)
+    page.route('http://jobs.test/**',route)
+    try:
+        page.goto('http://jobs.test/stats?view=compare&scope=jobs')
+        page.get_by_label('Left job').select_option('one')
+        page.get_by_label('Right job').select_option('two')
+        page.get_by_role('button',name='Compare job outputs',exact=True).click()
+        page.get_by_role('heading',name='Input overlap',exact=True).wait_for()
+        page.wait_for_function('!window.uraBusy.isBusy()')
+        assert page.locator('body > nav').is_visible()
+        assert not page.evaluate('document.documentElement.scrollWidth>innerWidth')
+        with page.expect_download() as pending:
+            page.get_by_role('link',name='Export these job statistics (CSV)',exact=True).click()
+        assert pending.value.suggested_filename=='job-comparison.csv'
+        page.wait_for_function('!window.uraBusy.isBusy()')
+        assert page.locator('#campaign-export-status').inner_text()=='Export prepared.'
+        assert not errors and not app.jobs
+    finally:page.close()
