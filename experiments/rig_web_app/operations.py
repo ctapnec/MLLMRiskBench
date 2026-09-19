@@ -158,11 +158,24 @@ class OperationsMixin:
         identity = {key:value for key,value in params.items()
             if not (kind == 'matched' and key.startswith('retained_') and key.endswith('_job'))}
         signature = hashlib.sha256(json.dumps({'kind':kind, 'params':identity}, sort_keys=True).encode()).hexdigest()
+        # Automatic output attempts and discovered connection receipts are
+        # preparation results, not new operator selections. Compare original
+        # choices as well as the exact frozen signature when reopening a
+        # campaign. Manual paths/receipts remain significant; execution still
+        # uses the original, unchanged snapshot, never these refreshed values.
+        def selection(values):
+            if kind != 'campaign' or values.get('setup_mode') != 'automatic':
+                return values
+            return {key:value for key,value in values.items()
+                    if key != 'out' and not key.startswith(('att_path', 'att_sha'))}
         with self._app_lock:
             for operation in self._operations.values():
                 reusable = operation['status'] == 'preparing' or (
                     operation['status'] in {'ready', 'complete'} and kind in {'direct', 'matched', 'transport-check', 'campaign'})
-                if operation['signature'] == signature and reusable:
+                same_campaign = (kind == 'campaign' and operation['kind'] == kind
+                    and selection(operation.get('original_params', operation['params'])) == selection(params))
+                if (reusable and (operation['signature'] == signature or same_campaign)
+                        and (kind != 'campaign' or self._campaign_configuration_matches(operation, params))):
                     return operation['id']
             operation = dict(id=uuid4().hex, kind=kind, params=params, signature=signature,
                 status='preparing', step=0, current_job='', jobs=[], launch_pending=False, error='',
@@ -186,6 +199,44 @@ class OperationsMixin:
             self._save_operation(operation)
             self._ensure_operation_worker(operation['id'])
             return operation['id']
+
+    def _campaign_configuration_matches(self, operation, params):
+        """Do not mistake changed configured generation settings for a reopen.
+
+        Compare the small retained configuration files, not model/corpus files.
+        Reopening results requires no live model discovery or inference.
+        """
+        child = self._operations.get(operation.get('preparation'))
+        if child is None:
+            return True  # Preparation has not frozen configuration yet.
+        try:
+            if child['kind'] == 'matched':
+                if not child['params'].get('retained_budget_job'):
+                    return True
+                from .builder_replays import prepared_sources
+                prepared_sources(self, dict(child['params'], **params))
+                return True
+            manifest = child.get('snapshot_manifest', {})
+            current = {}
+            if 'api_config' in manifest:
+                current['api_config'] = self._canonical_json_bytes(self._selected_api_config_snapshot(params)[3])
+            if 'source_config' in manifest:
+                current['source_config'] = self._canonical_json_bytes(self._selected_source_config_snapshot(params)[2])
+            if 'local_config' in manifest:
+                specs = self._split_list(params.get('local', ''))
+                judge = params.get('judge_model', '')
+                if judge.startswith(('vllm:', 'ollama:')) and judge not in specs:
+                    specs.append(judge)
+                current['local_config'] = self._selected_local_config_payload(specs,
+                    default_quantization=params.get('quantization', ''),
+                    quantization_overrides={k.removeprefix('quantization::'):v
+                        for k,v in params.items() if k.startswith('quantization::')})
+            return all(payload == self._bounded_private_bytes(
+                self._operation_root(child)/('snapshot-'+name+'.bin'),
+                max_bytes=1024*1024, label='retained campaign configuration')
+                for name,payload in current.items())
+        except (OSError, ValueError, KeyError, TypeError):
+            return False
 
     def _reuse_direct_preparation(self, operation):
         params = operation['params']

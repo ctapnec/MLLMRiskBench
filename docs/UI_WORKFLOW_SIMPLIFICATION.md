@@ -181,3 +181,13 @@ combined SMALL_CAMPAIGNS.md guide contains the common primary workflow, the
 local/API differences, historical reference outcomes and detailed optional
 comparison, human-review and SVM actions. Its short entry pages preserve old
 links without maintaining separate recipes.
+
+Completed-work reuse applies to the actual Build review submission, not only
+the existing progress link. With automatic setup, regenerated output-directory
+suffixes and discovered connection records are preparation details, not new
+experimental choices. Reuse leaves the original execution settings intact.
+Changed model/input selections, sampling, configured output allowances, explicit
+manual paths and manual admission records still require a new review. Small
+retained configuration files are compared without scanning model weights or
+contacting a local serving daemon merely to reopen completed results. Create a
+new campaign when intentionally repeating identical conditions.

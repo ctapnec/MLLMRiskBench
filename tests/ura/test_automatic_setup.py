@@ -105,6 +105,98 @@ def test_standalone_does_not_borrow_campaign_checks(campaign):
     assert '/standalone/measured-' in result['out']
 
 
+def test_completed_campaign_review_reuses_original_after_output_and_receipt_refresh(campaign, monkeypatch):
+    """The real Build POST, not a replay of already frozen operation params."""
+    app,params,add=campaign
+    monkeypatch.setattr(app,'_ensure_operation_worker',lambda *a:None)
+    form=dict(params,setup_mode='automatic',campaign_flow='on',campaign_collection_cost='1',
+              campaign_inputs='fresh',_refresh_setup='yes')
+    status,location,_=app.handle('POST','/build/review',form)
+    assert status==303
+    operation=app._operations[location.rsplit('/',1)[-1]]
+    original=json.loads(json.dumps(operation['original_params']))
+    operation['status']='complete'
+    with app.db._conn:
+        app.db._conn.execute('INSERT INTO jobs(job_id,command,argv,state,exit_code,run_kind,out_dir) VALUES(?,?,?,?,?,?,?)',
+            ('finished','run_matrix','[]','complete',0,'measured',original['out']))
+    add('new-connection')
+    refreshed=app._builder_params(form)
+    assert refreshed['out']==original['out']+'-attempt-2'
+    assert refreshed['att_path1'] and 'att_path1' not in original
+    app._save_operation(operation)
+    app._restore_operations()
+    status,reopened,_=app.handle('POST','/build/review',form)
+    assert status==303 and reopened==location
+    assert len(app._operations)==1 and not app.jobs
+    assert app._operations[operation['id']]['params']==original
+    for change in ({'limit':'3'},{'seeds':'9'},{'api':'openai:other'},
+                   {'corpora':'other'},{'_api_config_snapshot_sha256':'c'*64},
+                   {'source_conformance_sha':'b'*64},
+                   {'setup_mode':'manual','out':'explicit-other'}):
+        # Manual/source changes are tested without automatic environment
+        # substitution, which intentionally refreshes the configured receipt.
+        changed=dict(original,**change)
+        assert app._start_operation('campaign',changed)!=operation['id']
+
+
+def test_manual_campaign_receipt_and_output_changes_are_new_operations(campaign,monkeypatch):
+    app,params,_=campaign
+    monkeypatch.setattr(app,'_ensure_operation_worker',lambda *a:None)
+    params=dict(params,setup_mode='manual',out='explicit',att_path1='receipt',att_sha1='a'*64)
+    first=app._start_operation('campaign',params)
+    app._operations[first]['status']='complete'
+    for change in ({'out':'other'}, {'att_path1':'other'}, {'att_sha1':'b'*64}):
+        assert app._start_operation('campaign',dict(params,**change))!=first
+
+
+def test_completed_review_does_not_reuse_changed_configured_output_allowance(campaign,monkeypatch):
+    app,params,_=campaign
+    monkeypatch.setattr(app,'_ensure_operation_worker',lambda *a:None)
+    params=dict(params,setup_mode='automatic')
+    parent=app._operations[app._start_operation('campaign',params)]
+    config={_SPEC:{'max_tokens':2048}}
+    monkeypatch.setattr(app,'_selected_api_config_snapshot',lambda p:(None,None,None,config))
+    child=app._operations[app._start_operation('direct',params,snapshot={'api_config':app._canonical_json_bytes(config)})]
+    parent.update(status='complete',preparation=child['id'])
+    assert app._start_operation('campaign',params)==parent['id']
+    config[_SPEC]['max_tokens']=4096
+    assert app._start_operation('campaign',params)!=parent['id']
+
+
+def test_completed_local_review_checks_saved_settings_without_live_discovery(campaign,monkeypatch):
+    app,params,_=campaign
+    monkeypatch.setattr(app,'_ensure_operation_worker',lambda *a:None)
+    params=dict(params,setup_mode='automatic',local='ollama:example')
+    parent=app._operations[app._start_operation('campaign',params)]
+    config={'ollama:example':{'num_predict':2048}}
+    def current(specs,**kwargs):
+        assert specs==['ollama:example'] and not kwargs.get('require_live_ollama')
+        return app._canonical_json_bytes(config)
+    monkeypatch.setattr(app,'_selected_local_config_payload',current)
+    monkeypatch.setattr(app,'_builder_model_acquisition_required',lambda p:False)
+    child=app._operations[app._start_operation('direct',params,snapshot={'local_config':current(['ollama:example'])})]
+    parent.update(status='complete',preparation=child['id'])
+    assert app._start_operation('campaign',params)==parent['id']
+    config['ollama:example']['num_predict']=4096
+    assert app._start_operation('campaign',params)!=parent['id']
+
+
+def test_completed_matched_review_rechecks_existing_forecast_settings(campaign,monkeypatch):
+    from experiments.rig_web_app import builder_replays
+    app,params,_=campaign
+    monkeypatch.setattr(app,'_ensure_operation_worker',lambda *a:None)
+    params=dict(params,setup_mode='automatic',campaign_inputs='saved')
+    parent=app._operations[app._start_operation('campaign',params)]
+    child=app._operations[app._start_operation('matched',dict(params,retained_budget_job='budget'))]
+    parent.update(status='complete',preparation=child['id'])
+    def same(app,p):assert p['retained_budget_job']=='budget'
+    monkeypatch.setattr(builder_replays,'prepared_sources',same)
+    assert app._start_operation('campaign',params)==parent['id']
+    def changed(*a):raise ValueError('Model settings or pricing date changed')
+    monkeypatch.setattr(builder_replays,'prepared_sources',changed)
+    assert app._start_operation('campaign',params)!=parent['id']
+
+
 @pytest.mark.parametrize('width',[1440,390])
 def test_automatic_fields_hidden_and_no_manual_receipts_on_save(browser,campaign,width):  # noqa: F811
     app,params,add=campaign;add('text');add('image',('text','image'))

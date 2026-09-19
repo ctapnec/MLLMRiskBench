@@ -177,6 +177,11 @@ Return through **Campaigns -> your campaign name -> Overview -> Prepared and
 active work**, or **Configure in Build -> General -> Prepared and active work**.
 Select **View progress**, or **Review and start** if execution has not begun.
 Reopening does not repeat completed work.
+**Review campaign** also reopens the existing result when its choices and
+configured generation settings are unchanged. Automatically discovered connection
+checks and output-folder numbering do not request another experiment. Change the
+experimental settings for new work, or create a new campaign for an intentional
+repeat of the same experiment.
 
 A failed connection check stops progression before measured execution. Its
 diagnostic output and error remain available; they are not benchmark results.
