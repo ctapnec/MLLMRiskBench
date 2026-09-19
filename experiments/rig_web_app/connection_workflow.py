@@ -118,9 +118,14 @@ def launch(app, operation):
     """Start once, retaining launch identity before creating the subprocess."""
     if operation.get('execution_job'):
         job = app.jobs.get(operation['execution_job'])
-        if job is None:
+        if job is not None:
+            return job
+        if (app.state_dir/operation['execution_job']).exists():
             raise ValueError('The reviewed launch is awaiting job recovery; it will not be duplicated')
-        return job
+        # start_job persists its directory and identity before spawning. No
+        # directory means the interruption preceded every possible model call.
+        operation.pop('execution_job')
+        app._save_operation(operation)
     params=operation['params']
     if app._validate_builder(params):
         raise ValueError('Prepared execution is no longer admissible. Reopen the experiment review.')

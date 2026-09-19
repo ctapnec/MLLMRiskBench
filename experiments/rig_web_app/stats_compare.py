@@ -6,6 +6,9 @@ from .ui import _page
 
 
 def response(app, query):
+    if query.get('scope')=='jobs':
+        from .stats_jobs import response as jobs
+        return jobs(app,query)
     rows = app.db.workspaces()
     if rows is None:
         raise ValueError('Campaign index unavailable')
@@ -18,7 +21,7 @@ def response(app, query):
                       left_condition='*', right_condition='*')
         return 303, '/campaigns/'+left+'?'+urlencode(params), b''
     body = '<h1>Stats</h1>'+app._work_view_tabs('stats','compare')
-    body += '<section class="card"><h2>Compare campaigns</h2><p>Select two campaigns, or the same campaign twice to compare its models. '
+    body += '<section class="card"><h2>Compare campaigns</h2><p><a href="/stats?view=compare&amp;scope=jobs">Compare individual measured jobs</a></p><p>Select two campaigns, or the same campaign twice to compare its models. '
     body += 'The next screen offers models, generation conditions and judging conditions, with matched-input coverage charts and paired outcome counts.</p>'
     body += '<form method="get" action="/stats"><input type="hidden" name="view" value="compare"><div class="campaign-grid">'
     for side in ('left','right'):

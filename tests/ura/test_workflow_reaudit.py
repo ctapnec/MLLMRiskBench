@@ -1,4 +1,5 @@
 import json
+import pytest
 from types import SimpleNamespace
 
 from test_operator_operations import app, child  # noqa: F401
@@ -59,6 +60,49 @@ def test_ready_checks_do_not_launch_without_reviewed_start(app,monkeypatch):
 def test_double_start_reopens_same_execution(app):
     job=child(app,'saved-run')
     assert connection.launch(app,dict(execution_job='saved-run')) is job
+
+
+@pytest.mark.parametrize('next_stage',['preflight','run'])
+def test_installed_model_preflight_does_not_require_later_connection_checks(app,monkeypatch,next_stage):
+    params=dict(setup_mode='automatic',mode='measured',_execution_config_bundle_sha256='same')
+    workflow=dict(params=params,execution_snapshot={},next_stage=next_stage,execution_config_bundle_sha256='same')
+    monkeypatch.setattr(app,'_workflow_execution_snapshot',lambda w:{})
+    checks=[]
+    def validate(p,*,preparation=False):
+        checks.append(preparation)
+        return {} if preparation else {'att':'Connection check required for generation'}
+    monkeypatch.setattr(app,'_validate_builder',validate)
+    monkeypatch.setattr(app,'_compose_from_builder',lambda p,**kw:('run_matrix',{},p))
+    monkeypatch.setattr(app,'_materialize_prepared_attacker_config',lambda *a,**kw:None)
+    if next_stage=='preflight':
+        assert app._compose_model_acquisition_lane(workflow)[0]=='run_matrix'
+    else:
+        with pytest.raises(ValueError,match='Connection check required'):app._compose_model_acquisition_lane(workflow)
+    assert checks==[next_stage=='preflight']
+
+
+@pytest.mark.parametrize('saved_launch',[False,True])
+def test_interruption_before_launch_recovers_only_when_no_process_could_exist(app,monkeypatch,saved_launch):
+    operation=dict(id='e'*32,execution_job='reserved-before-crash',params={},acquisition=False)
+    if saved_launch:(app.state_dir/'reserved-before-crash').mkdir()
+    monkeypatch.setattr(app,'_validate_builder',lambda p:{})
+    monkeypatch.setattr(app,'_ceilings_card',lambda p:('',True))
+    monkeypatch.setattr(app,'_operation_snapshot',lambda p:{})
+    monkeypatch.setattr(app,'_compose_from_builder',lambda p,**kw:('run_matrix',{},p))
+    monkeypatch.setattr(app,'_materialize_prepared_attacker_config',lambda *a,**kw:None)
+    calls=[]
+    def start(command,values,**kwargs):
+        calls.append(kwargs['reserved_job_id'])
+        return child(app,kwargs['reserved_job_id'])
+    monkeypatch.setattr(app,'start_job',start)
+    if saved_launch:
+        with pytest.raises(ValueError,match='awaiting job recovery'):connection.launch(app,operation)
+        assert not calls
+    else:
+        job=connection.launch(app,operation)
+        assert len(calls)==1 and job.job_id==operation['execution_job']
+        assert connection.launch(app,operation) is job
+        assert len(calls)==1
 
 
 def test_authorized_checks_run_sequentially_then_bind_evidence_without_changing_experiment(app,monkeypatch):

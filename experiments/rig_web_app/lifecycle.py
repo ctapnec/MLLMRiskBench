@@ -2914,7 +2914,7 @@ class LifecycleMixin:
         # not be resolved through mutable registries again; its exact snapshot
         # validation above is the continuity authority.
         if isinstance(workflow.get("execution_snapshot"), Mapping):
-            errors = self._validate_builder(params)
+            errors = self._validate_builder(params, preparation=workflow.get('next_stage') == 'preflight')
             if errors:
                 raise ValueError(
                     "reviewed Builder lane is no longer admissible: "
