@@ -85,7 +85,7 @@ def panel(app, params):
         escape(params.get('campaign_collection_cost',''))+'"></label>'
         '<p>Covers target calls, necessary diagnostics and inline hosted scoring. The independent Haiku assessment '
         'has its own ceiling below. Request counting may contact the selected provider without generating answers.</p>'
-        '<fieldset><legend>Assessment after collection</legend>'
+        '<fieldset class="campaign-assessment-options"><legend>Assessment after collection</legend>'
         '<label class="checkrow"><input form="builder" name="campaign_local" type="checkbox"'+
         (' checked' if params.get('campaign_local', 'on') == 'on' else '')+
         '><span>Fill missing original local-evaluator verdicts</span></label>'
@@ -246,7 +246,6 @@ def require_complete(job, label):
 def launch_job(app, operation, key, command, values):
     job_id = app._job_id_factory()
     operation[key] = job_id
-    operation.setdefault('launch_values', {})[key] = dict(values)
     app._save_operation(operation)
     return app.start_job(command, values, campaign_id=operation['params']['campaign_id'], reserved_job_id=job_id)
 
@@ -296,6 +295,11 @@ def stop(app, operation):
     child = app._operations.get(operation.get('preparation'))
     if child and child['status'] == 'preparing':
         app._stop_operation(child['id'])
+    if child and child.get('execution_job'):
+        # A child may have launched just before the parent's next poll.
+        # Stopping in this handoff gap must still stop the measured process.
+        operation['collection_job'] = child['execution_job']
+        app._save_operation(operation)
     for key in ('collection_job', 'local_preparation', 'local_execution', 'haiku_preparation', 'haiku_execution'):
         job = app.jobs.get(operation.get(key))
         if job and job.state() in ACTIVE:
@@ -304,6 +308,19 @@ def stop(app, operation):
 
 def retry(app, operation):
     child = app._operations.get(operation.get('preparation'))
+    if child and child['kind'] == 'direct':
+        for item in child.get('connection_operations', []):
+            probe = app.jobs.get(item.get('probe'))
+            if probe and probe.state() in {'failed','stopped','interrupted'}:
+                prepared = app._operations[item['preparation']]
+                prepared['resume_job'] = probe.job_id
+                prepared.pop('execution_job',None)
+                app._save_operation(prepared)
+                # Keep the old diagnostic/check in history. Resume the same
+                # output, then save its connection record normally.
+                item.pop('probe',None)
+                item.pop('check',None)
+        app._save_operation(child)
     if child and child['status'] in {'failed', 'stopped'}:
         app._retry_operation(child['id'])
     # Successful stages are immutable. Failed execution needs its checkpoint

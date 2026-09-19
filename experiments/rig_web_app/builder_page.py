@@ -2297,11 +2297,11 @@ class BuilderPageMixin:
         elif framework_runtime_state or framework_runtime_error:
             build_default = "build-runtimes"
         general_panel = (
-            "<div class='card' id='pipeline-review'><h2>"
+            "<div class='card' id='pipeline-details'><h2>"
             + _icon("flask")
             + "Current pipeline</h2>"
             "<p class='note'>A live summary of the controls across every builder "
-            "section. Receipt rows report presence only; Compose &amp; review "
+            "section. Receipt rows report presence only; the execution review "
             "produces the exact validated command before execution.</p>"
             "<dl class='builder-summary' aria-live='polite'>"
             "<div><dt>Composition</dt><dd id='build-summary-composition'>"
@@ -2321,18 +2321,23 @@ class BuilderPageMixin:
             "<p class='fieldlabel'>High-level composition preview "
             "<span class='fieldhint'>(not the final reviewed command)</span></p>"
             "<code id='buildpreview'>run_matrix (initializing current choices)</code>"
-            "<div class='campaign-actions'><button form='builder' type='submit' class='ghost' data-save-campaign "
-            "formaction='/build/save'>Save campaign</button>"
-            "<button form='builder' type='submit' data-review-campaign>Review campaign</button></div>"
             "</div>"
         )
         from .builder_sources import source_panel
         from .campaign_flow import panel as campaign_panel
-        general_panel += campaign_panel(self, dict(prefill))
+        details = general_panel
+        general_panel = campaign_panel(self, dict(prefill)) + source_panel(self, dict(prefill), unified=True)
+        general_panel += ("<section class='card' id='pipeline-review'><h2>Review your selected work</h2>"
+            "<p>Preparation runs automatically. Review the workload before starting real calls.</p>"
+            "<div class='campaign-actions'><button form='builder' type='submit' class='ghost' data-save-campaign "
+            "formaction='/build/save'>Save campaign</button>"
+            "<button form='builder' type='submit' data-review-campaign>Review campaign</button></div></section>"
+            "<details class='card'><summary>Pipeline details and CLI preview</summary>"+details+"</details>")
         general_panel += self._operation_links(prefill.get('campaign_id', ''))
         from .campaign_assessment import panel as assessment_panel
-        general_panel += assessment_panel(prefill.get('campaign_id',''))
-        general_panel += source_panel(self, dict(prefill), unified=True)
+        if prefill.get('campaign_id'):
+            general_panel += ('<details class="card"><summary>Additional assessment of saved answers</summary>'
+                +assessment_panel(prefill['campaign_id'])+'</details>')
         force_default = (
             " data-force-default='true'"
             if errors or framework_runtime_state or framework_runtime_error

@@ -151,6 +151,32 @@ def test_campaign_start_ticket_cannot_be_used_twice(app,monkeypatch):
     assert operation['execution_authorized'] and operation['step']==1
 
 
+def test_stop_covers_child_launch_before_parent_observes_job(app,monkeypatch):
+    monkeypatch.setattr(app,'_builder_model_acquisition_required',lambda p:False)
+    operation,selection=prepared(app,kind='direct')
+    operation.update(step=1,status='preparing',execution_authorized=True)
+    selection['execution_job']='new-measured'
+    child(app,'new-measured','run_matrix',state='running',code=None)
+    stopped=[];monkeypatch.setattr(app,'stop_job',lambda key:stopped.append(key))
+    flow.stop(app,operation)
+    assert stopped==['new-measured'] and operation['collection_job']=='new-measured'
+
+
+def test_failed_diagnostic_resumes_inside_campaign_without_operator_handoff(app,monkeypatch):
+    monkeypatch.setattr(app,'_builder_model_acquisition_required',lambda p:False)
+    operation,selection=prepared(app,kind='direct')
+    probe=app._operations[app._start_operation('direct',dict(selection['params'],mode='attestation_probe'))]
+    probe.update(status='ready',execution_job='failed-probe')
+    child(app,'failed-probe','run_matrix',state='failed',code=2)
+    item=dict(preparation=probe['id'],probe='failed-probe',check='old-check')
+    selection.update(connection_operations=[item],status='failed')
+    operation.update(status='failed',step=1,execution_authorized=True)
+    flow.retry(app,operation)
+    assert probe['resume_job']=='failed-probe' and 'execution_job' not in probe
+    assert item==dict(preparation=probe['id'])
+    assert selection['status']==operation['status']=='preparing'
+
+
 def test_unchecked_assessment_stays_unchecked_after_save(app):
     owner=app.db.create_workspace('Selection','mixed')
     params=app._builder_params(dict(campaign_id=owner,campaign_flow='on'))

@@ -108,6 +108,8 @@ h2 .ic { color:var(--muted); }
 .cols .card { margin:0; }
 .campaign-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr)); gap:1rem; margin:1.25rem 0; }
 .campaign-grid .campaign-card { margin:0; padding:1.35rem; min-width:0; }
+.campaign-assessment-options { min-width:0; border:1px solid var(--line); border-radius:10px; padding:1rem; margin:1.25rem 0; }
+.campaign-assessment-options legend { font-weight:600; padding:0 .4rem; }
 .campaign-card h2 { margin-bottom:1.25rem; overflow-wrap:anywhere; }
 .campaign-card > .button { align-self:flex-start; }
 .campaign-ownership { display:grid; gap:.65rem; }
@@ -1173,8 +1175,9 @@ localOnlyMeasured?'0 (complete release)':'not set')+
 '; reset open circuits: '+(checkedName('reset_open_circuits')?'on':'off')+
 '; lock stale seconds: '+namedValue('lock_stale_seconds','CLI default'));
 setBuildSummary('build-summary-budget','target / judge / HTTP: '+
+(checkedName('automatic_caps')?'calculated during review':
 namedValue('cap_target','not set')+' / '+namedValue('cap_judge','not set')+
- ' / '+namedValue('cap_http','not set')+'; local process wall-time cap: '+
+ ' / '+namedValue('cap_http','not set'))+'; local process wall-time cap: '+
  namedValue('local_budget_hours','not set')+' h; independent call-start window: '+
 namedValue('deadline','not set')+' s (not a completion timeout)');
 var localPrecisions=[];
