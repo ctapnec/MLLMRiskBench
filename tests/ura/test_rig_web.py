@@ -3707,7 +3707,9 @@ def test_command_groups_partition_the_allowlist_exactly() -> None:
 def test_assessment_controller_has_no_raw_operator_launch(tmp_path: Path) -> None:
     app = _app(tmp_path)
     try:
-        page = app.handle("GET", "/run")[2].decode("utf-8")
+        status, _, body = app.handle("GET", "/commands")
+        assert status == 200
+        page = body.decode("utf-8")
         assert "name='command' value='campaign_assess'" not in page
         code, _, body = app.handle("POST", "/jobs", {"command": "campaign_assess"})
         assert code == 400 and b"Evaluate saved answers" in body

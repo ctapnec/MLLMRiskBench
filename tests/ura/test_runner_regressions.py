@@ -7430,9 +7430,11 @@ def test_group_values_with_separators_round_trip_through_aggregation_and_consume
         JudgeCascade([RuleJudge(), LLMJudge(judge_target=MockTarget())]),
         AttackBudget(max_turns=1, seed=0),
         [0],
+        approximate_common_metrics=True,
     )
     judgments, _ = runner.run(corpus, started_at="2026-08-20T00:00:00Z")
     assert judgments and all(j.raw.get("risk_subtype") == subtype for j in judgments)
+    assert any(j.raw.get("approximate_security_decision") is not None for j in judgments)
     keys = ["source", "effective_modality", "expected_behavior", "risk_subtype"]
     results = runner.aggregate(judgments, group_keys=keys)
     assert results

@@ -25,6 +25,14 @@ Do not treat earlier focused acceptance as a clean result for that suite.
 Failures and corrected reruns are retained separately; production campaigns
 are not rerun to repair test fixtures.
 
+Subsequent affected-file passes reduced failures to 67, then 11, then zero
+(527 selected tests at the last of these passes). The final full suite is
+pending. Test corrections retain the original boundaries: actual readiness
+profiles precede local execution, paid answer retries remain zero, missing
+database identity prevents an orphaned launch, and abstentions do not enter a
+decision-rate denominator. The historical analysis self-test accepts a copied
+unchanged configuration while retaining changed-content rejection.
+
 | Workflow | Required checks | Current audit state |
 | --- | --- | --- |
 | Direct local campaign and single run | Automatic preparation, one start, stop/restart, retained scope | Re-audit pending |
