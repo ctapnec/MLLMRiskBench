@@ -4366,6 +4366,9 @@ class LifecycleMixin:
                     return 404, "text/plain; charset=utf-8", b"unknown campaign job"
                 return 200, "text/html; charset=utf-8", detail
             if method == "GET" and path == "/stats":
+                if query.get("view") == "svm":
+                    from .svm_stats import response
+                    return response(self, query)
                 if query.get("view") == "standalone":
                     return 200, "text/html; charset=utf-8", self._standalone_results_page(query)
                 if query.get("view") != "legacy":

@@ -30,6 +30,28 @@ class WorkspaceStoreMixin:
             "CREATE TABLE IF NOT EXISTS campaign_definitions ("
             "campaign_id TEXT PRIMARY KEY, builder_params TEXT NOT NULL, updated_at REAL NOT NULL)"
         )
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS svm_studies ("
+            "directory TEXT PRIMARY KEY, title TEXT NOT NULL, campaigns TEXT NOT NULL)"
+        )
+
+    def register_svm_study(self, directory: str, title: str, campaigns: list[str]) -> None:
+        """Register a retained CLI study without inventing a console execution."""
+        from pathlib import PurePosixPath
+        path = PurePosixPath(directory)
+        if path.is_absolute() or '..' in path.parts or not path.parts or '\\' in directory:
+            raise ValueError('Use a study directory relative to the results root')
+        if not title.strip() or len(title) > 180:
+            raise ValueError('A short study title is required')
+        for owner in campaigns:
+            self.require_workspace(owner)
+        with self._lock:
+            if self._conn is None:
+                raise ValueError('Study index unavailable')
+            with self._conn:
+                self._conn.execute('INSERT INTO svm_studies VALUES(?,?,?) '
+                    'ON CONFLICT(directory) DO UPDATE SET title=excluded.title,campaigns=excluded.campaigns',
+                    (path.as_posix(), title.strip(), json.dumps(sorted(set(campaigns)))))
 
     def save_workspace_definition(self, campaign_id: str, params: dict[str, str]) -> None:
         """Save an editable definition; launched jobs keep their own snapshots."""
@@ -214,7 +236,7 @@ def activity_role(command: str) -> str:
     if command in {"retained_response_judge_pair", "retained_response_judge_pair_execute", "retained_native_judge_execute",
                    "retained_inventory_judging", "campaign_assess"}:
         return "judging"
-    if command in {"level1_evidence", "level2_report", "figures"}:
+    if command in {"level1_evidence", "level2_report", "figures", "response_svm"}:
         return "analysis"
     if command == "hosted_campaign_budget":
         return "budget"

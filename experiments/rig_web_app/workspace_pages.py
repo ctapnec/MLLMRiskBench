@@ -104,6 +104,7 @@ class WorkspacePagesMixin:
         if context == "jobs":
             views.append(("all", "All jobs and tools"))
         else:
+            views.append(("svm", "SVM results"))
             views.append(("legacy", "Earlier reports"))
         return "<nav class='page-tablist server-tablist' aria-label='" + context.title() + " scope'>" + "".join(
             "<a class='page-tab' href='/" + context + "?view=" + value + "'"

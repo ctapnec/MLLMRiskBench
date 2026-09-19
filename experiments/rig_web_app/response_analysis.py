@@ -41,6 +41,7 @@ def page(app, owner):
     teacher_options=[(r['judge_id'],judge_name(r['judge_id'],settings.get(r['judge_id']))+
         ' - condition '+str(i+1)+'; '+str(r['n'])+' valid recorded verdicts') for i,r in enumerate(teacher_rows)]
     body='<h1>Response classifier analysis</h1>'+app._campaign_banner(owner)
+    body+='<div class="action-row"><a class="button ghost" href="/stats?view=svm&amp;campaign_id='+owner+'">View SVM results in Stats</a></div>'
     body+=('<section class="card"><h2>Evaluate and save the three classifiers</h2>'
         '<p>Choose the data population and recorded teacher. The system selects saved input metadata, '
         'exports eligible text responses, evaluates the classifiers and saves reusable fitted models automatically.</p>'
