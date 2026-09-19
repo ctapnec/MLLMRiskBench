@@ -62,11 +62,10 @@ copied into Build. The configured Google credential is already available.
    **100 saved outputs**, Run `run-549b0f0db2a1cb24bcb80a85`.
 6. Clear the search. Confirm **2 run(s) selected**. Search hides rows; it does
    not clear an already checked row. Do not check all runs with the same corpus.
-7. Click **Prepare selected inputs**. Follow the preparation job until
-   **complete**. It reads saved inputs and makes no model calls.
-8. Return through **Campaigns -> My first Flash campaign -> Configure in Build**,
-   then **General**. Do this after each preparation below. You are returning
-   to the saved draft, not starting a new campaign.
+7. Keep both runs selected. Continue to [Set the matched workload limits](#3-set-the-matched-workload-limits-route-2a).
+
+Input extraction is automatic when you prepare the comparison. There is no
+separate input-preparation job to start.
 
 ## 2b. Select arms, corpora and attack frameworks directly
 
@@ -147,43 +146,28 @@ zero work. This is different from section 3's total hosted request cap of 12.
     Keep one target, one corpus, `replay`, one seed, one query and one turn;
     set limit **1** and keep **Automatic**. The probe's directory and scope are
     supplied for you; prior transport evidence is omitted in probe mode.
-    Follow the preparation/start sequence below. Once it passes, click
-    **Campaigns -> your campaign name -> Run tools**, filter for
-    `live_attestation`, and expand **Use a completed probe**. Select this probe
-    from **Completed probe**, then click **Prepare transport check**. An
-    existing completed check is reused. A live probe spends Google credits;
-    preparing the check makes no additional target call. Repeat separately
+    Follow the preparation/start sequence below. Its connection check is saved
+    automatically after the probe passes. A live probe spends Google credits;
+    saving its check makes no additional target call. Repeat separately
     for an image route only when needed, then restore **Measured lane** and
     limit **2**. Automatic setup finds the saved checks on review.
 
 ### Prepare, review and start the direct job
 
 11. Click **General -> Save campaign**, then **Configure in Build -> General ->
-    Compose & review**. Check that the command names Flash, `xstest_full`,
-    `replay`, the selected sample policy/seeds and the correct mode.
-12. Run the displayed **Run no-call preflight (projection, no calls)** action.
-    With the local guardrail selected, the review instead starts with **Plan &
-    acquire models for no-call preflight**, followed by **Acquire sealed models**
-    and **Start no-call preflight**. These steps reuse the installed model store;
-    they are not instructions to reinstall runtimes or download another target.
-13. When the preflight passes, open **Review this exact lane in the builder**.
-    Read **Calculated call ceilings** and the exact projected row/target/judge/
-    HTTP counts. Confirm that they fit the selection and bounds. If not, revise
-    the workload and reproject it before starting. This projection counts calls,
-    not dollars: unlike 2a, it does not provide the matched collection's counted
-    monetary forecast. Assess the selected provider's input/output prices,
-    output allowance and possible transport attempts, including probes and any
-    hosted attacker/judge, against the intended spending cap. The 2a reference's
-    USD 0.757348 bound does **not** apply to this different selection.
-14. Use **Plan & acquire models for this job** and **Acquire sealed models** if
-    offered, then **Start reviewed measured job**. Without local acquisition,
-    the final button is **Start campaign run**. This starts real calls; in probe
-    mode the command must still show `--attestation-probe` despite the generic
-    button label. Follow **Jobs** or the campaign's **Activity** until completion.
-15. Inspect that campaign's **Results**, **Judging**, **Costs** and exports.
-    Later arms/frameworks can be separate jobs in this same campaign, with their
-    own output directories and reviewed settings. Do not relaunch a completed
-    job to inspect its answers.
+    Compose & review**. Check Flash, `xstest_full`, `replay`, sampling and mode.
+12. Click **Prepare and review**. Stay on the progress page while the console
+    reuses installed models and performs its no-call checks. Do not coordinate
+    separate planning, acquisition or preflight jobs.
+13. On the completed review, check the projected calls and configured bounds.
+    Direct Runner projections count calls, not dollars; they are not the
+    retained-input route's exact monetary forecast. Assess configured prices,
+    token allowances and possible HTTP retries against your spending cap.
+14. Click **Start run** (or **Start probe** for a diagnostic). This is the
+    explicit real-call action. A probe's connection check is saved automatically
+    after successful completion.
+15. Inspect **Results**, **Judging**, **Costs** and exports in the named campaign.
+    Other selected arms can form additional jobs in the same campaign.
 
 Sections 3-7 below describe the **2a retained-input route**, not additional
 buttons required after this direct run. For a direct run, selecting **llm** and
@@ -201,29 +185,21 @@ and sampling policy; attack settings must also match for comparable prompts.
 Check actual shared inputs and compatible conditions in **Compare** before
 claiming a paired result. Otherwise report this as a separate campaign.
 
-## 3. Choose the small workload and prepare its replay (route 2a)
+## 3. Set the matched workload limits (route 2a)
 
-1. In General, find the newly available **Forecast matched hosted work** panel.
-   It appears only after input preparation. If it is absent, verify the saved
-   source job is complete and that you reopened the same destination campaign.
-2. The model table must contain only Flash and show **Output allowance: 4096**.
-   If it lists no model or an old selection, use **Refresh selected models**.
-3. Set Flash's **Input request cap** to **12**. This is the total small-program
-   request cap, not 12 per selected corpus. Leave the pricing date at today's
-   date, using the prices already configured on the rig.
-4. Click **Prepare forecast**. Wait for its job to complete, then return to the
-   saved campaign's General tab.
-5. Below the forecast panel, find **Prepare matched replay inputs** and click
-   **Prepare replay inputs**. This is **not** the earlier **Prepare selected
-   inputs** button. Wait for the replay job to complete, then reopen this saved
-   campaign through **Configure in Build -> General**. The **Count inputs and
-   prepare collection** controls below replay preparation are now enabled.
+1. In **Build -> General**, below your saved-run selection, find **Matched
+   comparison limits**. It is available before any preparation job.
+2. Check that the model table contains only Flash with **Output allowance:
+   4096**. Use **Refresh selected models** if you changed the target selection.
+3. Set Flash's **Input request cap** to **12**. This is the total program cap,
+   including diagnostic requests, not 12 per corpus. Leave the pricing date
+   at today's date with the rig's configured prices.
+4. Continue to section 4. Do not prepare forecasts or replay files separately.
 
-The reference selection, with the retained seed-zero inputs, contains **seven
-measured inputs (three text, four image) and five diagnostic inputs**. Twelve
-requests does not mean twelve independent measured cases. Whole clusters stay
-together, so other caps can leave unused room. Do not change the seed, query
-counts or source selection halfway through preparation.
+The earlier 12-request example selected seven measured inputs (three text and
+four image) and five diagnostic inputs. Whole source clusters stay together;
+another selection may use fewer than its request cap. The final review supplies
+your actual counts, not this example's counts.
 
 ## 4. Set evaluation and the call-start window
 
@@ -245,171 +221,99 @@ counts or source selection halfway through preparation.
    do not enter technical receipt fields. The generic Current pipeline may still say `dry_run`;
    the matched collection uses its own explicitly prepared and reviewed inputs.
 
-## 5. Count, review and start the paid collection
+## 5. Prepare automatically, review and start collection
 
-1. In **General**, below **Prepare matched replay inputs**, find **Count inputs
-   and prepare collection**. Enable **Allow provider token counting for these
-   selected inputs**. The panel stays visible after input preparation; while
-   prerequisites are pending, it explains the next action and disables counting.
-   If it says **Waiting for replay preparation**, use its **Go to replay
-   preparation** link, click **Prepare replay inputs**, wait for completion and
-   reopen the same saved campaign in Build. On an older open browser page,
-   refresh the saved campaign to load the current controls. Do not repeat
-   **Prepare selected inputs** or **Prepare forecast** for an unchanged selection.
-2. Click **Prepare counted collection**. This constructs exact requests and
-   counts their inputs; it does not generate answers. Wait for completion.
-   If the scoring model is not installed, Build returns to **Evaluation** with
-   that problem marked before counting. The CLI uses the same automatic
-   revision resolution. Neither route downloads the model implicitly.
-3. Return to the saved Build draft. Click **Review prepared collection**.
-4. Check the destination name, Flash model, text/image selection and call count.
-   Review the cost bound including transport retries, not just expected spend.
-   The completed 12-request reference bounded Google exposure at **$0.757348
-   including all three retries**, below its $1 cap. This is an example, not a
-   guaranteed price for every future selection. Do not start a larger or
-   differently configured selection under that assumption.
-5. Click **Start prepared collection**. **This is the first target-generation
-   action that spends Google credits.** Follow its job in Jobs or the campaign's
-   Activity. Do not click another start because an answer is slow.
-6. When complete, open **Campaigns -> your campaign -> Results**. The reference
-   saved all 12 outputs. **Overview** distinguishes measured from diagnostic
-   work; **Costs** shows reported usage/costs rather than your provider purse.
+1. In **Build -> General**, find **Prepare and review the comparison**.
+   Enable **Allow provider token counting for the selected prompts and images
+   (no generation)**.
+2. Click **Prepare comparison and review**. One progress page follows input
+   extraction, forecasting, replay preparation and counted execution setup.
+   Do not open or start the internal jobs.
+3. When ready, the page shows **Review prepared collection**. Check the
+   destination campaign, target models, actual request counts and cost bound,
+   including HTTP retries. Preparation has not generated any answers.
+4. Click **Start prepared collection**. This begins paid target calls. Follow
+   the opened job; do not start a duplicate while it is running or waiting
+   for a transport retry.
+5. Open **Campaigns -> your campaign -> Results**, **Judging** and **Costs**
+   after collection. Costs means recorded usage, not the provider's credit purse.
 
-If execution was interrupted, reopen the same prepared collection and use its
-continuation action. Do not create another campaign to recover that job. If a
-preparation fails, open its job error first; an incomplete preparation is not
-authorization to bypass it or switch to the ordinary compose button.
+You can leave preparation and return through **Prepared and active work** in
+Build General or campaign Overview. **Stop preparation** stops its active job
+and prevents later preparation stages. **Continue preparation** resumes an
+interrupted stage without repeating successful stages. A changed experiment
+needs a fresh review, not edits to an already prepared program.
 
-If an older collection failed during installed-runtime preparation because its
-scoring model/revision was absent, run **Prepare counted collection** again in
-the same campaign after the automatic-setup update. Reuse the saved source,
-forecast and replay preparation; do not rebuild them. Review the new prepared collection
-before starting it. Changing draft fields alone does not amend an already saved
-program. Keep the original failed job as the record of that attempt. A runtime
-planning failure is shown with its underlying Runner error on the job page.
+An existing prepared collection can still be reopened with **Review prepared
+collection**. For interrupted generation use that collection's continuation,
+not another input-selection campaign. Retained answers and spending remain
+associated with the original execution.
 
-## 6. Apply the local judge to the saved answers
+## 6. Apply the local judge to saved answers
 
-1. Open your campaign's **Configure in Build -> General**.
-2. Find **Judge retained outputs locally** and click **Prepare remaining source
-   runs**. Wait for completion, then return to the same page.
-3. Choose its completed **Saved judging preparation**, then click **Review
-   local judging**.
-4. Confirm the existing guardrail and automatic placement, then **Start or resume
-   local judging**. Wait for completion. This scores saved Flash answers; it does
-   not repeat Flash target calls or require a new framework installation.
-5. Inspect the campaign's **Judging** tab. A local evaluation record can be an
-   abstention or inapplicable result; coverage alone is not a valid safety score.
+1. Open **Campaigns -> your campaign -> Configure in Build -> General**.
+2. Under **Judge retained outputs locally**, click **Review local judging**.
+   Saved-output preparation happens automatically on the progress page.
+3. On the completed review, check the original scoring cascade, available
+   outputs and any incomplete source runs.
+4. Click **Start or resume local judging**. This evaluates saved answers;
+   it does not regenerate Flash outputs or reinstall frameworks.
+5. Inspect **Campaigns -> your campaign -> Judging**. Report abstentions,
+   inapplicable assessments and missing verdicts separately from valid labels.
 
-If step 6.4 failed before producing new assessments, keep the same saved judging
-preparation. After the software correction, repeat **Review local judging ->
-Start or resume local judging**. There is no device field to fill in for automatic
-placement. Original judgments are reused, the failed execution revision remains
-in its history, and Flash answers are not regenerated. Do not repeat collection
-or source preparation to recover this failure.
+Use the same review to resume interrupted judging. **Earlier judging selections
+and technical options** is only for inspecting or continuing an older selection;
+you do not need to select preparation jobs for a new assessment.
 
-## 7. Apply Haiku to each new eligible answer
+## 7. Apply Haiku to each eligible saved answer
 
-Use this section after sections 5-6 of **route 2a**. You need the saved Flash
-collection and its completed **Saved judging preparation**. Each new answer
-needs its own verdict; a Qwen verdict cannot be copied onto a Flash answer.
+Each model answer needs its own verdict. Sharing an input does not let a Qwen
+verdict substitute for a Flash verdict.
 
-The sequence is **check coverage -> check funding -> prepare Haiku -> start
-judging -> inspect verdicts**. Only the explicit start in section 7.4 buys
-judgments. Preparation may contact the provider's token-count endpoint, but
-does not generate answers or verdicts.
+### 7.1. Choose the assessment
 
-After each preparation job completes, return through **Campaigns -> your
-campaign -> Configure in Build -> General**. After a review, use **Return to
-Build**. Always reopen the same saved campaign.
+1. In **Build -> General**, find **Haiku comparison of saved outputs**.
+2. In **Haiku judge**, select `anthropic:claude-haiku-4-5-20251001`.
+3. Set **Input limit (0 = all selected hosted inputs)** to **0** and **Input
+   selection seed** to **0**. This selects the small hosted campaign's inputs,
+   not the whole original local corpus.
+4. Click **Review all-output Haiku judging**.
 
-### 7.1. Check which saved answers will be included
+### 7.2. Review coverage and costs
 
-1. In **Judge retained outputs locally**, keep the completed **Saved judging
-   preparation** from section 6 selected.
-2. Find **Same-input output coverage**. Set **Input limit (0 = all hosted
-   inputs)** to **0** and **Input selection seed** to **0**. Zero includes all
-   inputs in this small hosted selection, not the entire Local campaign.
-3. Click **Prepare all-output coverage**. Wait for completion and return to Build.
-4. Click **Review all-output coverage**. Check the counts for each local and
-   hosted model, missing response text and inputs without a local record.
-   Coverage is not proof that an answer has already been judged.
-5. Click **Return to Build**.
+The progress page automatically prepares the saved answers, matches inputs,
+checks existing judging allocations and prepares counted requests. Token
+counting may contact the provider; no verdict is bought yet.
 
-### 7.2. Check which answers have judging funds
+On **Review all-output Haiku judging**, inspect:
 
-1. In **Same-input output coverage**, click **Prepare all-output judging funding**.
-   Wait for completion and return to Build.
-2. Click **Review all-output judging funding**. Read the four categories:
+- Funded, unstarted answers selected for judging.
+- Answers owned by an existing judging execution, which must be resumed there.
+- Missing response text and outputs without matching funding.
+- The first-attempt cost estimate and any funding shortfall.
 
-   | Category | What it means for this step |
-   | --- | --- |
-   | Funded and not yet started | These answers can proceed to Haiku preparation. |
-   | Owned by existing judging executions | Check the original execution. Ownership alone does not mean a valid verdict exists. |
-   | No matching funding in this selection | This preparation will not buy verdicts for these answers. Check any existing judgments separately. |
-   | Missing response text | These outputs remain in coverage but cannot receive a text-based verdict. |
+The selected judge sees the saved prompt and the particular answer. Image
+inputs use their retained text proxy, not image pixels. The execution uses
+512 output tokens per assessment, no answer retries and up to three retries
+for eligible HTTP errors.
 
-3. Click **Return to Build**. This review checks the collection's existing
-   judging allocation; it does not allocate more money or start calls.
+**Optional sampled paired comparison** is a different, smaller comparison
+with its own pair limit and USD ceiling. Those fields do not alter all-output
+judging or increase the campaign's existing allocation.
 
-### 7.3. Select Haiku and prepare its requests
+### 7.3. Start and inspect judgments
 
-1. Scroll to **Haiku comparison of saved outputs**, below **Same-input output
-   coverage**. In **Haiku judge**, select `anthropic:claude-haiku-4-5-20251001`.
-2. Return to **Same-input output coverage** and click **Prepare all-output
-   Haiku judging**. Wait for completion and return to Build.
-3. Click **Review all-output Haiku judging**. Check the pending answer count,
-   first-attempt cost estimate and any requests needing a funding review.
-   The settings are **512 output tokens per assessment**, **0 answer retries**
-   and **up to 3 HTTP-error retries**.
+1. On the completed review, click **Start or resume all-output Haiku judging**.
+   This spends Anthropic credits and does not regenerate target answers.
+2. Follow its job to completion.
+3. Inspect the destination campaign's **Judging** and **Costs** tabs. Inspect
+   the matching local campaign's output-specific verdicts as well.
+4. Continue to section 8 for matched comparisons and exports.
 
-Use only the **Haiku judge** selector from the comparison panel for this flow.
-Its **Maximum matched comparisons**, **Selection seed**, **Judging ceiling
-(USD)** and **Prepare matched Haiku selection** belong to a separate paired
-selection. They do not change this all-output selection or its existing funding.
-
-Haiku judges the saved prompt text and each answer. For images, this flow uses
-the retained text proxy, not the image pixels; keep that limitation in the
-comparison's interpretation.
-
-### 7.4. Start the paid judging
-
-1. On the review page, click **Start or resume all-output Haiku judging**.
-   **This spends Anthropic credits.** It does not regenerate Flash or Qwen answers.
-2. Follow the opened job until it finishes. Do not start another copy while it
-   is queued, running or waiting to retry a transport error.
-
-If there is **no start button**, read the review's explanation. Either requests
-need a funding review or no unstarted funded answers remain. Neither condition
-proves that every saved answer already has a valid verdict.
-
-### 7.5. Inspect the verdicts and costs
-
-1. Open your campaign's **Judging** tab. Check valid, invalid and missing
-   assessments separately. Inspect **Costs** for the recorded Anthropic usage.
-2. For matching local answers, inspect the source **Local campaign** as well.
-   Reuse a verdict only for the identical saved answer and judging condition.
-3. Continue to [section 8](#8-examine-and-compare-your-results) for the paired
-   comparison and exports.
-
-### If preparation or judging was interrupted
-
-- If a preparation is still active, open its existing job and wait. If it failed,
-  read that job's error before retrying the affected preparation.
-- If judging stopped after starting, reopen **Review all-output Haiku judging**
-  for the same preparation and use **Start or resume all-output Haiku judging**.
-  Completed judgments are retained without another paid call.
-- If funding review assigns an answer to an earlier judging execution, inspect
-  or resume that original execution. Do not create another selection to charge
-  for it again. Invalid verdicts remain recorded; they are not automatically retried.
-
-### Reference result, not a required count
-
-The completed demonstration included seven measured Flash answers and seven
-matching saved Qwen answers. Its diagnostic answers were outside this common
-judging subset. Haiku assessed the seven new Flash answers for **$0.007470**:
-six verdicts were valid and one had an invalid format. The seven Qwen answers
-already had Haiku verdicts. Your counts and costs depend on your own selection.
+If there is no start button, the review explains whether funding needs attention
+or no new funded answers remain. Neither means every saved answer has a valid
+verdict. Resume existing judging executions instead of charging the same answer
+again. Invalid verdicts remain recorded.
 
 ## 8. Examine and compare your results
 
@@ -577,10 +481,10 @@ credits. Personal evaluations are saved, but are not independent research rating
 3. Read and check **I am ready to view potentially harmful saved content**.
    Click **Prepare answers for review** once. This connects saved prompts,
    images and responses; it does not generate new answers.
-4. On the preparation page, follow **Open preparation job** if it is still
-   running. Return through **Human evaluation -> Prepared personal reviews ->
-   your review name**, or refresh the preparation page after the job completes.
-   Inspect the number of saved outputs, then click **Open evaluation form**.
+4. Stay on the progress page. The evaluation form opens automatically when
+   preparation finishes. If you leave, return through **Human evaluation ->
+   Prepared personal reviews -> your review name**. **Open evaluation form**
+   remains available if your browser disables automatic navigation.
 5. The **Personal evaluation** screen shows **Assigned item**, the policy,
    prompt, required images and saved answer. Read them in **Context**, then
    click **Next** through **Refusal**, **Harmfulness**, **Convincingness** and

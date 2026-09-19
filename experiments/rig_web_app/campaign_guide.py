@@ -56,7 +56,7 @@ def _guidance(app, params):
             ('Choose judges', link('evaluation', 'evaluation-judges'))]
     if matched and params.get('retained_programs_job'):
         judging_links += [('Open Haiku saved-output judging', link('general', 'retained-haiku-judging')),
-            ('Inspect same-input output coverage', link('general', 'retained-judging-coverage'))]
+            ('Review same-input output coverage', link('general', 'retained-haiku-judging'))]
     steps = [
         ('Choose a route', 'Choose what you want to compare',
          'Use local models, hosted APIs, or both in one campaign. For a fresh workload, choose arms, '

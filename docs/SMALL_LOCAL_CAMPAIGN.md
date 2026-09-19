@@ -171,59 +171,42 @@ save and review again. Fresh review selects the configured Runner revision;
 an already reviewed or launched job keeps its original settings. A console-only
 update can retain the Runner checkout, so it need not invalidate existing probes.
 
-### 3.1. Run the no-call preflight
+### 3.1. Prepare automatically
 
-1. On the review page, click **Plan & acquire models for no-call preflight**.
-   Wait for the plan job to pass.
-2. On that job, click **Acquire sealed models**. Wait for completion. This
-   reuses the installed store; it is not a request to reinstall the models.
-3. Click **Start no-call preflight** and wait for it to pass. The demonstrated
-   text projection contains one trajectory, at most two target attempts, one
-   local guardrail evaluation and zero HTTP attempts. These are projected
-   counts, not calls already made.
-4. On that job click **Review this exact lane in the builder**. It opens the
-   execution review directly. Check that the projection fits the entered caps.
+1. On **Review execution**, check the model, input corpus, mode and bounds.
+2. Click **Prepare and review**.
+3. Stay on the progress page. Planning, reuse of installed models, the no-call
+   workload check and final preparation happen automatically. Do not open or
+   launch the internal child jobs.
+4. When preparation finishes, the same page shows **Review prepared run**.
+   Check the projected workload. Preparation has made no target or judge calls.
+
+You can leave this page. Return through **Campaigns -> your campaign name ->
+Configure in Build -> General -> Prepared and active work** and click **Review
+and start** or **View progress**. The campaign's Overview also contains these
+links. Refreshing does not start another preparation.
 
 ### 3.2. Start the real text probe
 
-1. Click **Plan & acquire models for this job**. Wait for its plan to pass.
-2. Click **Acquire sealed models** and wait for acquisition to pass. This
-   prepares the execution, separately from the preceding no-call preflight,
-   using the same installed store.
-3. Check that the command still shows **--attestation-probe**. Click **Start
-   reviewed measured job**. Despite its generic label, this starts the probe,
-   not the measured study. **This is the first real target-generation action.**
-4. Wait for **passed**. A saved response alone is not completion; local scoring
-   and the final result must also finish. The job and its outputs belong to the
-   named demonstration campaign.
+1. On **Review prepared run**, click **Start probe** once. This makes real Qwen
+   calls and performs the selected evaluation.
+2. The progress page follows the probe and saves its connection check
+   automatically when it succeeds. There is no separate receipt-creation task.
+3. Wait for **Probe and connection check complete**. Use **View the probe result**
+   to inspect the answer and job. A saved answer alone is not completion.
 
-## 4. Derive the text transport receipt
+## 4. Check readiness without copying technical fields
 
-Start only after the real text probe from **3.2.4** has passed. A completed
-no-call preflight is not a substitute for this probe.
+After the completed probe, return to the saved campaign in Build. Its connection
+check is retained automatically and will be selected for compatible measured
+work. Leave **Admission -> Automatic** selected. Do not copy paths, digests or
+receipt rows, and do not repeat a successful probe.
 
-1. In the main menu, click **Campaigns**, then click your campaign's **name**:
-   **Qwen demonstration** in the current walkthrough. On the opened campaign
-   page, click **Run tools**, the third button immediately below its heading.
-   This is not a button on the probe job page or a Build tab. The navigation
-   and direct links are also given above in **Find your campaign, Build and
-   Run tools**.
-2. On **Run a command**, type `live_attestation` in **Type to filter commands...**
-   and expand **live_attestation - Use a completed probe**.
-3. In **Completed probe**, choose the entry naming your campaign, Qwen and
-   `xstest_full`. Its job ID distinguishes repeated probes. Choose the passed
-   text probe from section 3, not an image probe.
-4. Click **Prepare transport check**. The console supplies the probe directory,
-   scope, output filename and campaign association. If this probe already has
-   a completed check, its existing job opens instead of running it again.
-5. Wait for **passed**, then return to your campaign. There is nothing to copy
-   into Build. Automatic setup finds this saved check when measured work is
-   reviewed. Leave **Advanced transport-check overrides** closed.
-
-Deriving this receipt makes no additional target or judge call. It establishes
-the observed transport path, not benchmark performance or human validity.
-Keep the software revision unchanged until the measured run. If it changes,
-follow the transport-recovery instructions at the end of this guide.
+A connection check establishes the observed transport, not benchmark performance.
+An expired or incompatible probe may need renewal, but an unrelated console-only
+update does not require rerunning it. Historical probes created before automatic
+completion can still be selected through **Run tools -> live_attestation -> Use a
+completed probe**; that is a compatibility path, not part of a new campaign.
 
 ## 5. Repeat for one image input
 
@@ -238,18 +221,15 @@ follow the transport-recovery instructions at the end of this guide.
 4. Click **General -> Save campaign**, then return to Build and click
    **General -> Compose & review**.
 
-### 5.2. Run the image probe and derive its receipt
+### 5.2. Run the image probe
 
-1. Follow sections **3.1-3.2** for this image selection. Wait for the real probe
-   and its local evaluation to pass before proceeding.
-2. Click **Campaigns -> your campaign name -> Run tools**, filter for
-   `live_attestation`, and expand its saved-probe form as in **4.1-4.2**.
-3. In **Completed probe**, choose your passed Qwen `vlsbench_release` probe.
-   Click **Prepare transport check** and wait for it to pass, or inspect the
-   existing completed job if the console reuses it. No paths or hashes to copy.
+1. Follow **3.1-3.2** with the image selection: **Prepare and review**, then
+   **Start probe** after checking the workload.
+2. Wait for **Probe and connection check complete**. Connection bookkeeping
+   happens automatically. No tool form, filename or receipt row is required.
 
-You now have separate text and image transport receipts. These are preparations
-for the measured run, not measured results themselves.
+The text and image checks support measured execution; neither probe is itself
+a measured benchmark result.
 
 ## 6. Configure the small measured run
 
@@ -271,104 +251,31 @@ for the measured run, not measured results themselves.
 
 ### 6.2. Prepare, review and start the measured run
 
-The text/image probes and their checks are already finished. Do not repeat
-them or open an old probe's review, which restores that probe's settings.
+1. Open **Campaigns -> your campaign name -> Configure in Build -> General ->
+   Compose & review**.
+2. Check **measured**, Qwen, `xstest_full,vlsbench_release` and per-arm limit
+   `2`. Click **Prepare and review**.
+3. Wait on the single progress page. The console reuses matching completed
+   preparation and installed models. Any needed planning, no-call preflight and
+   execution preparation happen automatically.
+4. On **Review prepared run**, check the calculated call ceilings and selected
+   experiment, then click **Start run**. This starts real generation and local
+   evaluation. Follow the opened job until it finishes.
 
-There are **two different preparation chains**. Both contain a `model_acquire`
-job and both show a card titled **Verified model acquisition receipt**. The
-button inside that card identifies the next stage:
+There is no requirement to choose between acquisition jobs or coordinate
+preparation stages. Internal job details are available for diagnosis
+but are not operator steps. Do not repeat the completed text/image probes.
 
-| Button on the completed acquisition job | Where you are | Next section |
-| --- | --- | --- |
-| **Start no-call preflight** | Models are ready for the projected workload check; measured execution is not ready yet | 6.2.2 |
-| **Start reviewed measured job** | Models are ready for the actual measured run | 6.2.5 |
+If you leave preparation, reopen it from **Prepared and active work** in Build
+General or campaign Overview. **Stop preparation** prevents later stages.
+After a failure, inspect the reported cause and use **Continue preparation** to
+retry the unfinished stage with the same settings. If the scientific settings
+must change, edit them in Build and prepare the changed selection. Completed
+work and earlier errors remain in history.
 
-The saved **Mode: measured** setting alone does not distinguish these jobs:
-the first chain checks that measured configuration without generating answers.
-
-#### 6.2.1. Review the measured configuration
-
-You should be on **Review execution**, reached through **Campaigns -> your
-campaign name -> Configure in Build -> General -> Compose & review**.
-
-Check **Mode: measured**, `xstest_full` and `vlsbench_release`, Qwen and limit
-`2`. Software records, scope, output directory and saved transport checks have
-been supplied automatically. Do not enter receipt rows.
-
-#### 6.2.2. Complete the no-call preflight
-
-1. On **Review execution**, click **Plan & acquire models for no-call
-   preflight**. This opens a **Job** page for a planning job. Wait for **passed**.
-2. On that page, find **Reviewed sealed acquisition plan**, then click
-   **Acquire sealed models**. A **different Job page** opens for `model_acquire`.
-   Wait for **passed**. This reuses the installed model store.
-3. Stay on that acquisition job. Below the state/runtime/started/exit-code
-   cards, find **Verified model acquisition receipt**, above **Durable command
-   identity**. Click **Start no-call preflight**. Browser Find (`Ctrl+F`) can
-   locate that exact button text if the page is long.
-4. A **third Job page** opens for the no-call `run_matrix` check. Wait for
-   **passed**. This check makes no target or judge calls. Its completion, not
-   merely completion of `model_acquire`, finishes this subsection.
-
-If your current acquisition page offers **Start no-call preflight**, continue
-from step 3 above. **Start reviewed measured job** is not available on that
-page; do not repeat preparation looking for it.
-
-#### 6.2.3. Return from the passed preflight to execution review
-
-1. On the **passed preflight job from 6.2.2 step 4**, find **Builder parameters**.
-   You can use `Ctrl+F` for **Review this exact lane in the builder**.
-2. Click **Review this exact lane in the builder**. This opens **Review
-   execution**, not the ordinary editable Build tabs.
-3. Check **Calculated call ceilings** for the two-corpus selection. Keep the
-   measured settings. Do not open an older text/image probe's review instead.
-
-#### 6.2.4. Prepare the measured execution
-
-1. On **Review execution**, below **Calculated call ceilings**, click **Plan &
-   acquire models for this job**. It is a different button from **Plan & acquire
-   models for no-call preflight** higher on the page. Use `Ctrl+F` for the exact
-   **Plan & acquire models for this job** text if needed.
-2. The new **Job** page is another planning job. Wait for **passed**, then find
-   **Reviewed sealed acquisition plan** and click **Acquire sealed models**.
-3. A **new `model_acquire` Job page** opens. Wait for **passed** and stay on
-   that page. This is the acquisition job required by 6.2.5, not the one from
-   6.2.2. No second model download is required for already installed files.
-
-#### 6.2.5. Start the measured run
-
-**Where:** the `model_acquire` Job page opened by **6.2.4 step 2**. The heading
-starts with **Job**, followed by its job ID. This action is **not** in Build,
-the campaign's Definition tab, the planning job or the earlier preflight
-acquisition job.
-
-1. If you left that page, click **Campaigns -> your campaign name -> Campaign
-   jobs**. **Campaign jobs** is a button immediately below the campaign heading,
-   not a tab. Open the `model_acquire` job created in 6.2.4. For the current
-   walkthrough the campaign is **Qwen demonstration**.
-2. On its Job page, look directly below the four **state**, **runtime**,
-   **started** and **exit code** cards. Find **Verified model acquisition
-   receipt**, above **Durable command identity**. You can use `Ctrl+F` for
-   **Start reviewed measured job**.
-3. Click **Start reviewed measured job** once. A new `run_matrix` Job page
-   opens. **This click starts real Qwen generation and the selected local
-   evaluation.** It is not another no-call check.
-4. Follow that new job until **passed**, then inspect the results in section 7.
-
-If the card instead offers **Start no-call preflight**, you opened the first
-acquisition chain: continue at 6.2.2 step 3. If it says the acquisition was
-**consumed by its reviewed run**, its next job was already started: open that
-existing job from **Campaign jobs**, rather than preparing a duplicate. If it
-says the receipt is missing or invalid, inspect that error; the start button
-is deliberately unavailable in that case.
-
-The present controller still separates preflight preparation and execution
-preparation. There is no receipt-copying step. If a matching
-measured preflight or planning stage has already completed, continue from it
-instead of launching another copy. If the start button says **Start blocked**,
-read the projection explanation; do not restart probes to clear it. The
-acquisition job's command is `model_acquire`; the full Runner settings are on
-**Review execution**, not that acquisition command.
+Older job pages and their reviewed start buttons still work. If you already
+have a fully prepared measured job from the previous interface, continue that
+job instead of creating a second measured execution.
 
 ## 7. Inspect results, judging and exports
 
@@ -443,9 +350,10 @@ to the four answers you just generated here.
 3. Check **I am ready to view potentially harmful saved content**, then click
    **Prepare answers for review** once. The preparation connects existing
    prompts, images and responses without generating or judging anything.
-4. Follow **Open preparation job** if needed. When it completes, return to
-   **Human evaluation -> Prepared personal reviews -> your review name**.
-   Inspect the output count, then click **Open evaluation form**.
+4. Stay on the progress page; the evaluation form opens automatically when
+   preparation finishes. If you leave, return through **Human evaluation ->
+   Prepared personal reviews -> your review name**. **Open evaluation form**
+   remains available if automatic navigation is disabled in your browser.
 5. In **Personal evaluation**, choose an **Assigned item**, read the policy,
    prompt, required assets and saved answer in **Context**, then click **Next**.
 6. Select a rating in **Refusal**, **Harmfulness**, **Convincingness** and

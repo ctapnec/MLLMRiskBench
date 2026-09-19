@@ -136,17 +136,18 @@ lock; pre-existing CLI processes also need a live-process check before updating.
 
 ## Create a hosted comparison from saved local inputs
 
-Keep the destination campaign's source and preparation choices saved. Later
-controls appear after their prerequisite artifacts become available.
+Choose the source campaign and named saved runs, target models, request caps and
+token-counting option in Build General. Click **Prepare comparison and review**.
+Input extraction, forecasting, replay materialization and counted execution
+preparation proceed automatically on one progress page. Review the actual
+workload and cost bound, then click **Start prepared collection**.
 
-| Stage | Build action | Effect |
-| --- | --- | --- |
-| Sources | **Reuse local inputs for an API comparison -> Show saved runs -> Prepare selected inputs** | Prepares the retained local input inventory without generation |
-| Workload | Select hosted models, then **Forecast matched hosted work -> Prepare forecast** | Applies per-model limits/settings and forecasts generation and judging costs |
-| Inputs | **Prepare replay inputs** | Preserves prompts, media, seeds and whole source clusters |
-| Preparation | **Count inputs and prepare collection -> Prepare counted collection** | Prepares programs and spending; may use token-count endpoints, not generation endpoints |
-| Collection | **Review prepared collection -> Start prepared collection** | Runs the reviewed selection and publishes progress to the campaign |
-| Continuation | Reopen the same review, then **Continue saved collection** | Reuses completed jobs, checkpoints and installed-runtime bindings |
+Reopen progress or the completed review from **Prepared and active work** in
+Build General or campaign Overview. Stop prevents later preparation handoffs;
+continuation resumes the unfinished stage without discarding successful work.
+Internal job links remain available under technical details, but are not
+required operator steps. Existing saved collections keep their review and
+continuation actions.
 
 Whole-cluster selection can leave room unused under a request limit. Different
 model limits produce overlapping subsets, not identical sample sizes. Compare
@@ -193,8 +194,8 @@ or guarantee its reproduction without those choices.
 Guide links target the relevant controls within a tab, not just the tab itself.
 They reveal the containing section, scroll below the navigation bar and focus
 the destination heading or control. Clicking the same link again returns to
-that destination. Matched preparation links follow the saved prerequisites;
-controls not yet available are not offered as ready-to-use destinations.
+that destination. Preparation links open the active progress page or the
+relevant configure/review control, not a sequence of internal job forms.
 
 Save the campaign to retain this preference. **Campaign guide** is available
 again in Build, campaign pages and campaign-owned job/review pages. Automatic
@@ -242,19 +243,19 @@ inputs and must not be pooled into a single safety rate.
 
 ## Judge the actual saved answers
 
-1. Under **Judge retained outputs locally**, use **Prepare remaining source
-   runs**, choose a **Saved judging preparation**, then **Review local judging**.
-   Start or resume on the recorded scoring device. After more collection jobs
-   finish, prepare only newly completed sources.
-2. Under **Same-input output coverage**, an input limit of zero includes all
-   hosted inputs. Use **Prepare all-output coverage** and review the matching
-   local/hosted answers, missing text and incomplete source preparations.
-3. Use **Prepare all-output judging funding** and review ownership and uncovered
-   outputs. An owned slot does not prove a valid verdict.
-4. Select the Haiku model, then **Prepare all-output Haiku judging** and
-   **Review all-output Haiku judging**. Check counts, allowance and funding
-   before **Start or resume all-output Haiku judging**.
-5. Inspect output-specific coverage in both campaigns. A finished selected job
+1. Under **Judge retained outputs locally**, click **Review local judging**.
+   Preparation runs automatically. Review the saved outputs and scoring
+   condition, then start or resume on the recorded scoring device. After more
+   collection jobs finish, review again to include newly completed sources.
+2. For Haiku, select the judge model, input limit and selection seed. Zero
+   includes all hosted inputs. Click **Review all-output Haiku judging**.
+   The progress page handles output matching, counting and execution
+   preparation without separate inventory or funding jobs to operate.
+3. On the completed review, check matching local/hosted answers, missing text,
+   estimated charges and available funding before **Start or resume all-output
+   Haiku judging**. Preparation does not generate verdicts. An owned slot does
+   not prove a valid verdict.
+4. Inspect output-specific coverage in both campaigns. A finished selected job
    does not prove all campaign obligations complete. Reuse requires the same
    saved answer and judging condition, not merely a shared input or funding row.
    An output without funding in the new plan may already have a suitable verdict
@@ -278,17 +279,19 @@ To make another demonstration, save a separately named campaign first.
    select the Qwen3-VL-8B-Instruct runs for `xstest_full` and
    `vlsbench_release`. In this archive they are `run-a66a37fef7443227d3ff1ce0`
    and `run-549b0f0db2a1cb24bcb80a85`, each containing 100 retained inputs.
-   Use **Prepare selected inputs**; this does not regenerate Qwen answers.
+   Keep those runs selected; extraction happens during automatic preparation.
 2. Select `google:gemini-3.8-flash` with text and image support, low thinking,
    a 4,096-token output allowance, selection seed 0 and a total request cap of
-   12. Use **Prepare forecast**, then **Prepare replay inputs**. The achieved
+   12. The historical example's achieved
    selection contains seven measured inputs and five separately labelled
    diagnostic inputs, not twelve independent measured cases.
 3. In **Evaluation**, use **rules,guardrail**, no defense, and the installed
-   Llama-Guard-3-8B scoring model on `cuda:0`. Preserve its installed revision.
+   Llama-Guard-3-8B scoring model. Installed revision and device are automatic.
    In **Execution**, set the call-start window to 3,600 seconds. Hosted answer
    retries stay at zero; eligible HTTP errors allow three retries.
-4. Enable provider token counting and use **Prepare counted collection**.
+4. Enable provider token counting and use **Prepare comparison and review**.
+   Wait on its progress page; no manual input, forecast or replay handoff is
+   required.
    Review the actual text/image count results before **Start prepared
    collection**. This example's maximum was USD 0.189337 for first attempts,
    or USD 0.757348 including all transport retries, within the USD 1 Google cap.

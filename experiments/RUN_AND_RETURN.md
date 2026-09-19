@@ -7407,7 +7407,7 @@ refreshes read SQLite only; they do not scan or hash historical artifacts.
 ### Personal review and independent study entry points
 
 Campaign Human evaluation opens Review saved answers by default. Preparing
-the saved sample and clicking Open evaluation form reaches prompt/media/answer
+the saved sample automatically opens the personal evaluation form for prompt/media/answer
 review with persistent personal ratings, drafts, edits, deferral and a separate
 CSV export. Personal progress requires one evaluation per output and never
 qualifies as independent two-rater evidence or modifies automated judgments.
@@ -7419,6 +7419,37 @@ click-by-click instructions; section 10 distinguishes SVM export, prediction,
 new grouped evaluation and packaging instead of treating them as one operation.
 
 ### Automatic technical setup in Build and transport Tools
+
+#### Ordinary operator workflow
+
+Build campaigns and single runs use **Compose & review -> Prepare and review**.
+One durable progress page advances through model planning, reuse/acquisition,
+no-call preflight and final preparation. Its final **Start run**, **Start probe**
+or **Start canary** is an explicit execution action. A probe's connection record
+is saved automatically after the explicitly started probe finishes. Operators
+do not copy receipts or choose between internal acquisition jobs.
+
+For retained-input hosted comparisons, select saved runs and scientific/budget
+limits, then use **Prepare comparison and review**. Input extraction, forecast,
+replay materialization and provider token counting are internal stages. The
+existing reviewed collection start remains separate from preparation.
+
+**Review local judging** and **Review all-output Haiku judging** similarly
+prepare their saved-output selection automatically and open the corresponding
+execution review. Haiku preparation does not buy verdicts. The earlier CLI
+recipes in this runbook remain available as technical reference; their separate
+preparation commands are not ordinary UI operator tasks.
+
+**Prepared and active work** in Build General and campaign Overview/Activity
+reopens progress or the final review. **Stop preparation** prevents subsequent
+handoffs; **Continue preparation** retains completed stages and retries the
+unfinished stage. Frozen settings are preserved across console restarts.
+Concurrent edits to a saved campaign are not overwritten. Completed compatible
+preparation and installed models are reused. No extra full-checksum validation,
+runtime installation or target/judge generation is implied by opening a page.
+
+See [Operator workflows](../docs/UI_WORKFLOW_SIMPLIFICATION.md) for coverage and
+the two small-campaign guides for exact visible controls.
 
 Newly rendered Build forms default to **Admission -> Automatic** for campaigns
 and standalone runs. Save/review resolves the configured project/source records,
