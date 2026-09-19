@@ -552,7 +552,7 @@ def test_installer_campaign_is_visible_in_jobs_and_stats(tmp_path: Path) -> None
         jobs_status, _kind, jobs = app.handle(
             "GET", "/jobs?from=2026-08-18T00:00:00&to=2026-08-19T00:00:00"
         )
-        stats_status, _kind, stats = app.handle("GET", "/stats")
+        stats_status, _kind, stats = app.handle("GET", "/stats?view=legacy")
     finally:
         app.close()
     assert jobs_status == stats_status == 200

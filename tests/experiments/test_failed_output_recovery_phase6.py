@@ -125,7 +125,8 @@ def test_partial_continuation_retains_five_metrics_and_checkpoint_failures(
     completion_path = control / "completion.json"
     write(completion_path, completion)
     if mutation:
-        with pytest.raises(ValueError):
+        from ura.artifact_checks import artifact_verification
+        with artifact_verification(verify_sha256=mutation == "digest"), pytest.raises(ValueError):
             dispatch_phase7_completion(completion_path, runner_root=runner)
         return
     result = dispatch_phase7_completion(completion_path, runner_root=runner)

@@ -295,7 +295,7 @@ def test_real_vllm_target_fails_closed_without_detected_gpu() -> None:
         run_matrix._require_local_hardware_fit(target, spec, config, no_gpu)
 
 
-def test_web_materializes_clean_roster_selection_with_exact_values(tmp_path: Path) -> None:
+def test_web_materializes_clean_roster_selection_with_exact_values(tmp_path: Path, monkeypatch) -> None:
     repo = tmp_path / "repo"
     (repo / "experiments" / "rig").mkdir(parents=True)
     spec = "vllm:org/model-70B"
@@ -314,6 +314,16 @@ def test_web_materializes_clean_roster_selection_with_exact_values(tmp_path: Pat
         gpu_hardware=_rig_hardware(),
     )
     try:
+        with pytest.raises(ValueError, match="passing readiness profile"):
+            app._materialize_selected_local_config([spec])
+        catalog, configured = app._local_entry_catalog()
+        catalog[spec].update(max_model_len=-1, max_tokens=4096, timeout=120.0)
+        catalog[spec]["_execution_profile"] = {
+            "generation_tokens": 4096, "request_timeout_seconds": 120.0,
+            "local_execution": {"gpu_memory_utilization": 0.85,
+                                "max_model_len": -1, "tensor_parallel_size": 2},
+        }
+        monkeypatch.setattr(app, "_local_entry_catalog", lambda: (catalog, configured))
         path = app._materialize_selected_local_config([spec])
         selected = json.loads(path.read_text(encoding="utf-8"))[spec]
         assert selected["quantization"] == "bitsandbytes"

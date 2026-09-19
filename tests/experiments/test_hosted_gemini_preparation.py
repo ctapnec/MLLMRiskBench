@@ -55,7 +55,7 @@ def test_gemini_count_preserves_system_history_image_and_configuration(tmp_path,
     def request(method, path, payload, options):
         delivered.append(copy.deepcopy(payload))
         assert method == "post" and path == "models/gemini-3.1-pro-preview:countTokens"
-        assert options.timeout == 30000 and options.retry_options.attempts == 1
+        assert options.timeout == 120000 and options.retry_options.attempts == 1
         return SimpleNamespace(body='{"totalTokens":731}')
 
     monkeypatch.setattr(target, "_get_client", lambda: SimpleNamespace(_api_client=SimpleNamespace(request=request)))

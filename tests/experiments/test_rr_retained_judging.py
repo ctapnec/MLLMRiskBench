@@ -72,6 +72,7 @@ def test_pending_selection_excludes_every_existing_judgment():
 
 
 def test_source_files_must_remain_exactly_bound(tmp_path):
+    from ura.artifact_checks import artifact_verification
     path = tmp_path / "responses.jsonl"
     path.write_text("original\n")
     source = recovery.RetainedUnit(
@@ -80,7 +81,7 @@ def test_source_files_must_remain_exactly_bound(tmp_path):
     )
     source.validate_unchanged()
     path.write_text("modified\n")
-    with pytest.raises(ValueError):
+    with artifact_verification(verify_sha256=True), pytest.raises(ValueError):
         source.validate_unchanged()
 
 

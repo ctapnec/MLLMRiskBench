@@ -5302,11 +5302,11 @@ def test_phase8_runbook_uses_canonical_work_paths_for_stable_artifacts() -> None
     ]
 
     required = (
-        '--results "$URA_WORK/runs/thesis/runner" --prepare 400',
+        '--results "$PHASE7_HUMAN_AUDIT_VIEW" --prepare 400',
         '--output "$URA_WORK/runs/thesis/human-audit-sample.csv"',
         'PHASE8_ANALYSIS_ROOT="$URA_WORK/runs/thesis/human-audit-analysis"',
         '--labels "$URA_WORK/runs/thesis/human-audit-labelled.csv"',
-        '--results "$URA_WORK/runs/thesis/runner" --prepare-source-task 50',
+        '--results "$PHASE7_HUMAN_AUDIT_VIEW" --prepare-source-task 50',
         '--output "$URA_WORK/runs/thesis/source-task-audit-sample.csv"',
         '--source-task-labels "$URA_WORK/runs/thesis/source-task-audit-labelled.csv"',
         '--human-audit "$URA_WORK/runs/thesis/human-audit-analysis/human_audit.json"',
@@ -5493,7 +5493,8 @@ def test_level2_and_suite_proxy_rows_select_by_escaped_group_label() -> None:
             judge="rules",
             label="refusal",
             score=0.0,
-            raw={"source": "airbench", "risk_subtype": risk_subtype},
+            raw={"source": "airbench", "risk_subtype": risk_subtype,
+                 "approximate_security_decision": "refusal"},
         ).model_dump(mode="json")
 
     rows = [_row("a-1", subtype), _row("a-2", other), _row("a-3", subtype)]

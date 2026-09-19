@@ -125,6 +125,7 @@ _RUNTIME_ROUTE_IDENTITY_PAIRS = (
 
 def _finite_budget_args() -> list[str]:
     return [
+        "--target-answer-retries", "0",
         "--max-total-target-calls", "100000",
         "--max-total-judge-calls", "100000",
         "--max-total-http-attempts", "100000",

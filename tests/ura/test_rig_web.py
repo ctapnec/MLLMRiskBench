@@ -727,7 +727,10 @@ def test_explicit_local_path_is_launch_only_not_durable_console_state(
     monkeypatch.setattr(lifecycle_module, "_win_managed_job", lambda: None)
     try:
         identity = f"vllm:local-checkpoint@sha256:{digest}"
-        preview = app._preview_page("run_matrix", values, params).decode("utf-8")
+        automatic = app._preview_page("run_matrix", values, params).decode("utf-8")
+        assert str(checkpoint) not in automatic and spec not in automatic
+        assert identity in automatic
+        preview = app._preview_page("run_matrix", values, params, prepared=True).decode("utf-8")
         assert str(checkpoint) not in preview and spec not in preview
         assert identity in preview
         ticket_match = re.search(
@@ -3642,7 +3645,7 @@ def test_stats_page_renders_budget_and_tolerates_missing_results(tmp_path: Path)
     # schema-valid producer artifacts (see the real Level-1/Level-2 tests);
     # an unrecognized ad-hoc JSON shape renders nothing.
     app = _isolated_app(tmp_path)
-    status, _, body = app.handle("GET", "/stats")
+    status, _, body = app.handle("GET", "/stats?view=legacy")
     text = body.decode("utf-8")
     assert status == 200
     assert "Budgets" in text and "/config?file=budgets" in text
@@ -3652,7 +3655,7 @@ def test_stats_page_renders_budget_and_tolerates_missing_results(tmp_path: Path)
     (app.results_root / "level2.json").write_text(json.dumps({
         "rows": [{"model": "fable", "asr": 0.12}],
     }), encoding="utf-8")
-    status, _, body = app.handle("GET", "/stats")
+    status, _, body = app.handle("GET", "/stats?view=legacy")
     text = body.decode("utf-8")
     assert status == 200
     assert "barchart" not in text
@@ -5219,7 +5222,7 @@ def test_stats_runs_card_records_lane_jobs(tmp_path: Path) -> None:
     app._reconcile()
     # level1_evidence is not a run kind, so no run row; the Stats page still
     # renders the (empty) runs card without error.
-    status, _, body = app.handle("GET", "/stats")
+    status, _, body = app.handle("GET", "/stats?view=legacy")
     assert status == 200 and b"Model campaign runs" in body
 
 
@@ -5252,7 +5255,7 @@ def test_stats_corrects_stale_no_call_run_kind_from_persisted_argv(
             (job.job_id,),
         )
 
-    text = app.handle("GET", "/stats")[2].decode("utf-8")
+    text = app.handle("GET", "/stats?view=legacy")[2].decode("utf-8")
     assert "offline dry run - no model call" in text
     assert "diagnostic model-capable run" not in text
     assert "Passed means the CLI exited with status 0" in text
@@ -6604,7 +6607,7 @@ def test_reindex_rebuilds_usage_and_spend_card_renders(tmp_path: Path) -> None:
     fable = next(k for k in totals
                  if k[:3] == ("target", "anthropic", "claude-fable-5"))
     assert totals[fable]["input"] == 1000
-    status, _, body = app.handle("GET", "/stats")
+    status, _, body = app.handle("GET", "/stats?view=legacy")
     text = body.decode("utf-8")
     assert status == 200
     # The judge cost is computable; the Fable row is N/A because one call
@@ -6681,7 +6684,7 @@ def test_budget_never_sums_or_mislabels_mixed_currencies(tmp_path: Path) -> None
         ],
     }), encoding="utf-8")
     app.handle("POST", "/db/reindex", {})
-    _s, _c, body = app.handle("GET", "/stats")
+    _s, _c, body = app.handle("GET", "/stats?view=legacy")
     text = body.decode("utf-8")
     # Anthropic: per-currency subtotals, never one summed USD figure.
     assert "mixed currencies (not summed)" in text
@@ -6795,7 +6798,7 @@ def test_corrupt_database_is_visible_never_silent_empty(tmp_path: Path) -> None:
     assert app.db.load_jobs() is None
     assert app.db.usage_totals() is None
     # Every page still renders, with the failure visible.
-    for path in ("/", "/jobs", "/stats"):
+    for path in ("/", "/jobs", "/stats?view=legacy"):
         status, _, body = app.handle("GET", path)
         text = body.decode("utf-8")
         assert status == 200, path
@@ -6883,7 +6886,7 @@ def test_stats_page_survives_malformed_level1_count(tmp_path: Path) -> None:
                                 "attempted": {"weird": "nested-object"}},
         },
     }), encoding="utf-8")
-    status, _, body = app.handle("GET", "/stats")
+    status, _, body = app.handle("GET", "/stats?view=legacy")
     assert status == 200  # the page did not crash
     text = body.decode("utf-8")
     assert "badge red" in text and ">invalid</span>" in text
@@ -7087,7 +7090,7 @@ def test_stats_never_indexes_last_wins_duplicate_report_authority(
     level2_path.write_text(raw_level2, encoding="utf-8")
 
     assert app._report_index() == []
-    status, _, body = app.handle("GET", "/stats")
+    status, _, body = app.handle("GET", "/stats?view=legacy")
     text = body.decode("utf-8")
     assert status == 200
     assert "ambiguous-level1.json" not in text
@@ -7268,7 +7271,7 @@ def test_stats_renders_real_level2_report(
     )
     app.jobs[analysis_job.job_id] = analysis_job
     assert app.db.upsert_job(analysis_job, state="complete", exit_code=0)
-    index = app.handle("GET", "/stats")[2].decode("utf-8")
+    index = app.handle("GET", "/stats?view=legacy")[2].decode("utf-8")
     assert "class='barchart'" not in index
     status, _, body = app.handle(
         "GET", "/stats/job/job-level2-grid?fragment=1",

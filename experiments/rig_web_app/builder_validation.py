@@ -2746,7 +2746,7 @@ class BuilderValidationMixin:
             + acquisition_notice
             + self._campaign_banner(params.get("campaign_id", ""))
             + "<section class='card'><h2>Experiment</h2><dl class='builder-summary'>" + "".join(
-                "<div><dt>" + label + "</dt><dd>" + html.escape(params.get(key) or "Not set") + "</dd></div>"
+                "<div><dt>" + label + "</dt><dd>" + html.escape((_retained_params or {}).get(key) or "Not set") + "</dd></div>"
                 for key, label in (("local", "Local models"), ("api", "API models"), ("corpora", "Arms / corpora"),
                     ("attackers", "Frameworks / attacks"), ("seeds", "Seeds"), ("sampling_policy", "Sampling"),
                     ("limit", "Per-arm limit"), ("judges", "Judges"), ("judge_model", "Judge model"))

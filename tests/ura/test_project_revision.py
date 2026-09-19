@@ -449,7 +449,7 @@ def test_publication_boundary_recheck_prevents_completion_and_final_grid(
     out = tmp_path / "run"
     result = run_matrix.main([
         "--attestation-probe", "--execution-scope-id", "test-scope",
-        "--api", target_spec, "--api-config", str(api_config),
+        "--api", target_spec, "--api-config", str(api_config), "--target-answer-retries", "0",
         "--attackers", "replay", "--judges", "rules",
         "--corpora", "synth", "--limit", "1",
         "--max-queries", "1", "--max-turns", "1",
@@ -491,7 +491,7 @@ def test_rig_check_dry_omits_and_non_dry_retains_revision(
     }}), encoding="utf-8")
     live_out = tmp_path / "live"
     assert rig_check.main([
-        "--api", target_spec, "--api-config", str(api_config),
+        "--api", target_spec, "--api-config", str(api_config), "--target-answer-retries", "0",
         "--attackers", "replay", "--judges", "rules",
         "--corpora", "synth", "--limit", "1",
         "--max-total-target-calls", "100",

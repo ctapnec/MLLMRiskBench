@@ -292,7 +292,7 @@ def test_local_judge_path_never_enters_retained_request_or_error_artifacts(
     result = run_matrix.main([
         "--preflight-only",
         *project_revision_args,
-        "--api", "mock",
+        "--api", "mock", "--target-answer-retries", "0",
         "--judge-model", spec,
         "--local-config", str(config),
         "--attackers", "replay",

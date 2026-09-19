@@ -544,7 +544,7 @@ def test_synthetic_transport_probe_ignores_real_source_receipt_environment(
     assert run_matrix.main([
         "--attestation-probe", "--execution-scope-id", "test-scope",
         *project_revision_args,
-        "--api", "diagnostic-target", "--attackers", "replay",
+        "--api", "diagnostic-target", "--attackers", "replay", "--target-answer-retries", "0",
         "--judges", "rules",
         "--corpora", "synth", "--limit", "1", "--seeds", "0",
         "--max-queries", "1", "--max-turns", "1",

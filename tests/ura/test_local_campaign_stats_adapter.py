@@ -1146,7 +1146,7 @@ def test_phase7_chain_identity_and_boundary_mutations_never_link_stats(
     )
     monkeypatch.setattr(app, "_engineering_campaign_scan", lambda **_kwargs: ([campaign], ""))
     try:
-        index = app.handle("GET", "/stats")[2].decode("utf-8")
+        index = app.handle("GET", "/stats?view=legacy")[2].decode("utf-8")
     finally:
         app.close()
     assert f"href='/stats/job/{campaign.route_id}'" not in index
@@ -1179,7 +1179,7 @@ def test_stats_links_sealed_phase7_reports_to_watcher_campaign(
         lambda route: campaign if route == campaign.route_id else None,
     )
     try:
-        index = app.handle("GET", "/stats")[2].decode("utf-8")
+        index = app.handle("GET", "/stats?view=legacy")[2].decode("utf-8")
         status, _headers, detail = app.handle("GET", f"/stats/job/{campaign.route_id}?fragment=1")
     finally:
         app.close()
@@ -1246,7 +1246,7 @@ def test_stats_preserves_phase7_explicit_limitations_in_status_and_detail(
         lambda route: campaign if route == campaign.route_id else None,
     )
     try:
-        index = app.handle("GET", "/stats")[2].decode("utf-8")
+        index = app.handle("GET", "/stats?view=legacy")[2].decode("utf-8")
         status, _headers, detail = app.handle("GET", f"/stats/job/{campaign.route_id}?fragment=1")
     finally:
         app.close()
@@ -1284,7 +1284,7 @@ def test_generic_registration_fails_closed_after_report_byte_mutation(
     )
     monkeypatch.setattr(app, "_engineering_campaign_scan", lambda **_kwargs: ([campaign], ""))
     try:
-        index = app.handle("GET", "/stats")[2].decode("utf-8")
+        index = app.handle("GET", "/stats?view=legacy")[2].decode("utf-8")
     finally:
         app.close()
     assert f"href='/stats/job/{campaign.route_id}'" not in index

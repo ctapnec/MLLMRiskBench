@@ -2,7 +2,7 @@
 from experiments.hosted_campaign_prepare import _pilot_groups
 
 
-def test_pilot_does_not_isolate_crescendo_setup_or_remove_last_challenge():
+def test_pilot_keeps_retained_crescendo_turns_in_one_source_cluster():
     def row(identity, corpus, datapoint):
         return {'input_identity_sha256': identity, 'corpus': corpus, 'source': corpus,
                 'source_cluster_id': datapoint, 'datapoint_id': datapoint,
@@ -11,10 +11,9 @@ def test_pilot_does_not_isolate_crescendo_setup_or_remove_last_challenge():
                          row('direct', 'other', 'two'), row('remaining', 'third', 'three')]}
     groups = _pilot_groups(plan, policy_evaluable_ids={'challenge', 'direct', 'remaining'})
     selected = {key for group in groups for key in group}
-    assert 'setup' not in selected
-    assert 'challenge' not in selected
+    assert ('setup' in selected) == ('challenge' in selected)
     assert selected
-    assert 'setup' in {r['input_identity_sha256'] for r in plan['selected']} - selected
+    assert {r['input_identity_sha256'] for r in plan['selected']} - selected
 
 
 def test_canary_may_include_a_complete_multirecord_cluster_with_a_challenge():

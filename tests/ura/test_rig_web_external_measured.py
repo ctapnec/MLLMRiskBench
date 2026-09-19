@@ -757,7 +757,7 @@ def test_jobs_and_stats_merge_external_read_only_job_without_database_import(
         return real_collect(root, **kwargs)
 
     monkeypatch.setattr(dashboard_module, "collect_usage", collect_spy)
-    stats = app.handle("GET", "/stats")[2].decode("utf-8")
+    stats = app.handle("GET", "/stats?view=legacy")[2].decode("utf-8")
     card = stats.split("data-job-id='external-measured-example'", 1)[1].split(
         "</article>", 1
     )[0]
@@ -810,7 +810,7 @@ def test_stats_exact_external_detail_bypasses_truncated_list_scan(
         lambda **_kwargs: ([], "External measured registry scan stopped after 2000 entries."),
     )
     try:
-        index = app.handle("GET", "/stats")[2].decode("utf-8")
+        index = app.handle("GET", "/stats?view=legacy")[2].decode("utf-8")
         status, _headers, detail = app.handle(
             "GET", f"/stats/job/{job_id}?fragment=1"
         )

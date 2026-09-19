@@ -516,7 +516,7 @@ def test_nanogcg_capture_config_passes_runner_as_truthful_replay(
     config_path.write_text(json.dumps(config), encoding="utf-8")
     assert run_matrix.main([
         "--dry-run",
-        "--api", "mock",
+        "--api", "mock", "--target-answer-retries", "0",
         "--attackers", "nanogcg",
         "--attacker-config", str(config_path),
         "--judges", "rules",

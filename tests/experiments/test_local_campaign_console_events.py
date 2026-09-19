@@ -207,7 +207,7 @@ def test_child_controller_uses_native_jobs_index_and_detail_routes(
     terminal_detail = app.handle(
         "GET", f"/jobs/campaign/{control.name}"
     )[2].decode("utf-8")
-    terminal_stats = app.handle("GET", "/stats")[2].decode("utf-8")
+    terminal_stats = app.handle("GET", "/stats?view=legacy")[2].decode("utf-8")
     assert "<td>support only</td><td>not applicable - support only</td>" in terminal_jobs
     assert (
         "<tr><td>Declared model tasks</td><td>support only</td></tr>"
@@ -284,7 +284,7 @@ def test_target_capable_child_reports_target_only_calls_without_analysis_charts(
     assert "Target-capable mixed controller" in detail_html
     assert "Reported target execution" in detail_html
     assert "guard, defense, attacker, and framework-model roles" in detail_html
-    stats_html = app.handle("GET", "/stats")[2].decode("utf-8")
+    stats_html = app.handle("GET", "/stats?view=legacy")[2].decode("utf-8")
     card = stats_html.split(f">{control.name}</a>", 1)[1].split("</article>", 1)[0]
     assert "Reported target attempts" in card
     assert "7 (operational self-report)" in card
