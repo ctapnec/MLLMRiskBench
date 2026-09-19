@@ -105,6 +105,7 @@ class WorkspacePagesMixin:
             views.insert(0, ("work", "Substantive work"))
             views.append(("all", "Technical - all jobs"))
         else:
+            views.append(("compare", "Compare campaigns"))
             views.append(("svm", "SVM results"))
             views.append(("legacy", "Earlier reports"))
         return "<nav class='page-tablist server-tablist' aria-label='" + context.title() + " scope'>" + "".join(

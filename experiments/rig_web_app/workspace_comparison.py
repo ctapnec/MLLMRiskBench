@@ -304,6 +304,7 @@ def render_groups(rows):
         content += "<section style='margin-top:1.5rem;overflow-wrap:anywhere'><h3>" + html.escape(title) + "</h3>"
         content += (f"<p>Input union: {sum(totals.values()):,}; matched: {totals['matched']:,}; "
             f"left only: {totals['left_only']:,}; right only: {totals['right_only']:,}; ambiguous shared inputs: {totals['ambiguous']:,}.</p>")
+        content += coverage_chart(totals)
         paired = [row for row in group if row["match_status"] == "matched"]
         if not paired:
             content += '<p>No unambiguous matched inputs to compare in this source.</p></section>'
@@ -319,6 +320,29 @@ def render_groups(rows):
             content += "<tr>" + "".join("<td>" + html.escape(value) + "</td>" for value in cells) + f"<td>{row['count']:,}</td></tr>"
         content += "</tbody></table></div></section>"
     return content
+
+
+def coverage_chart(totals):
+    """Composition of the input union, not a pooled safety or success score."""
+    n = sum(totals.values())
+    if not n:
+        return ''
+    from .workspace_charts import SERIES
+    segments = []; legend = []; offset = 0
+    for (key, caption), color in zip((('matched','Matched'),('left_only','Left only'),
+            ('right_only','Right only'),('ambiguous','Ambiguous')), SERIES):
+        count = totals[key]; size = 100 * count/n
+        if count:
+            segments.append(f"<circle cx='90' cy='90' r='60' pathLength='100' fill='none' stroke='{color}' "
+                f"stroke-width='24' stroke-dasharray='{size:.6f} {100-size:.6f}' stroke-dashoffset='{-offset:.6f}' "
+                f"transform='rotate(-90 90 90)' data-count='{count}'><title>{caption}: {count}/{n}</title></circle>")
+        legend.append(f"<li><span style='display:inline-block;width:.8em;height:.8em;background:{color}' aria-hidden='true'></span> {caption}: {count:,} ({size:.1f}%)</li>")
+        offset += size
+    return ("<figure style='display:flex;flex-wrap:wrap;align-items:center;gap:1rem;margin:1rem 0'>"
+        "<svg xmlns='http://www.w3.org/2000/svg' role='img' aria-label='Matched-input coverage' viewBox='0 0 180 180' width='180' height='180'>"
+        "<title>Matched-input coverage</title><desc>Input union divided into matched, left-only, right-only and ambiguous inputs. This is coverage, not model safety.</desc>"
+        + ''.join(segments) + f"<text x='90' y='96' text-anchor='middle' fill='currentColor'>{n:,} inputs</text></svg>"
+        '<figcaption><ul>'+''.join(legend)+'</ul></figcaption></figure>')
 
 
 def comparison_page(db, campaign, query):

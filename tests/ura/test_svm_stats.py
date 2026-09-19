@@ -38,6 +38,7 @@ def test_retained_study_visible_in_stats_without_job_or_new_computation(app, mon
     assert 'Majority baseline' in page and '14 / 6' in page
     assert 'insufficient class group support' in page
     assert 'SVM held-out macro-F1' in page and 'not model safety scores' in page
+    assert 'id="campaign-export-status"' in page
     assert '/stats?view=svm' in app._workspaces_page(context='stats').decode()
     assert root.exists() and len(app.jobs) == 0
 
@@ -50,6 +51,7 @@ def test_study_selection_and_exports_use_same_task_split(app):
     rows = list(csv.DictReader(io.StringIO(data.decode())))
     assert status == 200 and kind.startswith('text/csv')
     assert len(rows) == 1 and rows[0]['macro_f1'] == '0.2'
+    assert rows[0]['teacher'] == 'Haiku' and rows[0]['study'] == 'svm' and rows[0]['independent_groups'] == '40'
     _, _, svg = svm_stats.response(app, dict(args, export='svg'))
     assert b'Macro-F1 0.200' in svg and b'0.750' not in svg
     with pytest.raises(ValueError, match='recorded evaluation'):

@@ -25,7 +25,7 @@ def label(value):
 
 
 def score(value):
-    return f'{value:.3f}' if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) else 'Not estimated'
+    return f'{value:.3f}' if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and 0 <= value <= 1 else 'Not estimated'
 
 
 def load(app, directory):
@@ -85,8 +85,11 @@ def studies(app):
             continue
         directory = argument(argv, '--out')
         if directory:
+            owners = [argv[i+1] for i, value in enumerate(argv[:-1]) if value == '--campaign']
+            if row['campaign_id']:
+                owners.append(row['campaign_id'])
             add(directory, 'Classifier study - ' + row['job_id'],
-                [row['campaign_id']] if row['campaign_id'] else [], row['job_id'])
+                owners, row['job_id'])
     return list(result.values())
 
 
@@ -100,23 +103,24 @@ def selected_rows(report, query):
     return [r for r in rows if r.get('protocol') == protocol and (not task or r.get('task') == task)], protocols, protocol
 
 
-def metrics_csv(rows):
+def metrics_csv(rows, metadata=None):
+    metadata = metadata or {}
     stream = io.StringIO(newline='')
     writer = csv.writer(stream)
-    writer.writerow(['task', 'protocol', 'features', 'estimator', 'status', 'macro_f1', 'ci95_low', 'ci95_high',
+    writer.writerow([*metadata, 'task', 'protocol', 'features', 'estimator', 'status', 'macro_f1', 'ci95_low', 'ci95_high',
                      'average_precision', 'test_responses', 'test_groups', 'class_0', 'class_1'])
     for row in rows:
         metric = row.get('test', {})
         support = row.get('support', {}).get('test', row.get('support', {}))
         ci = metric.get('macro_f1_cluster_ci95') or [None, None]
-        values = [row.get(k, '') for k in ('task', 'protocol', 'features', 'estimator', 'status')]
+        values = [*metadata.values(), *[row.get(k, '') for k in ('task', 'protocol', 'features', 'estimator', 'status')]]
         values += [metric.get('macro_f1'), *ci, metric.get('average_precision'), support.get('responses'), support.get('groups'),
                    support.get('classes', {}).get('0'), support.get('classes', {}).get('1')]
-        writer.writerow(["'" + v if isinstance(v, str) and v[:1] in '=+-@\t\r' else v for v in values])
+        writer.writerow(["'" + v if isinstance(v, str) and v and v[0] in '=+-@\t\r' else v for v in values])
     return stream.getvalue().encode('utf-8')
 
 
-def figure(rows):
+def figure(rows, *, scope=''):
     rows = [r for r in rows if r.get('estimator') == 'linear_svm' and score(r.get('test', {}).get('macro_f1')) != 'Not estimated']
     height = 60 + len(rows) * 90
     marks = []
@@ -130,7 +134,7 @@ def figure(rows):
             f"<rect x='16' y='{y+12}' width='{360*value:.3f}' height='18' style='fill:var(--viz-series-1,#2563eb)'/>"
             f"<text x='16' y='{y+54}'>Macro-F1 {score(value)}</text>")
         ci = metric.get('macro_f1_cluster_ci95')
-        if isinstance(ci, list) and len(ci) == 2 and all(isinstance(v, (int, float)) and math.isfinite(v) for v in ci):
+        if isinstance(ci, list) and len(ci) == 2 and all(score(v) != 'Not estimated' for v in ci) and ci[0] <= ci[1]:
             lo, hi = [16 + 360 * v for v in ci]
             marks.append(f"<path d='M {lo:.3f} {y+17} v 8 M {lo:.3f} {y+21} H {hi:.3f} M {hi:.3f} {y+17} v 8' "
                 "fill='none' stroke='var(--ink,#111827)' stroke-width='2'/>"
@@ -138,7 +142,7 @@ def figure(rows):
     return (f"<svg xmlns='http://www.w3.org/2000/svg' class='campaign-figure' style='max-width:560px' role='img' viewBox='0 0 410 {height}' "
         "aria-label='SVM held-out macro-F1'><title>SVM held-out macro-F1</title>"
         "<desc>Scale zero to one. Lines show recorded input-cluster bootstrap 95 percent intervals, when available. "
-        "Tasks and feature sets remain separate. Recorded teacher agreement is not human-validated safety.</desc>"
+        "Tasks and feature sets remain separate. Recorded teacher agreement is not human-validated safety. " + html.escape(scope) + '</desc>'
         '<style>' + CHART_STYLE + '</style>' + ''.join(marks) +
         f"<text x='16' y='{height-8}'>0</text><text x='196' y='{height-8}'>0.5</text><text x='376' y='{height-8}'>1</text></svg>")
 
@@ -187,12 +191,16 @@ def response(app, query):
         # Keep the study selector usable even if the latest study is unfinished.
         report = {}; saved = {}; root = app.results_root / item['key']
     rows, protocols, protocol = selected_rows(report, query)
+    metadata = dict(study=item['key'], teacher=report.get('teacher'), split_seed=report.get('seed'),
+        selected_responses=report.get('selected_responses'), independent_groups=report.get('independent_groups'),
+        bootstrap_draws=report.get('bootstrap_draws'))
+    chart_scope = item['title'] + '; evaluation: ' + protocol + '; recorded teacher: ' + str(report.get('teacher', 'not recorded'))
     export = query.get('export')
     if export:
         if export == 'csv':
-            return 200, 'text/csv; charset=utf-8', metrics_csv(rows)
+            return 200, 'text/csv; charset=utf-8', metrics_csv(rows, metadata)
         if export == 'svg':
-            return 200, 'image/svg+xml; charset=utf-8', figure(rows).encode('utf-8')
+            return 200, 'image/svg+xml; charset=utf-8', figure(rows, scope=chart_scope).encode('utf-8')
         raise ValueError('Unknown SVM export')
 
     def select(name, caption, choices, value):
@@ -212,7 +220,7 @@ def response(app, query):
     if saved.get('packaging_reason'):
         body += '<p class="notice amber">'+html.escape(saved['packaging_reason'])+'</p>'
     if rows:
-        body += figure(rows) + table(rows)
+        body += figure(rows, scope=chart_scope) + table(rows)
     else:
         body += '<p>No evaluated task in this selection. This is not a score of zero.</p>'
     body += '<p>Macro-F1 gives equal weight to both classes. Intervals use input-group resampling, not independent answer resampling. '
@@ -220,6 +228,7 @@ def response(app, query):
     body += 'Compare SVM and baseline rows only within the same study, task and split. No scores are pooled across studies.</p>'
     params = dict(view='svm', study=selected, protocol=protocol, task=query.get('task',''), campaign_id=owner)
     body += '<div id="campaign-exports" class="action-row">'+''.join('<a data-campaign-export download="svm-results.'+kind+'" href="/stats?'+html.escape(urlencode(dict(params,export=kind)),quote=True)+'">Download '+kind.upper()+'</a>' for kind in ('csv','svg'))+'</div>'
+    body += '<p id="campaign-export-status" role="status"></p>'
     body += '<div class="action-row"><a href="/artifacts?path='+quote((root/'result.json').relative_to(app.results_root.resolve()).as_posix())+'">Full study report</a>'
     if item['job']:
         body += '<a href="/jobs/'+quote(item['job'])+'">Analysis job</a>'
