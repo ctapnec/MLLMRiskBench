@@ -8,6 +8,7 @@ import pytest
 from experiments import response_svm
 from experiments.rig_web_app import response_analysis, prepared_inputs
 from test_response_svm import dataset_fixture
+from test_response_svm_models import fitted_study  # noqa: F401
 from test_operator_operations import app, child  # noqa: F401
 from test_rig_web_busy_browser import browser, _burst  # noqa: F401
 
@@ -27,33 +28,79 @@ def test_study_retains_real_small_cohort_limitations_and_reuses_completed_work(t
     assert result['target_calls']==result['judge_calls']==0
     assert not result['human_validated'] and not result['campaign_judgments_modified']
     # Simulate interruption between a successful stage and controller publication.
-    (out/'result.json').unlink();(out/'evaluation-complete.json').unlink()
+    (out/'result.json').unlink();(out/'dataset-complete.json').unlink()
     from ura import response_svm as engine
     monkeypatch.setattr(engine,'evaluate_study',lambda *a,**kw:pytest.fail('Completed evaluation was repeated'))
     assert response_svm.main(argv)==0
-    assert not (out/'evaluation-2').exists()
+    assert not (out/'dataset-2').exists()
     assert args['database'].read_bytes()==before
     with pytest.raises(ValueError,match='original scientific selection'):
         response_svm.main([*argv,'--seed','3'])
 
 
-def test_failed_study_resumes_only_unfinished_stages(tmp_path, monkeypatch):
+def test_failed_study_resumes_only_unfinished_stages(tmp_path, monkeypatch,fitted_study):
     pytest.importorskip('sklearn')
     args=dataset_fixture(tmp_path);out=tmp_path/'study'
     argv=['--study','--database',str(args['database']),'--candidates',str(args['candidates']),
           '--campaign','campaign','--matched-campaign','campaign','--judge-condition','haiku',
           '--bootstrap','100','--out',str(out)]
     from ura import response_svm as engine
+    from experiments import response_svm_dataset
+    monkeypatch.setattr(response_svm_dataset,'export_dataset',lambda **kw:(fitted_study[0],dict(status='exported')))
     original=engine.evaluate_study
     monkeypatch.setattr(engine,'evaluate_study',lambda *a,**kw:(_ for _ in ()).throw(RuntimeError('interrupted')))
     with pytest.raises(RuntimeError,match='interrupted'):response_svm.main(argv)
     monkeypatch.setattr(engine,'evaluate_study',original)
-    from experiments import response_svm_dataset
     monkeypatch.setattr(response_svm_dataset,'export_dataset',lambda **kw:pytest.fail('Completed export repeated'))
     assert response_svm.main(argv)==0
     assert (out/'evaluation-1/error.json').exists()
     assert (out/'evaluation-2/result.json').exists()
     assert not (out/'dataset-2').exists()
+
+
+def test_supported_study_packages_without_operator_handoff(tmp_path,monkeypatch,fitted_study):
+    rows,report,predictions,_=fitted_study
+    from experiments import response_svm_dataset
+    from ura import response_svm as engine
+    monkeypatch.setattr(response_svm_dataset,'export_dataset',lambda **kw:(rows,dict(status='exported')))
+    monkeypatch.setattr(engine,'evaluate_study',lambda *a,**kw:(report,predictions))
+    candidates=tmp_path/'candidates.json';candidates.write_text('[]')
+    out=tmp_path/'study'
+    args=['--study','--database',str(tmp_path/'db'),'--candidates',str(candidates),'--campaign','campaign',
+        '--matched-campaign','campaign','--judge-condition','haiku','--out',str(out)]
+    assert response_svm.main(args)==0
+    result=json.loads((out/'result.json').read_text())
+    assert Path(result['models']).is_file() and result['packaging_status']=='saved'
+    (out/'classifiers-complete.json').unlink();(out/'result.json').unlink()
+    from ura import response_svm_models
+    monkeypatch.setattr(response_svm_models,'package_study',lambda *a,**kw:pytest.fail('Finished package repeated'))
+    assert response_svm.main(args)==0 and not (out/'classifiers-2').exists()
+
+
+def test_resume_uses_original_selection_even_before_controller_file_exists(app,monkeypatch):
+    owner=app.db.create_workspace('Resume','api')
+    from experiments.rig_web_app.catalog import build_argv
+    values={'--study':'on','--database':str(app.db.path),'--campaign':owner,
+        '--matched-campaign':owner,'--judge-condition':'haiku-old','--source-root':str(app.results_root),
+        '--run-id':'saved-run','--out':str(app.results_root/'unstarted-analysis')}
+    row=dict(job_id='old',argv=json.dumps(build_argv('response_svm',values)),state='interrupted')
+    monkeypatch.setattr(response_analysis,'history',lambda *a:[row])
+    calls=[]
+    monkeypatch.setattr(app,'start_job',lambda command,arguments,**kw:calls.append(arguments))
+    ticket=app._new_launch_ticket(dict(campaign_id=owner,job='old'),purpose='svm-resume')
+    response_analysis.resume(app,dict(launch_ticket=ticket))
+    assert calls==[values]
+
+
+def test_analysis_process_uses_console_tool_and_bounded_threads(app,monkeypatch):
+    import inspect
+    from experiments.rig_web_app.lifecycle import LifecycleMixin
+    # The command remains typed; execution source is recorded separately from Runner.
+    source=inspect.getsource(LifecycleMixin.start_job)
+    assert 'analysis_code_repository' in source and '_REPO_ROOT / "experiments" / "response_svm.py"' in source
+    monkeypatch.setenv('OPENBLAS_NUM_THREADS','24')
+    env=app._generic_child_environment('response_svm',{})
+    assert env['OPENBLAS_NUM_THREADS']==env['OMP_NUM_THREADS']==env['MKL_NUM_THREADS']=='2'
 
 
 def setup_choices(app, monkeypatch):

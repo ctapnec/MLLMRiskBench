@@ -24,7 +24,7 @@ def teachers(app, owner):
 
 def select(name,label,options,selected=''):
     escape=lambda v:html.escape(str(v),quote=True)
-    return '<label>'+escape(label)+'<select aria-label="'+escape(label)+'" name="'+name+'" required>'+''.join(
+    return '<label class="campaign-field">'+escape(label)+'<select aria-label="'+escape(label)+'" name="'+name+'" required>'+''.join(
         '<option value="'+escape(key)+'"'+(' selected' if key==selected else '')+'>'+escape(value)+'</option>'
         for key,value in options)+'</select></label>'
 
@@ -49,19 +49,19 @@ def page(app, owner):
     if local_options and teacher_options:
         token=app._new_launch_ticket({'campaign_id':owner},purpose='svm-study')
         body+='<form method="post" action="/analysis/start"><input type="hidden" name="launch_ticket" value="'+html.escape(token)+'">'
-        body+='<div class="cols">'+select('source_campaign','Saved local input source',local_options,
+        body+='<div class="campaign-grid">'+select('source_campaign','Saved local input source',local_options,
             saved.get('retained_source_campaign',owner))
         body+=select('matched_campaign','Restrict to inputs assigned in',campaign_options,owner)
         body+=select('teacher','Recorded Haiku condition',teacher_options)+'</div>'
         body+='<label class="checkrow"><input type="checkbox" name="include_source" checked><span>Include matching answers from the local source campaign</span></label>'
-        body+='<details class="card"><summary>Scientific analysis options</summary><div class="cols">'
-        body+='<label>Split seed<input name="seed" type="number" value="0" required></label>'
-        body+='<label>Bootstrap samples<input name="bootstrap" type="number" min="100" max="10000" value="1000" required></label></div></details>'
-        body+='<p>No target or judge calls are made. This fits recorded teacher labels, not independently established human truth. '
-        'Existing campaign judgments remain unchanged.</p><div class="action-row"><button>Start classifier study</button></div></form>'
+        body+='<details class="card"><summary>Scientific analysis options</summary><div class="campaign-grid">'
+        body+='<label class="campaign-field">Split seed<input name="seed" type="number" value="0" required></label>'
+        body+='<label class="campaign-field">Bootstrap samples<input name="bootstrap" type="number" min="100" max="10000" value="1000" required></label></div></details>'
+        body+=('<p>No target or judge calls are made. This fits recorded teacher labels, not independently established human truth. '
+        'Existing campaign judgments remain unchanged.</p><div class="action-row"><button>Start classifier study</button></div></form>')
     else:
-        body+='<p class="notice amber">This study needs indexed local source inputs and valid Haiku verdicts on saved answers. '
-        'Complete the relevant evaluation first; missing labels are not invented.</p>'
+        body+=('<p class="notice amber">This study needs indexed local source inputs and valid Haiku verdicts on saved answers. '
+        'Complete the relevant evaluation first; missing labels are not invented.</p>')
     body+='</section>'
     rows=history(app,owner)
     if rows:

@@ -90,6 +90,11 @@ def study(args):
         return 0
     if not dataset.stat().st_size:
         return finish(reason='No eligible labeled static-text responses; inspect dataset dispositions')
+    from ura.response_svm import connected_groups
+    with dataset.open(encoding='utf-8') as stream:
+        group_count=len(set(connected_groups([json.loads(line) for line in stream if line.strip()])))
+    if group_count<5:
+        return finish(reason='At least five independent input groups are needed; exported data retained without fitting')
     evaluate=['--evaluate','--dataset',str(dataset),'--seed',str(args.seed),
         '--bootstrap',str(args.bootstrap),'--max-feature-characters',str(args.max_feature_characters)]
     for model in args.holdout_model:evaluate+=['--holdout-model',model]
