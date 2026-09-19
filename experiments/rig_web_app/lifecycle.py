@@ -3425,19 +3425,13 @@ class LifecycleMixin:
             acquisition_event_path = Path(str(values.get("--activity-event", "")))
             if not acquisition_event_path.is_absolute():
                 raise ValueError("model acquisition activity event must be absolute")
-        elif reserved_job_id is not None:
-            if (
-                model_acquisition_activity_token is not None
-                or command != "run_matrix"
-                or str(values.get("--model-acquisition-plan-only", "")) != "on"
-            ):
-                raise ValueError(
-                    "reserved job ids are limited to private acquisition stages"
-                )
-            acquisition_event_path = None
         elif model_acquisition_activity_token is not None:
             raise ValueError("reserved acquisition launch inputs are command-specific")
         else:
+            # Durable operation handoffs reserve identity before launching any
+            # stage. The ID still passes the ordinary uniqueness/path checks;
+            # it is not an acquisition-only credential or a bypass of argv
+            # validation. Acquisition activity tokens remain command-specific.
             acquisition_event_path = None
         # Re-read and re-normalize the exact selected hosted registry before a
         # job id, directory, retained Job, or child can exist.  This is a final

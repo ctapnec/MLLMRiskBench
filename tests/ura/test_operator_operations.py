@@ -156,15 +156,33 @@ def test_unknown_operation_kind_does_not_save_a_draft(app, monkeypatch):
     assert status == 400
 
 
-def test_automatic_preparation_ticket_retains_and_revalidates_execution_snapshot(app):
+def test_automatic_preparation_ticket_retains_and_revalidates_execution_snapshot(app, tmp_path):
+    from test_rig_web import _engine_runtime_config
+    config, digest, _ = _engine_runtime_config(tmp_path, 'pyrit')
     params, snapshot, _ = app._capture_execution_config_snapshot(
-        dict(mode='dry_run', local='', api='', judges='rules', attackers='replay'))
+        dict(mode='dry_run', local='', api='', judges='rules', attackers='pyrit',
+            engine_runtime_config=str(config), engine_runtime_config_sha=digest))
     assert snapshot, 'Exercise real execution bytes, not an empty mocked ticket'
     token = app._new_launch_ticket(params, purpose='automatic-preparation', execution_snapshot=snapshot)
     bound, held = app._consume_launch_ticket(token, purpose='automatic-preparation')
     assert held == snapshot
     assert app._validate_execution_snapshot(bound, held) == snapshot
     assert app._consume_launch_ticket(token, purpose='automatic-preparation') is None
+
+
+@pytest.mark.parametrize('command', ['run_matrix', 'retained_local_sources',
+    'hosted_campaign_budget', 'retained_native_judge_prepare', 'live_attestation'])
+def test_preparation_reserved_identity_reaches_normal_typed_launch_validation(app, monkeypatch, command):
+    from experiments.rig_web_app import lifecycle
+    class TypedLaunchReached(Exception):
+        pass
+    def checked(actual, values, **kwargs):
+        assert actual == command
+        raise TypedLaunchReached()
+    monkeypatch.setattr(lifecycle, 'build_argv', checked)
+    with pytest.raises(TypedLaunchReached):
+        app.start_job(command, {}, reserved_job_id='job-operation-stage')
+    assert not app.jobs
 
 
 def test_corrupt_operation_metadata_cannot_crash_startup(app):
