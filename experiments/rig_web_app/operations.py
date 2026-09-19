@@ -66,6 +66,24 @@ def operator_operations(operations, owner):
             and not row.get('campaign_parent')]
 
 
+def operation_contains_job(operations, operation_id, job_id, seen=None):
+    """Follow saved ownership so guidance stays on the parent progress page."""
+    seen = set() if seen is None else seen
+    if operation_id in seen or operation_id not in operations:
+        return False
+    seen.add(operation_id)
+    row = operations[operation_id]
+    jobs = list(row.get('jobs', [])) + [row.get(key) for key in (
+        'current_job', 'execution_job', 'collection_job', 'local_preparation',
+        'local_execution', 'haiku_preparation', 'haiku_execution')]
+    if job_id in jobs:
+        return True
+    children = [row.get('preparation')]
+    for connection in row.get('connection_operations', []):
+        children.extend((connection.get('preparation'), connection.get('check')))
+    return any(operation_contains_job(operations, child, job_id, seen) for child in children)
+
+
 class _Context:
     """Existing preparers update this operation, not a concurrently edited draft."""
     def __init__(self, app, operation):

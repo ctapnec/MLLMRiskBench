@@ -202,6 +202,13 @@ def test_internal_diagnostics_never_become_separate_operator_tasks(app,monkeypat
     assert probe['id'] not in links and check['id'] not in links
     steps,stage,notice,_=campaign_guide._guidance(app,dict(operation['params'],work_kind='campaign'))
     assert steps[stage][0]=='Results' and 'Campaign is complete' in notice
+    check['jobs']=['technical-check']
+    monkeypatch.setattr(app.db,'workspace_activity',lambda owner:[dict(member_id='technical-check',
+        member_kind='job',state='complete',role='preparation',command='live_attestation',started_at=check['created_at'])])
+    operation.update(status='ready',step=0,execution_authorized=False)
+    steps,stage,notice,_=campaign_guide._guidance(app,dict(operation['params'],work_kind='campaign'))
+    assert 'Campaign is ready' in notice
+    assert ('Open campaign progress','/operations/'+operation['id']) in steps[stage][3]
     standalone=app._operations[app._start_operation('direct',dict(selection['params'],out='standalone'))]
     standalone['status']='ready'
     assert standalone in operator_operations(app._operations,owner)
