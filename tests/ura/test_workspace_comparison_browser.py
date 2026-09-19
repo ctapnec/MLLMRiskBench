@@ -106,6 +106,7 @@ def test_condition_changes_preserve_only_the_exact_available_judge(browser,study
         page.locator('[name='+side+'_judge]').select_option('different-judge')
         ready(page)
         assert 'matched: 1' in page.locator('[data-comparison-results]').inner_text()
+        assert page.get_by_role('img',name='Paired judging outcomes',exact=True).count()==1
         assert not errors and not app.db.load_jobs()
     finally:
         page.close()
