@@ -50,6 +50,21 @@ def test_preparation_never_starts_collection_or_judges(app, monkeypatch):
     assert not started
 
 
+def test_scoring_revision_is_resolved_before_frozen_preparation(app,monkeypatch):
+    from ura import guardrail_setup
+    owner=app.db.create_workspace('Installed scorer','api')
+    params=dict(campaign_id=owner,judges='rules,guardrail',mode='measured')
+    operation=app._operations[app._start_operation('campaign',params)]
+    monkeypatch.setattr(guardrail_setup,'resolve_scoring_settings',lambda p:dict(p,guardrail_revision='a'*40))
+    monkeypatch.setattr(app,'_validate_builder',lambda p,**kw:{} if p.get('guardrail_revision')=='a'*40 else {'judge':'missing pin'})
+    monkeypatch.setattr(app,'_capture_execution_config_snapshot',lambda p:(p,{},None))
+    monkeypatch.setattr(app,'_bind_execution_config_bundle_identity',lambda p:p)
+    monkeypatch.setattr(app,'_builder_model_acquisition_required',lambda p:False)
+    monkeypatch.setattr(flow,'freeze_spending',lambda *a:None)
+    flow.advance(app,operation)
+    assert app._operations[operation['preparation']]['params']['guardrail_revision']=='a'*40
+
+
 def test_one_start_runs_collection_then_both_assessments_and_reopens_without_calls(app,monkeypatch):
     from experiments.rig_web_app import builder_collection, campaign_assessment
     operation,_=prepared(app,campaign_local='on',campaign_haiku='on')

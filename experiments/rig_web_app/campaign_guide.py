@@ -213,6 +213,7 @@ def _guidance(app, params):
                 'In General, choose Campaign workflow inputs and assessment, then click Review campaign. '
                 'The same action handles installed corpora/frameworks and saved local inputs. Preparation runs '
                 'automatically without target or judge generation. Token counting may contact the selected provider. '
+                'No target or judge call is made during preparation. '
                 'Review required diagnostics, measured requests, output allowances and collection/Haiku spending limits. '
                 'Keep Admission on Automatic; no receipt rows or preparation jobs need coordinating.',
                 [('Open campaign choices',link('general','campaign-workflow')),('Review the campaign',link('general','pipeline-review')),
@@ -270,7 +271,7 @@ def _guidance(app, params):
         notice = ('Preparation is '+current['status']+'. Open the operation, not its internal child jobs. '
             'Completed preparation still requires an explicit execution start.')
         steps[positions[stage]][3].insert(0, ('Open prepared or active work', '/operations/'+current['id']))
-        if current['kind'] == 'campaign':
+        if current.get('kind') == 'campaign':
             stage = ('Results' if current['status'] == 'complete' else 'Recovery' if current['status'] in {'failed','stopped'}
                      else 'Run' if current.get('execution_authorized') else 'Prepare')
             notice = 'Campaign is '+current['status']+'. Follow its progress page; internal jobs need no separate starts.'

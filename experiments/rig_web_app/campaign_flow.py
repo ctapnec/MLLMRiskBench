@@ -124,6 +124,9 @@ def _child(app, operation):
 def advance(app, operation):
     if not operation.get('preparation'):
         params = dict(operation['params'])
+        if 'guardrail' in params.get('judges','').split(','):
+            from ura.guardrail_setup import resolve_scoring_settings
+            params = resolve_scoring_settings(params)
         from .campaign_assessment import prepare_values
         for kind in ('local','haiku'):
             if params.get('campaign_'+kind) == 'on' and not operation.get(kind+'_values'):
