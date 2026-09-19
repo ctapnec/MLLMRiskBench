@@ -166,6 +166,28 @@ def table(rows):
     return '<div class="scroll"><table><thead><tr>' + ''.join('<th>'+h+'</th>' for h in headers) + '</tr></thead><tbody>' + ''.join(cells) + '</tbody></table></div>'
 
 
+def figure_html(rows):
+    """Keep text at the reader's font size; scale only the plotted marks."""
+    blocks = []
+    for row in rows:
+        metric = row.get('test', {})
+        if row.get('estimator') != 'linear_svm' or score(metric.get('macro_f1')) == 'Not estimated':
+            continue
+        value = metric['macro_f1']; ci = metric.get('macro_f1_cluster_ci95')
+        marks = f"<rect x='0' y='4' width='100' height='10' fill='var(--soft)'/><rect x='0' y='4' width='{100*value:.3f}' height='10' fill='var(--viz-series-1,#2563eb)'/>"
+        text = 'Macro-F1 '+score(value)
+        if isinstance(ci,list) and len(ci)==2 and all(score(v)!='Not estimated' for v in ci) and ci[0]<=ci[1]:
+            low,high=[100*v for v in ci]
+            marks += f"<path d='M {low:.3f} 6 v 6 M {low:.3f} 9 H {high:.3f} M {high:.3f} 6 v 6' fill='none' stroke='var(--ink)' stroke-width='.6'/>"
+            text += '; 95% interval '+score(ci[0])+' - '+score(ci[1])
+        else:
+            text += '; interval not estimated'
+        caption=label(row.get('task'))+' / '+label(row.get('features',''))
+        blocks.append('<figure style="margin:1.1rem 0"><figcaption>'+html.escape(caption)+'</figcaption>'
+            '<svg aria-hidden="true" viewBox="0 0 100 18" preserveAspectRatio="none" style="width:100%;height:2rem">'+marks+'</svg><p class="note" style="margin:0">'+html.escape(text)+'</p></figure>')
+    return '<div role="img" aria-label="SVM held-out macro-F1" style="max-width:680px"><p class="note">Macro-F1 scale: 0 to 1. Lines show recorded 95% intervals.</p>'+''.join(blocks)+'</div>' if blocks else ''
+
+
 def response(app, query):
     inventory = studies(app)
     owner = query.get('campaign_id', '')
@@ -216,11 +238,14 @@ def response(app, query):
     # A changed population must not retain an incompatible downstream choice.
     body += "<script>(()=>{const f=document.querySelector('select[name=study]').form;f.elements.campaign_id.addEventListener('change',()=>{f.elements.study.value='';f.elements.protocol.value='';});f.elements.study.addEventListener('change',()=>{f.elements.protocol.value='';});})();</script>"
     body += '<p>'+html.escape(str(report.get('selected_responses', 'unknown')))+' selected text answers; '+html.escape(str(report.get('independent_groups', 'unknown')))+' independent input groups.</p>'
-    body += '<p>Recorded teacher: '+html.escape(str(report.get('teacher', 'not recorded')))+'. Split seed: '+html.escape(str(report.get('seed', 'not recorded')))+'.</p>'
+    from .workspace_judge_settings import judge_name
+    teacher = str(report.get('teacher', 'not recorded'))
+    body += '<p>Recorded teacher: '+html.escape(judge_name(teacher))+'. Split seed: '+html.escape(str(report.get('seed', 'not recorded')))+'.</p>'
+    body += '<details><summary>Exact teacher condition</summary><p style="overflow-wrap:anywhere">'+html.escape(teacher)+'</p></details>'
     if saved.get('packaging_reason'):
         body += '<p class="notice amber">'+html.escape(saved['packaging_reason'])+'</p>'
     if rows:
-        body += figure(rows, scope=chart_scope) + table(rows)
+        body += figure_html(rows) + '<p class="note">The metric table scrolls horizontally on small screens.</p>' + table(rows)
     else:
         body += '<p>No evaluated task in this selection. This is not a score of zero.</p>'
     body += '<p>Macro-F1 gives equal weight to both classes. Intervals use input-group resampling, not independent answer resampling. '

@@ -97,7 +97,8 @@ def test_matched_and_local_suggestions_are_distinct_and_links_do_not_execute(app
     assert 'sampled paired comparison' in hosted and 'text proxy' in hosted
     links = Links()
     links.feed(local + hosted)
-    assert all(urlsplit(href).path in {'/build', '/config', '/config/secrets', '/commands', '/jobs', '/campaigns'} for href in links.hrefs)
+    assert all(urlsplit(href).path in {'/build', '/config', '/config/secrets', '/commands', '/jobs', '/campaigns', '/stats'} for href in links.hrefs)
+    assert '/stats?view=svm' in links.hrefs
     assert all(not urlsplit(href).fragment or urlsplit(href).fragment in {
         'build-general','build-evaluation','target-models','input-corpora','retained-inputs',
         'local-hardware','framework-runtimes','attack-frameworks','sample-size-control',
