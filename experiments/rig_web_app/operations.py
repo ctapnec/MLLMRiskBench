@@ -379,12 +379,12 @@ class OperationsMixin:
                     self._persist_model_acquisition_workflow(workflow)
                 operation['failed_jobs'].append(job.job_id)
                 operation['current_job'] = ''
-            operation.update(status='preparing', error='')
             for item in operation.get('connection_operations', []):
                 for key in ('preparation','check'):
                     child = self._operations.get(item.get(key))
                     if child and child['status'] in {'failed','stopped'}:
                         self._retry_operation(child['id'])
+            operation.update(status='preparing', error='')
             self._save_operation(operation)
             # A failed worker may still be returning from its last cycle.
             # It exits only on the status check above; if live, it will resume.

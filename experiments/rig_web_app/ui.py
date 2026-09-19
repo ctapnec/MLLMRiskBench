@@ -113,6 +113,7 @@ h2 .ic { color:var(--muted); }
 .campaign-ownership { display:grid; gap:.65rem; }
 .campaign-ownership-row { display:flex; flex-wrap:wrap; align-items:flex-end; gap:1rem; }
 .campaign-field { display:grid; gap:.5rem; min-width:0; font-weight:600; font-size:.9rem; }
+.campaign-field[hidden] { display:none !important; }
 .campaign-field.separated-field { margin-top:1rem; }
 .haiku-judging-controls { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem; margin:1rem 0; }
 .judging-funding-summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(14rem,1fr)); gap:1rem; margin:1.5rem 0; }

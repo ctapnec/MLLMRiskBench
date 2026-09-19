@@ -33,7 +33,9 @@ def test_opt_in_survives_save_reopen_and_can_be_disabled(app):
     assert "data-guide-enabled='false'" in plain
     status, location, _ = app.handle('POST', '/build/save', draft(campaign_guide='on'))
     assert status == 303
-    owner = location.split('/campaigns/')[1].split('?')[0]
+    from urllib.parse import parse_qs
+    owner = parse_qs(urlsplit(location).query)['campaign_id'][0]
+    assert urlsplit(location).path == '/build'
     assert app.db.workspace_definition(owner)['campaign_guide'] == 'on'
     for path in (location, '/build?campaign_id='+owner):
         page = app.handle('GET', path)[2].decode()

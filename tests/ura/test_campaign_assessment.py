@@ -73,6 +73,8 @@ def test_haiku_preparation_and_resume_use_existing_executor_without_target_calls
                     transport_attempt_count=1,transport_attempts=[dict(attempt=1,outcome='success')]))
     fake=Fake()
     monkeypatch.setattr(subject.executor,'_build_haiku_judge',lambda *args:fake)
+    execute=subject.executor.execute
+    monkeypatch.setattr(subject.executor,'execute',lambda **kw:execute(**kw,judge_factory=lambda *args:fake))
     args=SimpleNamespace(database=database,campaign=owner,results_root=root,kind='haiku',judge_model=judge,limit=2,
         model_store='',max_cost_microusd=1_000_000,api_config=api,pricing_config=pricing,out=tmp_path/'assessment')
     result=subject.prepare(args)
