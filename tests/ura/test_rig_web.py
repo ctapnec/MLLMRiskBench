@@ -2815,8 +2815,8 @@ def test_builder_dry_run_composes_and_starts(tmp_path: Path) -> None:
 def test_builder_paid_modes_preview_exact_argv_then_confirm(
     tmp_path: Path, monkeypatch,
 ) -> None:
-    # A non-dry lane never starts on first submit: the exact complete argv
-    # and the call ceilings are shown for confirmation first.
+    # Final prepared review shows exact argv and call ceilings before a paid
+    # start. Initial Build submission's automatic preparation is tested apart.
     project_receipt = tmp_path / "r.json"
     project_receipt.write_text('{"schema":"fixture-project"}\n', encoding="utf-8")
     project_sha = hashlib.sha256(project_receipt.read_bytes()).hexdigest()

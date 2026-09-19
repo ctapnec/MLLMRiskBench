@@ -87,6 +87,30 @@ def test_old_guides_are_short_redirects_not_diverging_recipes():
         assert len(text.splitlines()) <= 20
 
 
+def test_instruction_sequences_have_no_missing_or_restarted_steps():
+    text = prose(ROOT / 'docs/SMALL_CAMPAIGNS.md')
+    for section in re.split(r'^#{1,6} ', text, flags=re.MULTILINE):
+        steps = [int(value) for value in re.findall(r'^(\d+)\.\s', section, re.MULTILINE)]
+        assert steps == list(range(1, len(steps) + 1)), (section.splitlines()[0], steps)
+    sections = re.findall(r'^### (\d+\.\d+)\.', text, re.MULTILINE)
+    assert sections == [f'{chapter}.{step}' for chapter, count in ((8, 6), (9, 5), (10, 4))
+                        for step in range(1, count + 1)]
+
+
+def test_sequence_check_detects_the_previous_restarted_list_error(monkeypatch):
+    original = Path.read_text
+    guide = ROOT / 'docs/SMALL_CAMPAIGNS.md'
+
+    def read(path, *args, **kwargs):
+        text = original(path, *args, **kwargs)
+        return text.replace('8. Return to **General**', '3. Return to **General**') if path == guide else text
+
+    assert '8. Return to **General**' in original(guide, encoding='utf-8')
+    monkeypatch.setattr(Path, 'read_text', read)
+    with pytest.raises(AssertionError):
+        test_instruction_sequences_have_no_missing_or_restarted_steps()
+
+
 @pytest.mark.parametrize('omission', [
     '### Reference result, not a required outcome',
     '319-token answer', 'not zero-cost computing',

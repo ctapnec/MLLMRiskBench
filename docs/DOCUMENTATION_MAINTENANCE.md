@@ -47,6 +47,8 @@ numbers, technical qualifications and command examples.
 2. Preserve actual reference values and their qualifications. Do not turn an
    observed result, price or timing into a requirement for a new campaign.
 3. Check relative links and anchors, heading numbering and old entry pages.
+   Numbered click sequences must not restart partway through a subsection or
+   skip a step; preserve the full comparison, human-review and SVM subsections.
 4. Exercise the visible controls on the rig. Text matching cannot establish that
    an action works, a form submits the right values or a saved choice survives.
 5. Test meaningful omissions by reversal: deleting a required reference/action
