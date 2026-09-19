@@ -226,7 +226,7 @@ def test_progress_stop_busy_guard_and_final_review_in_browser(app, monkeypatch, 
         assert page.get_by_role('button',name='Stop preparation',exact=True).is_visible()
         assert page.locator('body > nav').is_visible()
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
-        page.evaluate("() => {for(let i=0;i<1000;i++) document.querySelector('form button').click();}")
+        page.evaluate("() => {for(let i=0;i<1000;i++) document.querySelector('form[action$=\"/stop\"] button').click();}")
         page.wait_for_function('window.uraBusy.isBusy()')
         assert len(held) == 1
         request = held.pop()
