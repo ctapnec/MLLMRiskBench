@@ -26,7 +26,6 @@ def test_saved_answers_reach_rating_form_save_and_resume(browser,personal,width)
         page.locator('[name=clusters]').fill('1')
         page.locator('[name=acknowledge]').check()
         page.get_by_role('button',name='Prepare answers for review',exact=True).click()
-        page.get_by_role('button',name='Open evaluation form',exact=True).click()
         page.get_by_role('heading',name='Personal evaluation',exact=True).wait_for()
         assert page.title()=='Personal evaluation'
         assert page.locator('body > nav').count()==1

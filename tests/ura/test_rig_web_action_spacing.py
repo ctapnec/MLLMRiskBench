@@ -27,8 +27,9 @@ def render(page, body):
 
 
 def assert_action_gap(page, button):
-    row = button.locator('..')
-    gap = row.evaluate("""row => {
+    gap = button.evaluate("""button => {
+      const parent=button.parentElement;
+      const row=parent.matches('.action-row,form') ? parent : button;
       let previous=row.previousElementSibling;
       while(previous && !previous.getClientRects().length) previous=previous.previousElementSibling;
       return row.getBoundingClientRect().top-previous.getBoundingClientRect().bottom;
@@ -131,7 +132,10 @@ def test_review_actions_have_clear_spacing(browser, request, kind, width):
 def assert_checkbox_row(page, name):
     checkbox = page.locator('input[name="'+name+'"]')
     row = checkbox.locator('..')
-    box, text = checkbox.bounding_box(), row.locator(':scope > span').bounding_box()
+    # Read one layout frame: tab scrolling can move the viewport between two
+    # separate geometry requests without changing the controls' alignment.
+    box, text = row.evaluate("""row => [row.querySelector('input'),row.querySelector(':scope > span')]
+      .map(e=>{const b=e.getBoundingClientRect();return {x:b.x,y:b.y,width:b.width,height:b.height}})""")
     assert box and text
     assert text['x'] - (box['x']+box['width']) >= 8
     assert abs(text['y']-box['y']) <= 6
@@ -156,6 +160,7 @@ def test_build_and_preparation_checkbox_rows_align(browser, native, width):
         params = complete_preparation(native)
         render(page, ui._page('Local judging', "<form id='builder'></form>" +
             builder_native_judging.native_judging_panel(app, params)))
+        page.get_by_text('Earlier judging selections and technical options',exact=True).click()
         for name in ('retained_native_verify_model', 'retained_native_verify_artifacts'):
             assert_checkbox_row(page, name)
         render(page, ui._page('Database', app._db_card('')))
@@ -193,9 +198,9 @@ def test_source_preparation_action_has_spacing(browser, study, width):
     try:
         panel = builder_sources.source_panel(app, {'retained_source_campaign': params['campaign_id']})
         render(page, ui._page('Sources', "<form id='builder'></form>"+panel))
-        button = page.get_by_role('button', name='Prepare selected inputs', exact=True)
+        button = page.get_by_role('button', name='Prepare comparison and review', exact=True)
         assert_action_gap(page, button)
-        assert button.get_attribute('formaction') == '/build/prepare-inputs'
+        assert button.get_attribute('formaction') == '/build/prepare-operation/matched'
     finally:
         page.close()
 
@@ -230,7 +235,8 @@ def test_saved_judging_field_is_separated_from_preparation_action(browser, nativ
     try:
         render(page, ui._page('Local judging', "<form id='builder'></form>"+
                              builder_native_judging.native_judging_panel(app, params)))
-        button = page.get_by_role('button', name='Prepare remaining source runs', exact=True)
+        page.get_by_text('Earlier judging selections and technical options',exact=True).click()
+        button = page.get_by_role('button', name='Review local judging', exact=True)
         field = page.locator('[name=retained_native_judging_job]').locator('..')
         a, b = button.bounding_box(), field.bounding_box()
         assert b['y']-a['y']-a['height'] >= 16
@@ -267,7 +273,7 @@ def test_tools_submit_is_separated_from_last_control(browser, study, width):
 @pytest.mark.parametrize('width', [390, 1440])
 def test_human_setup_footer_keeps_action_spacing_on_mobile(browser, study, width):
     app, params, calls, _ = study
-    status, _, body = app.handle('GET', '/human-evaluation?campaign_id='+params['campaign_id'])
+    status, _, body = app.handle('GET', '/human-evaluation?kind=independent&campaign_id='+params['campaign_id'])
     assert status == 200
     page = browser.new_page(viewport={'width':width, 'height':1000})
     try:

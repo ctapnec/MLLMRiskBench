@@ -1,6 +1,7 @@
 """One Build editor, persistent campaign definitions, separate execution scopes."""
 
 import time
+from urllib.parse import urlsplit, parse_qs
 
 import pytest
 
@@ -21,7 +22,8 @@ def test_save_reopen_campaign_keeps_pipeline_and_never_launches(tmp_path, monkey
     try:
         code, location, _ = app.handle("POST", "/build/save", fields)
         assert code == 303
-        campaign = location.split("/campaigns/")[1].split("?")[0]
+        assert urlsplit(location).path == '/build'
+        campaign = parse_qs(urlsplit(location).query)['campaign_id'][0]
         saved = app.db.workspace_definition(campaign)
         assert saved == {**{k: v for k, v in fields.items() if k != "campaign_name"}, "campaign_id": campaign}
         assert not app.jobs and app.db.workspace_activity(campaign) == []

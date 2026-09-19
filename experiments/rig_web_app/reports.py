@@ -291,6 +291,9 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
         return
 
     if kind == "execution_accounting":
+        # Read-only compatibility for an immutable historical report. Its
+        # original validator retains that study's declared population checks;
+        # it is never used to plan or execute a new console campaign.
         from experiments.local_campaign.execution_accounting import (
             validate_execution_accounting,
         )

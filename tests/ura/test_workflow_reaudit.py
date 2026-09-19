@@ -159,6 +159,7 @@ def test_finished_connection_rebinds_real_snapshot_but_not_other_experiment_sett
             return bound,dict(components,source_config=b'changed data'),identity
         monkeypatch.setattr(app,'_capture_execution_config_snapshot',changed)
     operation=dict(id='f'*32,params=params,connection_operations=[],execution_authorized=True)
+    app._operation_root(operation).mkdir(parents=True)
     if unrelated_change:
         with pytest.raises(ValueError,match='configuration changed during diagnostics'):connection.advance(app,operation)
         assert not operation.get('connections_complete')

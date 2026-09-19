@@ -51,6 +51,7 @@ def test_named_palettes_override_os_preference_without_requests_or_form_changes(
     try:
         page.goto('http://ui.test/first', wait_until='networkidle')
         picker = page.get_by_role('combobox', name='Colour theme')
+        picker.wait_for(state='visible')
         assert picker.locator('option').all_text_contents() == ['Slate','Parchment','Midnight','Ash','Harbor']
         initial = page.locator('#settings').evaluate('e=>Array.from(new FormData(e))')
         before = len(requests)

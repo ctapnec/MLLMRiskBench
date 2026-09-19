@@ -499,6 +499,21 @@ def test_server_validates_explicit_judge_and_local_engine_conflicts(
         "judges": "rules",
         "judge_model": _LOCAL,
     }
+
+
+def _prepared_review(app, form):
+    """Exercise the same final review used after automatic preparation.
+
+    These tests mutate configuration at ticket/Popen boundaries; preparation
+    orchestration itself is covered by the operator workflow tests.
+    """
+    params = app._runtime_builder_params(app._builder_params(form))
+    assert not app._validate_builder(params)
+    command, values, params = app._compose_from_builder(params)
+    try:
+        return 200, 'text/html; charset=utf-8', app._preview_page(command, values, params, prepared=True)
+    finally:
+        app._discard_unlaunched_local_config(values)
     assert "requires enabling the llm judge stage" in app._validate_builder(
         stale_selection
     )["judge_model"]
@@ -819,7 +834,7 @@ def test_paid_ticket_burns_when_selected_api_registry_changes(
     )
     form = {**_paid_probe_form(out="runs/api-ticket"), "api": spec}
     try:
-        status, _headers, body = app.handle("POST", "/build", form)
+        status, _headers, body = _prepared_review(app, form)
         assert status == 200
         match = re.search(rb"name='launch_ticket' value='([^']+)'", body)
         assert match is not None, body.decode("utf-8", errors="replace")
@@ -869,7 +884,7 @@ def test_paid_ticket_burns_when_selected_local_registry_changes(
     )
     form = {**_paid_probe_form(out="runs/local-ticket"), "local": spec}
     try:
-        status, _headers, body = app.handle("POST", "/build", form)
+        status, _headers, body = _prepared_review(app, form)
         assert status == 200
         match = re.search(rb"name='launch_ticket' value='([^']+)'", body)
         assert match is not None
@@ -942,7 +957,7 @@ def test_paid_ticket_burns_on_selected_source_snapshot_drift(
         "corpora": "harmbench_text",
     }
     try:
-        status, _headers, body = app.handle("POST", "/build", form)
+        status, _headers, body = _prepared_review(app, form)
         assert status == 200
         match = re.search(rb"name='launch_ticket' value='([^']+)'", body)
         assert match is not None
@@ -1024,7 +1039,7 @@ def test_private_source_snapshot_survives_registry_change_at_popen_barrier(
         "corpora": "harmbench_text",
     }
     try:
-        status, _headers, body = app.handle("POST", "/build", form)
+        status, _headers, body = _prepared_review(app, form)
         assert status == 200
         match = re.search(rb"name='launch_ticket' value='([^']+)'", body)
         assert match is not None
@@ -1093,7 +1108,7 @@ def test_paid_ticket_burns_on_project_or_attestation_byte_drift(
             "att_sha1": hashlib.sha256(changed.read_bytes()).hexdigest(),
         })
     try:
-        status, _headers, body = app.handle("POST", "/build", form)
+        status, _headers, body = _prepared_review(app, form)
         assert status == 200
         match = re.search(rb"name='launch_ticket' value='([^']+)'", body)
         assert match is not None, body.decode("utf-8", errors="replace")
@@ -1159,7 +1174,7 @@ def test_paid_ticket_burns_when_t3mp3st_prepared_artifact_changes(
         "t3_artifact_sha": hashlib.sha256(artifact.read_bytes()).hexdigest(),
     }
     try:
-        status, _headers, body = app.handle("POST", "/build", form)
+        status, _headers, body = _prepared_review(app, form)
         assert status == 200
         match = re.search(rb"name='launch_ticket' value='([^']+)'", body)
         assert match is not None, body.decode("utf-8", errors="replace")
@@ -1248,7 +1263,7 @@ def test_paid_ticket_burns_when_harmbench_prepared_config_changes(
         "harm_config": str(config),
     }
     try:
-        status, _headers, body = app.handle("POST", "/build", form)
+        status, _headers, body = _prepared_review(app, form)
         assert status == 200
         match = re.search(rb"name='launch_ticket' value='([^']+)'", body)
         assert match is not None, body.decode("utf-8", errors="replace")
@@ -1438,7 +1453,7 @@ def test_private_api_snapshot_survives_registry_change_at_popen_barrier(
     monkeypatch.setattr(lifecycle_module, "_win_managed_job", lambda: None)
     form = {**_paid_probe_form(out="runs/api-barrier"), "api": spec}
     try:
-        status, _headers, body = app.handle("POST", "/build", form)
+        status, _headers, body = _prepared_review(app, form)
         assert status == 200
         match = re.search(rb"name='launch_ticket' value='([^']+)'", body)
         assert match is not None
@@ -2037,7 +2052,7 @@ def test_hosted_judge_ack_is_bound_only_inside_opaque_paid_ticket(
         "ack_hosted_judge_data_transfer": "on",
     }
     try:
-        status, _headers, body = app.handle("POST", "/build", form)
+        status, _headers, body = _prepared_review(app, form)
         assert status == 200
         match = re.search(rb"name='launch_ticket' value='([^']+)'", body)
         assert match is not None
