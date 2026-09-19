@@ -261,9 +261,10 @@ def review(app, operation):
     if child['kind'] == 'matched':
         from .builder_collection import collection_launch_values
         _, rows, _, _ = collection_launch_values(app, child['params'])
-        body += '<div class="scroll"><table><tr><th>Model</th><th>Requests including diagnostics</th><th>Output allowance</th><th>First-attempt bound</th></tr>'
-        body += ''.join('<tr><td>'+html.escape(model)+f'</td><td>{count}</td><td>{tokens}</td><td>${cost/1e6:.4f}</td></tr>' for model,count,tokens,cost in rows)+'</table></div>'
+        body += '<div class="scroll"><table><tr><th>Model</th><th>Total requests</th><th>Measured</th><th>Diagnostic</th><th>Unclassified</th><th>Output allowance</th><th>First-attempt bound</th></tr>'
+        body += ''.join('<tr><td>'+html.escape(model)+f'</td><td>{count}</td><td>{parts["measured"]}</td><td>{parts["diagnostic"]}</td><td>{parts["unclassified"]}</td><td>{tokens}</td><td>${cost/1e6:.4f}</td></tr>' for model,count,tokens,cost,parts in rows)+'</table></div>'
         body += '<p>Whole source clusters are retained. Diagnostic inputs remain separate from measured results. '
+        body += 'Unclassified requests have missing or conflicting saved purposes; no measured count is inferred. '
         body += 'The prepared spending plan also covers eligible HTTP retries.</p>'
     else:
         card, eligible = app._ceilings_card(child['params'])

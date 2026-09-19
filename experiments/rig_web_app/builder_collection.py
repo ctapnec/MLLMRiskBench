@@ -57,6 +57,20 @@ def prepared_collection(app, params, *, for_execution=False):
     return receipt
 
 
+def request_purposes(program):
+    """Describe prepared requests without treating diagnostics as measured inputs."""
+    purposes = {identity: set() for identity in program['requests']}
+    kinds = {'measured_run': 'measured', 'diagnostic_canary': 'diagnostic', 'attestation_probe': 'diagnostic'}
+    for job in program.get('jobs', []):
+        for identity in job.get('input_ids', []):
+            if identity in purposes:
+                purposes[identity].add(kinds.get(job.get('purpose'), 'unclassified'))
+    counts = dict(measured=0, diagnostic=0, unclassified=0)
+    for categories in purposes.values():
+        counts[next(iter(categories)) if len(categories) == 1 else 'unclassified'] += 1
+    return counts
+
+
 def collection_launch_values(app, params):
     owner = params.get('campaign_id','')
     receipt = prepared_collection(app,params,for_execution=True)
@@ -79,7 +93,7 @@ def collection_launch_values(app, params):
             job['purpose'] != 'attestation_probe' and '--live-attestation' not in job['argv'])
             for job in program.get('jobs', []))
         rows.append((program['target'],len(program['requests']),program['max_output_tokens'],
-            sum(request['bound_microusd'] for request in program['requests'].values())))
+            sum(request['bound_microusd'] for request in program['requests'].values()), request_purposes(program)))
     parent = (app.results_root/'rig-web'/'hosted-collections').resolve()
     parent.mkdir(parents=True,exist_ok=True)
     values['--out'] = str(parent/uuid4().hex)
@@ -126,10 +140,11 @@ def collection_review(app, params):
         "Providers run concurrently with "+workers+" worker(s) each. Collection makes paid target calls; "
         "local and Haiku judging are separate stages. Existing transport retries, spending limits, "
         "readiness and admission checks remain active. No automatic answer retries are added.</p>"
-        "<div class='scroll'><table><tr><th>Prepared model</th><th>Assigned inputs</th>"
+        "<div class='scroll'><table><tr><th>Prepared model</th><th>Total requests</th><th>Measured</th><th>Diagnostic</th><th>Unclassified</th>"
         "<th>Output allowance</th><th>Initial-attempt ceiling (USD)</th></tr>"
-        +''.join('<tr><td>'+html.escape(model)+f'</td><td>{count:,}</td><td>{tokens:,}</td><td>${cost/1e6:,.6f}</td></tr>'
-                 for model,count,tokens,cost in rows)+'</table></div>'
+        +''.join('<tr><td>'+html.escape(model)+f'</td><td>{count:,}</td><td>{parts["measured"]:,}</td><td>{parts["diagnostic"]:,}</td><td>{parts["unclassified"]:,}</td><td>{tokens:,}</td><td>${cost/1e6:,.6f}</td></tr>'
+                 for model,count,tokens,cost,parts in rows)+'</table></div>'
+        '<p>Diagnostics are not measured results. Unclassified requests have missing or conflicting saved purposes; no measured count is inferred.</p>'
         '<p>These ceilings are not reported charges. HTTP retries and judging use the shared prepared spending plan. '
         'A continuation restores completed jobs and resumes eligible checkpoints; it does not select replacement inputs.</p>')
     if '--prepare-runtime' in values:

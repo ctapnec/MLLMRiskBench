@@ -1,5 +1,6 @@
 import json
 import re
+from pathlib import Path
 from urllib.parse import parse_qs
 
 import pytest
@@ -67,6 +68,8 @@ def test_review_uses_saved_programs_without_calls_or_draft_recomposition(study):
     assert b'example:model-a' in body and b'second:model-b' in body and b'$0.024000' in body
     assert b'unrelated:changed-draft' not in body
     assert b'local and Haiku judging are separate stages' in body
+    assert b'<th>Measured</th><th>Diagnostic</th><th>Unclassified</th>' in body
+    assert b'</td><td>1</td><td>0</td><td>0</td><td>1</td><td>4,096</td>' in body
     status,location,_ = app.handle('POST','/build/collect-prepared',dict(launch_ticket=ticket))
     assert status == 303 and location == '/jobs/collection-0'
     command,values,kw = calls[0]
@@ -76,6 +79,29 @@ def test_review_uses_saved_programs_without_calls_or_draft_recomposition(study):
     assert '--verify-artifact-sha256' not in values
     assert len(calls) == 1
     assert app.db.workspace_for_job('collection-0') == params['campaign_id']
+
+
+def test_prepared_request_purposes_do_not_infer_missing_or_conflicting_classifications():
+    program=dict(requests={key:{} for key in ('m','d','a','unknown','conflict')}, jobs=[
+        dict(purpose='measured_run',input_ids=['m','conflict','not-selected']),
+        dict(purpose='diagnostic_canary',input_ids=['d','conflict']),
+        dict(purpose='attestation_probe',input_ids=['a'])])
+    assert subject.request_purposes(program)==dict(measured=1,diagnostic=2,unclassified=2)
+
+
+def test_unified_review_shows_measured_diagnostic_and_total_requests(study,monkeypatch):
+    from experiments.rig_web_app import campaign_flow
+    app,params,calls,receipt=study
+    for descriptor in receipt['programs']:
+        path=Path(descriptor['path'])
+        program=json.loads(path.read_text())
+        program['jobs']=[dict(purpose='measured_run',input_ids=['same-input'],argv=['--model-acquisition-plan','plan','--live-attestation','attestation'])]
+        path.write_text(json.dumps(program))
+    monkeypatch.setattr(campaign_flow,'_child',lambda *a:dict(kind='matched',params=params))
+    body=campaign_flow.review(app,dict(id='review',params=dict(params,api='example:model-a')))
+    assert b'<th>Measured</th><th>Diagnostic</th><th>Unclassified</th>' in body
+    assert b'example:model-a</td><td>1</td><td>1</td><td>0</td><td>0</td>' in body
+    assert not calls
 
 
 def test_two_open_reviews_cannot_launch_same_collection_twice(study):
