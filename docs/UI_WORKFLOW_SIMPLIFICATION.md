@@ -1,7 +1,10 @@
 # Operator workflows
 
-Status: implementation in progress. This document specifies acceptance, not
-claims about functionality already deployed.
+Status: ordinary preparation flows deployed on 19 September 2026. Direct runs,
+matched hosted collection, local/Haiku judging and personal review now advance
+without manual internal job handoffs. The coverage table below also records
+the wider design scope; specialized attacker setup and the advanced SVM tool
+have not yet been converted to this simplified workflow.
 
 Operators choose experimental inputs, models, sampling, evaluation and resource
 limits. They must not coordinate internal planning, acquisition, conversion,
@@ -39,3 +42,17 @@ semantics. Validate on the rig, including restart, duplicate submissions, stop,
 failed-child handling and the absence of target/judge calls during preparation.
 Update both small-campaign walkthroughs and the Guide only against verified
 behavior. A long document is not a substitute for removing operator handoffs.
+
+## Verified behavior
+
+The rig checks cover stage progression, frozen configuration, launcher
+integration, restart, stop/resume, reuse and concurrent draft edits. Reversing
+the handoff, snapshot-ticket, launcher, draft-preservation, reuse, probe-record
+or interrupted-launch fixes makes the corresponding regression fail.
+
+An isolated copy of the saved Qwen configuration completed the real five-stage
+no-call path and reached Start probe at desktop and mobile widths. It also
+resumed its interrupted stage and reopened completed preparation without new
+jobs. No target or judge call was made, and the user's campaign was unchanged.
+Production acceptance checked both campaign types, standalone setup, shared
+navigation and the absence of the former matched-preparation buttons.
