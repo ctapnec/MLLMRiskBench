@@ -105,9 +105,10 @@ had three jointly valid text pairs and three valid image pairs out of four
 matched images. Those counts belong to that reference's exact saved conditions,
 not to every pair in an All-conditions view or another Flash campaign.
 
-The completed route-2a exercise demonstrates that retained-input UI flow.
-Section 2b describes the separate direct Runner controls; documenting them is
-not evidence that every framework/model combination has been executed. Keep
+The completed demonstration exercises the retained-input UI flow. The
+[API walkthrough](SMALL_API_CAMPAIGN.md#2-choose-the-inputs) also supports fresh
+corpus selections through the same review and start actions. This does not
+establish that every framework/model combination has been executed. Keep
 new demonstrations separate from the thesis study populations. Broader
 workflow and interpretation guidance is in
 [UI_CAMPAIGN_WALKTHROUGH](UI_CAMPAIGN_WALKTHROUGH.md).
@@ -128,7 +129,7 @@ a pair to inspect source-specific outcomes, missing responses and judgments.
 Next/Previous and the CSV download refer to these same pairs. Each exported
 row identifies the actual models and generation settings. Do not add counts
 across pairs as independent inputs or treat condition numbers as equivalent
-settings. Select individual models again for the focused comparison in 8.2-8.4.
+settings. Select individual models again for the focused comparison in 1.2-1.4.
 
 For a single model, **Generation condition -> All generation conditions**
 includes every measured condition of that model, separately. Both sides support
@@ -163,7 +164,7 @@ This view uses indexed measured outcomes, not every planned request. A recovered
 job sharing an output directory cannot be credited independently; use
 **Compare whole campaigns** for that history. Unindexed jobs cannot acquire
 results merely because their names resemble a campaign. For paired judging
-and safety rates, use the campaign comparison described in sections 1.2-8.5.
+and safety rates, use the campaign comparison described in sections 1.2-1.5.
 
 ## 2. Human evaluation: review answers yourself or organize an independent study
 
@@ -386,5 +387,4 @@ untrusted joblib file. Prediction margins are not safety probabilities, and
 classifier outputs do not replace campaign judging records.
 
 [RESPONSE_SVM](RESPONSE_SVM.md) documents the protocol and advanced CLI modes.
-
 

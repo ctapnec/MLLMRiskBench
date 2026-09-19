@@ -1,6 +1,6 @@
 # Operator workflows
 
-Status: shared campaign execution is under rig acceptance; not yet deployed.
+Status: shared campaign execution is deployed and accepted on the rig.
 Ordinary preparation flows were deployed on 19 September 2026. Direct runs,
 matched hosted collection, local/Haiku judging and personal review now advance
 without manual internal job handoffs. The coverage table below also records
@@ -161,3 +161,21 @@ now tells the operator which selection to change. No medium/high-severity
 finding remains open in these tested scenarios. This is bounded acceptance,
 not a claim that all combinations of models, datasets and remote failures have
 been exhaustively tested. Frameworks and model runtimes were not reinstalled.
+
+The shared campaign follow-up verified fresh corpus selection and saved-input
+comparison through the same Review campaign and Start campaign actions. Both
+isolated campaigns contain a measured answer with local and Haiku verdicts;
+reopening completed work produces no new jobs or calls. Build puts the actual
+campaign choices first and collapses the technical pipeline preview. Internal
+connection preparations stay under their parent workflow, including in Guide
+suggestions, rather than appearing as additional tasks to start. Unselected
+Haiku controls are hidden and disabled.
+
+The main affected pass passed 181 tests. Focused follow-ups covered navigation,
+Guide ownership, desktop/mobile layout and hidden controls. Fix-reversal checks
+cover spending, callback threads, the explicit start, scorer resolution,
+stop/resume handoffs, completed-work reuse and the final navigation/display
+corrections. Production browser checks are read-only. Acceptance outputs stay
+in their isolated test database, outside the original thesis campaigns. The
+small API guide now describes only the primary workflow; detailed comparison,
+human-review and SVM instructions live in CAMPAIGN_RESULTS_AND_ANALYSIS.md.

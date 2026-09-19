@@ -3,7 +3,7 @@
 This walkthrough creates a new campaign with the installed Qwen3-VL model,
 two text and two image inputs, and local evaluation. It needs no hosted calls,
 framework reinstall or model download. The ordinary flow is **configure ->
-save -> compose -> review -> start**. Required connection checks are automatic
+save -> review -> start**. Required connection checks are automatic
 parts of the reviewed execution, not separate setup tasks.
 
 ## 1. Create the campaign and choose its experiment
@@ -187,7 +187,7 @@ individual measured jobs**. Choose **Left job** and **Right job**, then click
 missing outputs, refusals, truncation and known token usage separate. **Export
 these job statistics (CSV)** downloads that selection. Shared recovery output
 directories require whole-campaign comparison; saved outcomes do not represent
-all planned inputs. See [the API guide's job-comparison steps](SMALL_API_CAMPAIGN.md#86-optional-compare-two-individual-measured-jobs).
+all planned inputs. See [the job-comparison steps](CAMPAIGN_RESULTS_AND_ANALYSIS.md#16-optional-compare-two-individual-measured-jobs).
 
 ## 8. Optional: compare these answers with a hosted model
 
@@ -195,22 +195,21 @@ The local demonstration is complete after section 7. This optional continuation
 uses paid hosted generation and Haiku judging; neither has run merely because
 you finished this guide.
 
-1. Open [the small Flash guide](SMALL_API_CAMPAIGN.md) and create a **new hosted
-   campaign**. Choose **route 2a - Reuse local inputs**.
+1. Open [the small API guide](SMALL_API_CAMPAIGN.md) and create a **new hosted
+   campaign**. In section 2, choose **B. Reuse saved local inputs**.
 2. Select **your demonstration campaign** as its source. Choose the measured
-   Qwen text and image runs created in section 5, not the probes or the
-   historical run IDs printed in the Flash guide's example.
-3. Follow the Flash guide's workload forecast, preparation and reviewed paid
-   start. Use the counts for your four-input selection, not its historical
-   12-request reference counts or cost.
-4. Follow its local and Haiku judging stages, then **Compare** with the actual
-   saved runs and compatible generation/judging conditions.
+   Qwen text and image runs created in section 5, not the probes.
+3. Choose the local and Haiku assessment options and their spending limits.
+   Click **Review campaign**, inspect the actual counts, then **Start campaign**.
+   Collection and selected judging proceed automatically.
+4. Use **Compare** with the actual saved runs and compatible generation/judging
+   conditions. If the source local answers need Haiku verdicts, select them
+   separately through the local campaign's **Evaluate saved answers**.
 
 Selecting the same seed independently does not by itself prove identical
 prompts and images. Haiku must assess every new selected answer separately;
-another model's verdict cannot be copied onto it. Existing Haiku verdicts in
-the completed Flash reference belong to its original local counterparts, not
-to the four answers you just generated here.
+another model's verdict cannot be copied onto it. Existing Haiku verdicts for
+earlier local answers do not apply to the four answers you just generated here.
 
 ## 9. Human evaluation of your saved local answers
 
@@ -276,7 +275,7 @@ Haiku verdicts and do not complete the independent two-rater assessment.
    **Export and run human audit analysis** under **Analysis and exports**.
    Follow its Jobs page; **Download completed ratings** supplies the labels.
 
-[SMALL_API_CAMPAIGN sections 9.2-9.5](SMALL_API_CAMPAIGN.md#92-optional-prepare-an-independent-study-in-the-four-step-wizard)
+[Campaign results and analysis, sections 2.2-2.5](CAMPAIGN_RESULTS_AND_ANALYSIS.md#22-optional-prepare-an-independent-study-in-the-four-step-wizard)
 spell out every enrollment/rating field; the controls are identical for local
 campaigns. [HUMAN_REVIEW_UI](HUMAN_REVIEW_UI.md) explains the study protocol.
 
