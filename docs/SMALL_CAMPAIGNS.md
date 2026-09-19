@@ -193,6 +193,9 @@ diagnostic output and error remain available; they are not benchmark results.
   complete before resuming; the saved probe and answer references are retained.
 - **Resume campaign** continues interrupted work using saved checkpoints.
   Read the cause first; completed answers and valid judgments stay saved.
+- For a **Single run** stopped during its automatic connection checks, return
+  to the same preparation page and choose **Continue preparation**. It recovers
+  the diagnostic there; no separate probe recovery or receipt copying is needed.
 - If Haiku exceeds its ceiling, collection stays saved. Use **Campaigns -> your
   campaign -> Evaluate saved answers** to choose a smaller assessment or another
   allowance. Do not repeat collection just to judge it.
@@ -202,6 +205,9 @@ diagnostic output and error remain available; they are not benchmark results.
 
 Changing scientific settings requires a new review; it does not rewrite past
 answers or make judgments from different outputs interchangeable.
+An obsolete review for equivalent completed work opens the saved results,
+including when Start is pressed in an old browser tab. Create a new campaign
+for an intentional repeat; do not use an old preparation to repeat collection.
 
 ## 7. Inspect results and choose optional analysis
 

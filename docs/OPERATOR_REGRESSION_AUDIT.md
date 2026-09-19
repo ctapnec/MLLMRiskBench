@@ -234,3 +234,39 @@ pairs. No medium/high finding remains open in these exercised scenarios. This
 is bounded acceptance, not a claim that no further defect can exist.
 
 Evidence: `runs/engineering/operator-variant-regression-20260919`, outside Git.
+
+## Repeated lifecycle and analysis cycles
+
+Repeat the affected checks after every substantive correction, then require
+two consecutive broader passes without a new medium/high finding. Each pass
+must examine a different failure or operator scenario, not only repeat the
+same successful tests. A newly found substantive defect resets the count.
+
+The next cycles found two additional issues. Standalone preparation did not
+share campaign diagnostic recovery, leaving interrupted probes as manual
+operator tasks. Shared recovery now preserves their execution identity and
+waits for owned processes before changing state. Ten new standalone cases,
+including desktop/mobile real-process stop tests, fail when the fix is reversed.
+
+Production Guide navigation passed 122 destinations, but semantic inspection
+found that an obsolete duplicate review was suggested instead of completed
+work. The Guide, review page and a stale Start now return to equivalent saved
+results. Existing frozen configuration establishes equality; changed or
+unproven conditions remain separate. Four detecting reversals cover Guide
+selection, old Start submissions and two stale browser tabs at both widths.
+Five controls preserve intentional differences, including campaign ownership.
+
+The initial post-fix lifecycle pass had 197 passes and one fixture failure: its
+hand-built campaign omitted the kind and status present in real saved records.
+The fixture now supplies those fields without weakening the review contract.
+Subsequent broader passes passed 252 analysis/UI tests and 198 lifecycle tests,
+with no new medium/high finding. They cover assessment, human review, comparison
+scope and exports, classifier execution/recovery, completed-work reuse, stop,
+restart, busy handling and documentation. Overlapping totals are not a count
+of unique tests. Fixture labels are not human research ratings.
+
+Evidence: `runs/engineering/operator-cycles-20260919`, outside Git. No model
+generation, paid call, runtime reinstall or model-file scan was required.
+This is bounded acceptance of the exercised scenarios, not universal freedom
+from defects. Operational findings remain in the development ledger rather
+than the academic chapters.

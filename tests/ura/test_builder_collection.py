@@ -98,7 +98,8 @@ def test_unified_review_shows_measured_diagnostic_and_total_requests(study,monke
         program['jobs']=[dict(purpose='measured_run',input_ids=['same-input'],argv=['--model-acquisition-plan','plan','--live-attestation','attestation'])]
         path.write_text(json.dumps(program))
     monkeypatch.setattr(campaign_flow,'_child',lambda *a:dict(kind='matched',params=params))
-    body=campaign_flow.review(app,dict(id='review',params=dict(params,api='example:model-a')))
+    body=campaign_flow.review(app,dict(id='review',kind='campaign',status='ready',
+        params=dict(params,api='example:model-a')))
     assert b'<th>Measured</th><th>Diagnostic</th><th>Unclassified</th>' in body
     assert b'example:model-a</td><td>1</td><td>1</td><td>0</td><td>0</td>' in body
     assert not calls

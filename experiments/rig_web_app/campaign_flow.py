@@ -253,6 +253,10 @@ def launch_job(app, operation, key, command, values):
 
 
 def review(app, operation):
+    from .operations import completed_equivalent
+    completed = completed_equivalent(app._operations, operation)
+    if completed:
+        return progress(app, completed)
     child = _child(app, operation)
     params = operation['params']
     body = '<h1>Review campaign</h1>'+app._campaign_banner(params['campaign_id'])
@@ -310,40 +314,12 @@ def stop(app, operation):
 
 
 def retry(app, operation):
+    from .connection_workflow import check_recovery, resume_probes
     child = app._operations.get(operation.get('preparation'))
     stages = ('collection_job', 'local_preparation', 'local_execution', 'haiku_preparation', 'haiku_execution')
-    pending = {operation.get(key) for key in stages}
-    if child:
-        pending.update((child.get('current_job'), child.get('execution_job')))
-        for item in child.get('connection_operations', []):
-            pending.add(item.get('probe'))
-            for key in ('preparation', 'check'):
-                nested = app._operations.get(item.get(key))
-                if nested:
-                    pending.update((nested.get('current_job'), nested.get('execution_job')))
-    # Check every owned launch before changing any stage or restarting a worker.
-    # The parent may not yet have published a diagnostic's durable launch id.
-    for job_id in sorted(key for key in pending if key):
-        job = app.jobs.get(job_id)
-        if job and job.state() in ACTIVE:
-            raise ValueError('The previous job is still active or stopping; wait before resuming')
-        if job is None and (app.state_dir/job_id).exists():
-            raise ValueError('Saved job files require console recovery before resuming')
+    check_recovery(app, child or {}, (operation.get(key) for key in stages))
     if child and child['kind'] == 'direct':
-        for item in child.get('connection_operations', []):
-            prepared = app._operations.get(item.get('preparation'))
-            probe = app.jobs.get(item.get('probe') or (prepared or {}).get('execution_job'))
-            if probe and probe.state() in {'failed','stopped','interrupted'}:
-                if prepared is None:
-                    raise ValueError('The saved diagnostic preparation is unavailable')
-                prepared['resume_job'] = probe.job_id
-                prepared.pop('execution_job',None)
-                app._save_operation(prepared)
-                # Keep the old diagnostic/check in history. Resume the same
-                # output, then save its connection record normally.
-                item.pop('probe',None)
-                item.pop('check',None)
-        app._save_operation(child)
+        resume_probes(app, child)
     if child and child['status'] in {'failed', 'stopped'}:
         app._retry_operation(child['id'])
     # Successful stages are immutable. Failed execution needs its checkpoint

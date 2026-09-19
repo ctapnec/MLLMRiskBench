@@ -4166,6 +4166,10 @@ class LifecycleMixin:
                     operation = self._operations[ticket[0]['operation']]
                     if operation['kind'] != 'campaign' or operation['status'] != 'ready' or operation.get('execution_authorized'):
                         raise ValueError('This campaign has already started or is not ready')
+                    from .operations import completed_equivalent
+                    completed = completed_equivalent(self._operations, operation)
+                    if completed:
+                        return 303, '/operations/'+completed['id'], b''
                     operation.update(execution_authorized=True, step=1, status='preparing')
                     self._save_operation(operation)
                     self._ensure_operation_worker(operation['id'])

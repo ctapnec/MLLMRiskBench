@@ -259,14 +259,14 @@ def _guidance(app, params):
     elif matched:
         stage = 'Prepare'
     all_operations = getattr(app, '_operations', {})
-    from .operations import operator_operations, operation_contains_job
+    from .operations import operator_operations, operation_contains_job, completed_equivalent
     operations = sorted((row for row in operator_operations(all_operations, owner)
         if row['status'] in {'preparing', 'ready', 'failed', 'stopped','complete'}),
         key=lambda row:row.get('created_at', 0))
     if operations and (operations[-1]['status'] == 'preparing' or latest is None
             or operations[-1].get('created_at', 0) >= (dict(latest).get('started_at') or 0)
             or operation_contains_job(all_operations, operations[-1]['id'], latest['member_id'])):
-        current = operations[-1]
+        current = completed_equivalent(all_operations, operations[-1]) or operations[-1]
         stage = 'Recovery' if current['status'] in {'failed', 'stopped'} else 'Prepare'
         notice = ('Preparation is '+current['status']+'. Open the operation, not its internal child jobs. '
             'Completed preparation still requires an explicit execution start.')

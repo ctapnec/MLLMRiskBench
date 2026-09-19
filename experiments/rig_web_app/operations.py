@@ -84,6 +84,43 @@ def operation_contains_job(operations, operation_id, job_id, seen=None):
     return any(operation_contains_job(operations, child, job_id, seen) for child in children)
 
 
+def campaign_selection(values, *, completed=False):
+    """Operator choices, excluding automatic preparation locators."""
+    if values.get('setup_mode') != 'automatic':
+        return values
+    return {key:value for key,value in values.items()
+            if key != 'out' and not key.startswith(('att_path', 'att_sha'))
+            and not (completed and values.get('campaign_inputs') == 'saved'
+                     and key == 'retained_pricing_date')}
+
+
+def completed_equivalent(operations, operation):
+    """Resolve an obsolete unstarted review using saved configuration identity.
+
+    No model files, live registries or providers are consulted. Missing frozen
+    configuration is not proof of equivalence; changed work stays separate.
+    """
+    if (operation['kind'] != 'campaign' or operation['status'] != 'ready'
+            or operation.get('execution_authorized')):
+        return None
+    def frozen(row):
+        child = operations.get(row.get('preparation'), {})
+        if child.get('kind') != 'direct':
+            return {}
+        return {k:v for k,v in child.get('snapshot_manifest', {}).items()
+                if not k.startswith('live_attestation_')}
+    snapshot = frozen(operation)
+    if not snapshot:
+        return None
+    wanted = campaign_selection(operation.get('original_params', operation['params']), completed=True)
+    for row in sorted(operations.values(), key=lambda r:r.get('created_at', 0)):
+        if (row['kind'] == 'campaign' and row['status'] == 'complete'
+                and campaign_selection(row.get('original_params', row['params']), completed=True) == wanted
+                and frozen(row) == snapshot):
+            return row
+    return None
+
+
 class _Context:
     """Existing preparers update this operation, not a concurrently edited draft."""
     def __init__(self, app, operation):
@@ -164,12 +201,7 @@ class OperationsMixin:
         # campaign. Manual paths/receipts remain significant; execution still
         # uses the original, unchanged snapshot, never these refreshed values.
         def selection(values, *, completed=False):
-            if kind != 'campaign' or values.get('setup_mode') != 'automatic':
-                return values
-            return {key:value for key,value in values.items()
-                    if key != 'out' and not key.startswith(('att_path', 'att_sha'))
-                    and not (completed and values.get('campaign_inputs') == 'saved'
-                             and key == 'retained_pricing_date')}
+            return campaign_selection(values, completed=completed) if kind == 'campaign' else values
         with self._app_lock:
             candidates = self._operations.values()
             if kind == 'campaign':
@@ -478,6 +510,9 @@ class OperationsMixin:
                 from .campaign_flow import retry
                 retry(self, operation)
                 return
+            if operation['kind'] == 'direct':
+                from .connection_workflow import check_recovery
+                check_recovery(self, operation)
             job = self.jobs.get(operation['current_job'])
             if job is not None and job.state() in {'running', 'queued', 'starting', 'retry_wait', 'retry_waiting'}:
                 raise ValueError('The previous preparation is still stopping. Wait for it to finish.')
@@ -501,6 +536,9 @@ class OperationsMixin:
                     self._persist_model_acquisition_workflow(workflow)
                 operation['failed_jobs'].append(job.job_id)
                 operation['current_job'] = ''
+            if operation['kind'] == 'direct':
+                from .connection_workflow import resume_probes
+                resume_probes(self, operation)
             for item in operation.get('connection_operations', []):
                 for key in ('preparation','check'):
                     child = self._operations.get(item.get(key))

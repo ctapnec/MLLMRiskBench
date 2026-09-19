@@ -6,6 +6,42 @@ from .catalog import _ARM_CATALOG
 from .ui import _page
 
 
+def check_recovery(app, operation, jobs=()):
+    """Check every owned launch before any worker or saved stage is resumed."""
+    pending = set(jobs)
+    pending.update((operation.get('current_job'), operation.get('execution_job')))
+    for item in operation.get('connection_operations', []):
+        pending.add(item.get('probe'))
+        for key in ('preparation', 'check'):
+            child = app._operations.get(item.get(key))
+            if child:
+                pending.update((child.get('current_job'), child.get('execution_job')))
+    for job_id in sorted(key for key in pending if key):
+        job = app.jobs.get(job_id)
+        if job and job.state() in {'running', 'queued', 'starting', 'retry_wait', 'retry_waiting'}:
+            raise ValueError('The previous job is still active or stopping; wait before resuming')
+        if job is None and (app.state_dir/job_id).exists():
+            raise ValueError('The interrupted job has saved launch files and requires console recovery before resuming')
+
+
+def resume_probes(app, operation):
+    """Recover internal probes without handing their technical jobs to the user."""
+    for item in operation.get('connection_operations', []):
+        prepared = app._operations.get(item.get('preparation'))
+        probe = app.jobs.get(item.get('probe') or (prepared or {}).get('execution_job'))
+        if probe and probe.state() in {'failed', 'stopped', 'interrupted'}:
+            if prepared is None:
+                raise ValueError('The saved diagnostic preparation is unavailable')
+            prepared['resume_job'] = probe.job_id
+            prepared.pop('execution_job', None)
+            app._save_operation(prepared)
+            # Keep the old probe and connection check in history. The same
+            # output is resumed before creating its new connection handoff.
+            item.pop('probe', None)
+            item.pop('check', None)
+    app._save_operation(operation)
+
+
 def missing(app, params):
     if params.get('setup_mode') != 'automatic' or params.get('mode') != 'measured':
         return []

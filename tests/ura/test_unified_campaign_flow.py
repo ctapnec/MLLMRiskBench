@@ -3,7 +3,9 @@ import json
 import os
 import subprocess
 import sys
+from copy import deepcopy
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 
@@ -235,12 +237,16 @@ def test_resume_waits_for_unpublished_diagnostic_without_mutating_work(app,monke
 
 @pytest.mark.skipif(os.name!='posix',reason='POSIX process-group integration runs on the rig')
 @pytest.mark.parametrize('width',[1440,390])
-def test_browser_stop_and_resume_owns_unpublished_real_process(app,monkeypatch,browser,width):
+@pytest.mark.parametrize('kind',['campaign','standalone'])
+def test_browser_stop_and_resume_owns_unpublished_real_process(app,monkeypatch,browser,width,kind):
     from urllib.parse import parse_qsl,urlsplit
     from experiments.rig_web_app.artifacts import Job
     from test_rig_web_busy_browser import _burst
     monkeypatch.setattr(app,'_builder_model_acquisition_required',lambda p:False)
     operation,selection=prepared(app,kind='direct')
+    if kind=='standalone':
+        app._operations.pop(operation['id'])
+        operation=selection
     probe=app._operations[app._start_operation('direct',dict(selection['params'],mode='attestation_probe'))]
     directory=app.state_dir/'unpublished-probe';directory.mkdir()
     # An idle real child substitutes for inference. Nothing contacts a provider
@@ -269,13 +275,15 @@ def test_browser_stop_and_resume_owns_unpublished_real_process(app,monkeypatch,b
         assert _burst(page,'form[action$="/stop"] button')==dict(visible=True,inert=True)
         assert len(held)==1 and process.poll() is None
         reply(held.pop())
-        page.get_by_role('button',name='Resume campaign',exact=True).wait_for()
+        resume='Resume campaign' if kind=='campaign' else 'Continue preparation'
+        stop='Stop campaign' if kind=='campaign' else 'Stop preparation'
+        page.get_by_role('button',name=resume,exact=True).wait_for()
         page.wait_for_function('!window.uraBusy.isBusy()')
         assert process.poll() is not None and job.stop_error is None
         assert (directory/'stop-request.json').is_file()
         assert operation['status']==selection['status']=='stopped'
-        page.get_by_role('button',name='Resume campaign',exact=True).click()
-        page.get_by_role('button',name='Stop campaign',exact=True).wait_for()
+        page.get_by_role('button',name=resume,exact=True).click()
+        page.get_by_role('button',name=stop,exact=True).wait_for()
         page.wait_for_function('!window.uraBusy.isBusy()')
         assert probe['resume_job']==job.job_id and 'execution_job' not in probe
         assert len(app.jobs)==1 and not errors
@@ -322,6 +330,98 @@ def test_internal_diagnostics_never_become_separate_operator_tasks(app,monkeypat
     standalone=app._operations[app._start_operation('direct',dict(selection['params'],out='standalone'))]
     standalone['status']='ready'
     assert standalone in operator_operations(app._operations,owner)
+
+
+def duplicate_review(app, monkeypatch):
+    monkeypatch.setattr(app, '_builder_model_acquisition_required', lambda p: False)
+    completed, selection = prepared(app, kind='direct')
+    completed.update(status='complete', step=4, execution_authorized=True)
+    completed['params'].update(setup_mode='automatic', out='original')
+    completed['original_params'] = dict(completed['params'])
+    selection['snapshot_manifest'] = dict(local_config=dict(bytes=10, sha256='a'*64))
+    duplicate = deepcopy(completed)
+    duplicate.update(id=uuid4().hex, status='ready', step=0, execution_authorized=False,
+        created_at=completed['created_at']+10)
+    duplicate['params'].update(out='automatic-attempt-2', att_path1='automatic-connection')
+    duplicate['original_params'] = dict(duplicate['params'])
+    other = deepcopy(selection); other['id'] = uuid4().hex
+    duplicate['preparation'] = other['id']
+    app._operations.update({duplicate['id']:duplicate, other['id']:other})
+    for row in (completed,selection,duplicate,other):app._save_operation(row)
+    return completed, duplicate, other
+
+
+def test_guide_prefers_completed_equivalent_over_unstarted_duplicate_after_restore(app,monkeypatch):
+    from experiments.rig_web_app import campaign_guide
+    completed, duplicate, _ = duplicate_review(app,monkeypatch)
+    app._restore_operations()
+    steps,stage,notice,_ = campaign_guide._guidance(app,completed['params'])
+    assert steps[stage][0]=='Results' and 'Campaign is complete' in notice
+    assert ('Open campaign progress','/operations/'+completed['id']) in steps[stage][3]
+    assert not any(href=='/operations/'+duplicate['id'] for step in steps for _,href in step[3])
+
+
+def test_stale_start_tabs_reopen_completed_equivalent_without_launching(app,monkeypatch):
+    completed, duplicate, _ = duplicate_review(app,monkeypatch)
+    page=app._operation_page(duplicate['id']).decode()
+    assert 'Results ready' in page and '>Start campaign<' not in page
+    started=[];monkeypatch.setattr(app,'_ensure_operation_worker',lambda key:started.append(key))
+    # Distinct tickets model two tabs, not a reused one-shot token.
+    tokens=[app._new_launch_ticket(dict(operation=duplicate['id']),purpose='campaign-start') for _ in range(2)]
+    for token in tokens:
+        response=app.handle('POST','/operations/start-campaign',dict(launch_ticket=token))
+        assert response[:2]==(303,'/operations/'+completed['id'])
+    assert not started and duplicate['status']=='ready' and not duplicate['execution_authorized']
+
+
+@pytest.mark.parametrize('change',['settings','snapshot','manual-output','no-snapshot','campaign'])
+def test_changed_or_unproven_preparation_is_not_relabelled_as_completed(app,monkeypatch,change):
+    from experiments.rig_web_app import campaign_guide
+    completed, duplicate, other = duplicate_review(app,monkeypatch)
+    if change=='settings':duplicate['original_params']['max_queries']='2'
+    elif change=='snapshot':other['snapshot_manifest']['local_config']['sha256']='b'*64
+    elif change=='manual-output':duplicate['original_params']['setup_mode']='manual'
+    elif change=='campaign':duplicate['original_params']['campaign_id']='another-campaign'
+    else:other['snapshot_manifest']={}
+    steps,stage,notice,_ = campaign_guide._guidance(app,duplicate['params'])
+    assert steps[stage][0]=='Prepare' and 'Campaign is ready' in notice
+    token=app._new_launch_ticket(dict(operation=duplicate['id']),purpose='campaign-start')
+    assert app.handle('POST','/operations/start-campaign',dict(launch_ticket=token))[:2]==(303,'/operations/'+duplicate['id'])
+    assert duplicate['execution_authorized'] and completed['status']=='complete'
+
+
+@pytest.mark.parametrize('width',[1440,390])
+def test_two_stale_review_tabs_return_to_finished_results_in_browser(app,monkeypatch,browser,width):
+    from urllib.parse import urlsplit,parse_qsl
+    completed, duplicate, _ = duplicate_review(app,monkeypatch)
+    monkeypatch.setattr(app,'_ceilings_card',lambda p:('<p>Reviewed workload</p>',True))
+    started=[];monkeypatch.setattr(app,'_ensure_operation_worker',lambda key:started.append(key))
+    completed['status']='preparing'
+    pages=[browser.new_page(viewport=dict(width=width,height=1000)) for _ in range(2)]
+    errors=[]
+    def route(request):
+        url=urlsplit(request.request.url)
+        status,mime,body=app.handle(request.request.method,url.path,
+            dict(parse_qsl(request.request.post_data or '')))
+        if status==303:request.fulfill(status=status,headers={'Location':mime},body=body)
+        else:request.fulfill(status=status,content_type=mime,body=body)
+    try:
+        for page in pages:
+            page.on('pageerror',lambda exc:errors.append(str(exc)))
+            page.route('http://stale.test/**',route)
+            page.goto('http://stale.test/operations/'+duplicate['id'])
+            page.get_by_role('button',name='Start campaign',exact=True).wait_for()
+        completed['status']='complete'
+        for page in pages:
+            page.get_by_role('button',name='Start campaign',exact=True).click()
+            page.wait_for_url('**/operations/'+completed['id'])
+            page.wait_for_function('!window.uraBusy.isBusy()')
+            assert page.get_by_role('heading',name='Results ready',exact=True).is_visible()
+            assert not page.get_by_role('button',name='Start campaign',exact=True).count()
+            assert page.locator('body > nav').is_visible()
+        assert not started and not errors and not duplicate['execution_authorized']
+    finally:
+        for page in pages:page.close()
 
 
 def test_direct_resume_keeps_original_acquisition_and_output_settings(app,monkeypatch):

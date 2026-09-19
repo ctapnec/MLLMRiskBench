@@ -199,3 +199,15 @@ Resume checks all owned launches before changing stages or starting workers;
 an active or unreconciled process cannot leave a partially resumed workflow.
 Once stopped, the diagnostic continues from its retained execution reference.
 Operators do not need a separate internal recovery task.
+
+Campaigns and standalone runs use the same diagnostic-recovery checks. The
+standalone preparation's Continue action also recovers failed, stopped or
+interrupted diagnostics, including after console restoration. The older probe
+and connection-check jobs stay in history; their failure is not relabelled.
+
+An older unstarted review cannot supersede equivalent completed work when its
+operator choices and saved generation configuration establish equivalence.
+The Guide, review page and a Start submitted from a stale browser tab all open
+the completed results. This reads saved configuration identities, not model
+files. Changed settings, distinct campaigns and unavailable configuration
+evidence remain separate; historical preparation records are not deleted.
