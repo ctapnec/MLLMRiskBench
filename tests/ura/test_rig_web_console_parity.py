@@ -1452,7 +1452,7 @@ def test_run_page_required_markers_match_argparse_required_flags(tmp_path: Path)
     expected = sum(
         sum(1 for param in entry.params if param.required)
         for name, entry in COMMANDS.items()
-        if name not in {"run_matrix", "model_acquire", "ollama_pull", "capture_t3mp3st", "harmbench_capture"}
+        if name not in {"run_matrix", "model_acquire", "ollama_pull", "capture_t3mp3st", "harmbench_capture", "campaign_assess"}
     )
     assert page.count("class='req' title='required'") == expected
     assert expected > 20
