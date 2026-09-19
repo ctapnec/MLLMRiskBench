@@ -27,3 +27,13 @@ Current operator instructions belong in the first group. Historical observations
 must be dated, not presented as prerequisites for new campaigns. Development
 findings belong in the development ledger. Thesis chapters describe research
 methods and results, not software repair chronology.
+
+## Preserved historical material
+
+- [Earlier workspace design and integration record](HISTORICAL_CAMPAIGN_WORKSPACES.md)
+- [Earlier walkthrough and dated demonstrations](HISTORICAL_UI_CAMPAIGN_WALKTHROUGH.md)
+
+These preserve the prior documents, including numeric results and command
+examples. They are explicitly historical, not alternative instructions for the
+current interface. The [consolidation map](DOCUMENTATION_MAINTENANCE.md) records
+where the original small-guide actions and qualifications now appear.

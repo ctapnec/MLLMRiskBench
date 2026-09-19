@@ -3,13 +3,16 @@ from pathlib import Path
 import re
 from urllib.parse import unquote, urlsplit
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 FILES = ['README.md', 'docs/README.md', 'docs/SMALL_CAMPAIGNS.md',
     'docs/SMALL_API_CAMPAIGN.md', 'docs/SMALL_LOCAL_CAMPAIGN.md',
     'docs/CAMPAIGN_RESULTS_AND_ANALYSIS.md', 'docs/UI_CAMPAIGN_WALKTHROUGH.md',
     'docs/CAMPAIGN_WORKSPACES.md', 'docs/UI_WORKFLOW_SIMPLIFICATION.md',
     'docs/OPERATOR_REGRESSION_AUDIT.md', 'docs/RESPONSE_SVM.md',
-    'docs/HUMAN_REVIEW_UI.md', 'docs/ARCHITECTURE.md', 'experiments/RUN_AND_RETURN.md']
+    'docs/HUMAN_REVIEW_UI.md', 'docs/ARCHITECTURE.md',
+    'docs/DOCUMENTATION_MAINTENANCE.md', 'experiments/RUN_AND_RETURN.md']
 
 
 def prose(path):
@@ -59,7 +62,16 @@ def test_combined_guide_preserves_local_actions_and_reference_limits():
         'Submit adjudication', 'Export and run human audit analysis',
         'Compare job outputs', 'Show SVM results', 'Matched local and hosted response classifiers',
         'Resume unfinished analysis', 'local campaign itself for its own input',
-        '12-request cap', 'seven measured inputs', 'not prices for a new selection']
+        '12-request cap', 'seven measured inputs', 'not prices for a new selection',
+        'releases the target before local scoring', 'No new responsiveness survey',
+        'A failed connection check stops progression', 'Additional connection checks',
+        'inline hosted scoring', '3.3 seconds', 'four target calls and no answer retries',
+        'USD 0.189337', 'USD 0.757348', 'USD 0.027046', 'USD 0.007470',
+        'four matched inputs and three jointly valid pairs',
+        'text had three matched inputs and three valid pairs',
+        'One new Haiku verdict had invalid format',
+        'not independent research ratings', 'at least 16 correct per dimension',
+        'recorded teacher labels, not independently established human truth']
     normalized = re.sub(r'\s+', ' ', text)
     missing = [item for item in required if item not in normalized]
     assert not missing, missing
@@ -73,3 +85,36 @@ def test_old_guides_are_short_redirects_not_diverging_recipes():
         text = (ROOT/'docs'/name).read_text(encoding='utf-8')
         assert 'SMALL_CAMPAIGNS.md' in text
         assert len(text.splitlines()) <= 20
+
+
+@pytest.mark.parametrize('omission', [
+    '### Reference result, not a required outcome',
+    '319-token answer', 'not zero-cost computing',
+    'Start or resume assessment', 'Resume unfinished analysis',
+    'USD 0.027046', 'One new Haiku verdict',
+])
+def test_preservation_check_detects_meaningful_omissions(monkeypatch, omission):
+    original = Path.read_text
+    guide = ROOT / 'docs/SMALL_CAMPAIGNS.md'
+    assert omission in original(guide, encoding='utf-8')
+
+    def read(path, *args, **kwargs):
+        text = original(path, *args, **kwargs)
+        return text.replace(omission, 'REMOVED') if path == guide else text
+
+    monkeypatch.setattr(Path, 'read_text', read)
+    with pytest.raises(AssertionError):
+        test_combined_guide_preserves_local_actions_and_reference_limits()
+
+
+def test_link_check_detects_a_missing_section(monkeypatch):
+    original = Path.read_text
+    guide = ROOT / 'docs/SMALL_CAMPAIGNS.md'
+
+    def read(path, *args, **kwargs):
+        text = original(path, *args, **kwargs)
+        return text + '\n[Missing section](#absent-section)\n' if path == guide else text
+
+    monkeypatch.setattr(Path, 'read_text', read)
+    with pytest.raises(AssertionError, match='absent section'):
+        test_operator_markdown_links_and_section_anchors_resolve()

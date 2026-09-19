@@ -36,6 +36,9 @@ separate demonstration with a unique name.
 
 Local/API/mixed follows from model selection, not another campaign-type choice.
 **Single run** creates an independent Runner job and is not used in this example.
+For the installed Qwen profile, static collection releases the target before
+local scoring. No new responsiveness survey is needed for an unchanged,
+already-assessed model.
 
 ## 2. Choose the inputs
 
@@ -69,6 +72,7 @@ Both lead to the same review and start actions.
    Enter the sample count directly. The slider obtains its range after
    preparation. The limit is per arm and preserves whole source clusters;
    it is not a guaranteed count of individual answers.
+   Leave **Advanced execution and recovery options** collapsed for this example.
 
 Other installed corpora and supported attackers use this route. A corpus does
 not select its similarly named attacker. Prepared attackers have a panel for
@@ -129,7 +133,9 @@ policy, normally three retries. Usable truncated text and documented provider-po
 refusals remain outcomes. An unexplained HTTP 400 is not automatically a refusal.
 
 Collection and Haiku ceilings are separate allowances, not provider balances or
-invoices. Local assessment uses the rig, including for an API campaign.
+invoices. The collection ceiling covers target requests, required diagnostics
+and inline hosted scoring, when selected. Local assessment uses the rig,
+including for an API campaign.
 Assessment covers pending measured answers in the destination campaign and skips
 valid existing verdicts. Missing answers and inapplicable tasks remain explicit.
 Saved-image assessment uses the recorded text proxy, not image pixels. To add
@@ -143,8 +149,11 @@ Haiku verdicts for the original local answers, use the source campaign's
    preparation are reused. Do not start its internal jobs manually.
 3. When **Review campaign** appears, check models, input counts, output allowances,
    required diagnostic calls, selected assessments and spending limits.
-4. For Qwen, confirm both text and image selections. Diagnostics appear separately
-   from measured work and do not increase its scientific sample.
+4. For Qwen, confirm both text and image selections, the two selected arms and
+   per-arm limit `2`. **Additional connection checks** lists any required
+   diagnostics separately; these do not increase the measured scientific sample.
+   A positive technical HTTP call limit does not cause HTTP calls: this fully
+   local example projects none.
 5. Use **Change campaign settings** if a choice is wrong, then review again.
 
 Preparation makes no target or judge calls. Provider token counting may make
@@ -162,6 +171,9 @@ Return through **Campaigns -> your campaign name -> Overview -> Prepared and
 active work**, or **Configure in Build -> General -> Prepared and active work**.
 Select **View progress**, or **Review and start** if execution has not begun.
 Reopening does not repeat completed work.
+
+A failed connection check stops progression before measured execution. Its
+diagnostic output and error remain available; they are not benchmark results.
 
 ## 6. Stop or recover without discarding answers
 
@@ -181,6 +193,9 @@ answers or make judgments from different outputs interchangeable.
 ## 7. Inspect results and choose optional analysis
 
 Open **Campaigns -> your demonstration campaign**:
+choose the name you saved, not the historical **Local campaign**. **Configure
+in Build** returns to its settings; **Campaign jobs** opens detailed job states
+and durations. Ordinary execution does not require **Run tools**.
 
 | Tab or action | What to inspect |
 | --- | --- |

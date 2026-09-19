@@ -3,8 +3,9 @@
 This is the developer reference for the current UI/backend boundary.
 Use [Small campaigns](SMALL_CAMPAIGNS.md) for operator instructions and
 [Results and analysis](SMALL_CAMPAIGNS.md#8-optional-examine-and-compare-your-results) for optional analyses.
-Earlier design proposals and dated repair narratives are retained in Git history
-and the development ledger, not prescribed as current UI actions.
+The [complete previous document](HISTORICAL_CAMPAIGN_WORKSPACES.md) preserves
+earlier design proposals, numeric observations and technical notes. It is not
+prescribed as current UI actions. Development findings remain in the ledger.
 
 ## Ownership and navigation
 

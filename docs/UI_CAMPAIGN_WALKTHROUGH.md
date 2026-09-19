@@ -5,6 +5,8 @@ For exact models, field values and clicks, use
 For comparison, exports, human evaluation and SVM, use
 [Results and optional analysis](SMALL_CAMPAIGNS.md#8-optional-examine-and-compare-your-results).
 This page explains navigation and interpretation, without a second setup recipe.
+The [previous detailed record](HISTORICAL_UI_CAMPAIGN_WALKTHROUGH.md) preserves
+its dated examples, technical notes and original sequences for historical use.
 
 ## Create a campaign or a single run
 
