@@ -146,7 +146,7 @@ def test_haiku_preparation_and_resume_use_existing_executor_without_target_calls
     assert completed['executed_outputs']==(1 if interrupt_first else 0)
     import sqlite3
     with sqlite3.connect(database) as connection:
-        assert connection.execute('SELECT count(*) FROM campaign_costs').fetchone()[0]==2
+        assert connection.execute('SELECT count(*) FROM campaign_cost_attempts').fetchone()[0]==2
     pending,_=subject.candidates(read_campaign(database,owner,root,include_records=True),'haiku',judge,0)
     assert pending==[]
 
