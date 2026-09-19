@@ -85,7 +85,10 @@ def prepare(inventory, output, *, mode, clusters, results_root, media_index=None
         json.dump(snapshot, stream, ensure_ascii=False, sort_keys=True)
     manifest_paths = set()
     for row in selected:
-        path = _location(row['source_ref'], results_root.resolve())[0]
+        # The inventory has already resolved each exact output identity from
+        # its checkpoint or final file. Here only the unchanged sibling
+        # manifest name is needed; finalization can remove the checkpoint.
+        path = _location(row['source_ref'], results_root.resolve(), allow_missing=True)[0]
         stem = path.name.removesuffix('.responses.checkpoint.jsonl').removesuffix('.responses.jsonl')
         manifest = path.with_name(stem+'.manifest.json')
         if manifest.is_file():
