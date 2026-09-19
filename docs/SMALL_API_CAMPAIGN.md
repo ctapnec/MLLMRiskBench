@@ -18,7 +18,7 @@ Choose one route after section 1:
 
 - **2a - Reuse local inputs:** use **General -> Reuse local inputs for an API
   comparison**, then sections 3-8. Do **not** use **Compose & review** for this
-  route; it has its own **Review prepared collection** action.
+  route; click **Prepare comparison and review**, then review the prepared collection.
 - **2b - Select arms and frameworks directly:** use **Pipeline**, then
   **General -> Compose & review**. Follow section 2b's preparation and execution
   instructions, not the retained-input preparation in sections 3-5.
@@ -64,6 +64,13 @@ copied into Build. The configured Google credential is already available.
 
 Input extraction is automatic when you prepare the comparison. There is no
 separate input-preparation job to start.
+
+For another source selection, include at least two whole input clusters and
+enough request capacity: the connection check uses a separate cluster from
+measurement. A one-input source cannot supply both. If preparation reports
+insufficient measured inputs, change the selected runs or request cap in Build;
+continuing the unchanged preparation cannot add inputs. No paid generation has
+started at this point.
 
 ## 2b. Select arms, corpora and attack frameworks directly
 

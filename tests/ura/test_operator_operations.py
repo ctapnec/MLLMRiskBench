@@ -98,6 +98,20 @@ def test_stop_and_failed_child_prevent_next_stage_and_retry_keeps_completed_stag
     assert other['status'] == 'stopped' and len(launched) == 6
 
 
+def test_insufficient_matched_sample_explains_action_without_launching(app, monkeypatch):
+    owner=app.db.create_workspace('Small source','api')
+    operation=app._operations[app._start_operation('matched',dict(campaign_id=owner))]
+    job=child(app,'insufficient',command='hosted_campaign_prepare',state='failed',code=2)
+    job.failure='Traceback: hosted selection must leave a whole source cluster for measurement'
+    operation.update(current_job=job.job_id,step=3)
+    monkeypatch.setattr(app,'start_job',lambda *a,**kw:pytest.fail('No call may start'))
+    app._advance_operation(operation)
+    assert operation['status']=='failed'
+    assert 'at least two whole input clusters' in operation['error']
+    assert 'No paid generation was started' in operation['error']
+    assert 'Traceback' not in operation['error'] and not operation['jobs']
+
+
 def test_restored_operation_observes_current_job_without_relaunch(app, monkeypatch):
     owner = app.db.create_workspace('Restart', 'mixed')
     launched = setup_stages(app, monkeypatch, 'matched')

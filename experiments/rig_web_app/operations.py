@@ -222,6 +222,10 @@ class OperationsMixin:
                 partial_native = (job.command == 'retained_native_judge_prepare'
                     and state == 'failed' and job.exit_code() == 1)
                 if not partial_native and (state != 'complete' or job.exit_code() != 0):
+                    if job.command == 'hosted_campaign_prepare' and 'whole source cluster for measurement' in (job.failure or ''):
+                        raise ValueError('Choose saved source runs and a request cap covering at least two whole input clusters: '
+                            'one for the connection check and another for measurement. No paid generation was started. '
+                            'Change the selection in Build and prepare the comparison again; continuing the same selection cannot add inputs.')
                     raise ValueError(job.failure or 'The preparation job '+job.job_id+' ended as '+state+'.')
                 operation['jobs'].append(job.job_id)
                 operation['current_job'] = ''

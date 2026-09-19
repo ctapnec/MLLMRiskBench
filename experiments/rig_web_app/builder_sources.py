@@ -139,7 +139,8 @@ def source_panel(app, params: dict[str, str]) -> str:
         automatic = budget_panel(app, params, automatic=True)
         automatic += ("<section class='card' id='automatic-comparison'><h2>Prepare and review the comparison</h2>"
             "<p>Input extraction, forecasting, replay preparation and execution setup run automatically on one progress page. "
-            "You will review the workload and costs before any generation starts.</p>"
+            "You will review the workload and costs before any generation starts. Select enough saved inputs and "
+            "request capacity for at least two whole input clusters: a connection check and separate measured inputs.</p>"
             "<label class='checkrow'><input type='checkbox' form='builder' name='retained_network_counts'"+
             (' checked' if params.get('retained_network_counts') == 'on' else '')+
             "><span>Allow provider token counting for the selected prompts and images (no generation)</span></label>"
