@@ -6069,7 +6069,7 @@ output digest. Until that human-only record exists, keep `gate8_met: false`.
 ## 16. Read-only analysis and suite summary
 
 Optional retained-response classifiers are available through
-`python -m experiments.response_svm` and **Tools -> Analysis and native imports**.
+`python -m experiments.response_svm` and **Campaigns -> campaign -> SVM analysis**.
 The [response-SVM protocol](../docs/RESPONSE_SVM.md) covers export, harmful
 compliance, over-refusal and judge-disagreement evaluation, with grouped input
 splits and no provider calls. These are automated-label fidelity experiments,
@@ -7145,7 +7145,7 @@ focus return, stage navigation, theme layout and read-only links.
 The guide covers all six Build sections and the optional human-review and
 response-SVM workflows, as well as costs, exports and recovery. Browse all
 topics is collapsible on narrow screens. Human review links to the actual
-wizard; SVM links to its existing Tools form, not a new training wizard.
+wizard; SVM links to the campaign's automatic analysis page.
 Neither topic starts work or implies that the required evidence exists.
 
 Guide links use stable section anchors. Shared fragment navigation activates
@@ -7415,14 +7415,14 @@ Independent two-rater study remains a separate explicit option with its own
 arrangements, qualification, consent, immutable submissions and adjudication.
 Both reuse the existing saved-sample preparation and SQLite review store.
 No target or judge calls are made. SMALL_API_CAMPAIGN section 9 supplies the
-click-by-click instructions; section 10 distinguishes SVM export, prediction,
-new grouped evaluation and packaging instead of treating them as one operation.
+click-by-click instructions; section 10 describes a single SVM study action
+with automatic input extraction, export, evaluation and classifier packaging.
 
 ### Automatic technical setup in Build and transport Tools
 
 #### Ordinary operator workflow
 
-Build campaigns and single runs use **Compose & review -> Prepare and review**.
+Build campaigns and single runs use **Compose & review**.
 One durable progress page advances through model planning, reuse/acquisition,
 no-call preflight and final preparation. Its final **Start run**, **Start probe**
 or **Start canary** is an explicit execution action. A probe's connection record
@@ -7451,6 +7451,22 @@ runtime installation or target/judge generation is implied by opening a page.
 See [Operator workflows](../docs/UI_WORKFLOW_SIMPLIFICATION.md) for coverage and
 the two small-campaign guides for exact visible controls.
 
+**Campaigns -> campaign -> SVM analysis** replaces the ordinary export/evaluate/
+package handoff. Select named campaigns and the recorded Haiku condition, then
+**Start classifier study**. Source metadata, database/output paths and intermediate
+files are derived by the application. Small populations and insufficient class
+support remain reported limitations; unsupported classifier packages are not
+invented. **Saved analyses -> Resume unfinished analysis** retains successful
+stages. The scientific protocol is unchanged and no model calls are made.
+
+Prepared attack capture resolves the installed runtime's revision, source tree,
+isolated Python environment and fresh output locations. Its real source-generation
+action remains reviewed. Completed material attaches to an unchanged campaign
+draft automatically, with named saved-capture choices for reuse. Imports and
+runtime overrides remain advanced options. Tools folds raw CLI forms into
+**Advanced CLI tools and troubleshooting**; ordinary operators use Build and
+campaign evaluation/analysis instead of coordinating internal jobs.
+
 Newly rendered Build forms default to **Admission -> Automatic** for campaigns
 and standalone runs. Save/review resolves the configured project/source records,
 preserves the campaign scope (or assigns one), chooses the output directory and
@@ -7467,7 +7483,7 @@ settings. A fresh review after terminal execution chooses the next output
 attempt; preflight preparation does not consume an attempt. Recovery and exact
 job-review links preserve the original output rather than rerunning it elsewhere.
 
-**Tools -> live_attestation -> Completed probe** derives scope, output filename
+**Tools -> Advanced CLI tools and troubleshooting -> live_attestation -> Completed probe** derives scope, output filename
 and ownership from the selected completed probe. **Prepare transport check**
 opens an already completed check when present, otherwise starts only receipt
 preparation. It does not regenerate a target answer. The advanced raw command

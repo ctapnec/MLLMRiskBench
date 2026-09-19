@@ -156,7 +156,7 @@ zero work. This is different from section 3's total hosted request cap of 12.
 
 11. Click **General -> Save campaign**, then **Configure in Build -> General ->
     Compose & review**. Check Flash, `xstest_full`, `replay`, sampling and mode.
-12. Click **Prepare and review**. Stay on the progress page while the console
+12. Stay on the automatic progress page while the console
     reuses installed models and performs its no-call checks. Do not coordinate
     separate planning, acquisition or preflight jobs.
 13. On the completed review, check the projected calls and configured bounds.
@@ -611,119 +611,56 @@ the click sequence above is the normal campaign workflow.
 
 ## 10. Optional: response-SVM analysis
 
-The three tasks are harmful compliance, over-refusal and judge disagreement.
-This small campaign is too small for a defensible new training/test study.
-The useful demonstration is **export its eligible text answers, then predict
-with the existing fitted classifiers**. Images are not supported. These actions
-make no target or judge calls and do not add human or automated judge verdicts
-to the campaign.
+This is separate from generation and judging. The three tasks are harmful
+compliance, over-refusal and local/Haiku disagreement. They model recorded
+teacher labels, not independently established human truth. No target or judge
+calls are made.
 
-### 10.1. Open the correct form and identify your campaign
+### 10.1. Open the analysis
 
-1. On your campaign page, copy its ID from the browser address: the text after
-   `/campaigns/` and before `?`. For example, the current
-   `Gemini-3.8-Flash_Reused_Inputs` campaign has ID
-   `6f3e6f22be80406ab78769ffb0fabe5a`. Use your own ID if you created another one.
-2. Click **Tools** in the top navigation. Find **Analysis and native imports**
-   and click **response_svm**, described as **Retained response classifiers:
-   harmful compliance, over-refusal and judge disagreement (no calls)**.
-   Direct link: <http://localhost:8642/commands?cmd=response_svm>.
-3. In this form's **Save under campaign** dropdown, choose your campaign.
-   This associates the analysis job with it; it does **not** fill the input
-   selection fields automatically.
-4. The form has four **checkboxes**, not a mode dropdown: **--export**,
-   **--evaluate**, **--package**, **--predict**. Check exactly one for each job.
-   Only click **Start job** at the bottom of this `response_svm` form, not the
-   identically named button for another Tools command.
+1. Click **Campaigns**, open your campaign, then click its **SVM analysis** tab.
+2. Under **Saved local input source**, select the local campaign supplying the
+   original questions. The system obtains its indexed source data automatically.
+3. Under **Restrict to inputs assigned in**, select your hosted campaign.
+4. Under **Recorded Haiku condition**, choose the verdict condition to model.
+   A condition is listed only when this campaign has valid saved verdicts.
+5. Keep **Include matching answers from the local source campaign** checked
+   if the study should contain both local and hosted outputs. Uncheck it for
+   this campaign's answers alone.
 
-### 10.2. Export the small campaign's eligible text answers
+If there are no valid Haiku judgments or no indexed local source inputs, the
+page explains the missing prerequisite. Completing generation alone does not
+invent teacher labels.
 
-1. Check **--export**. Uncheck **--evaluate**, **--package** and **--predict**.
-2. Fill the following fields. These absolute paths are on the rig, not Windows.
-   The source-candidates file below belongs to the retained-input route 2a;
-   it is not a universal source catalog for arbitrary new route-2b inputs.
+### 10.2. Run and inspect the study
 
-   | Field | Value for this rig's retained-input demonstration |
-   | --- | --- |
-   | **--database** | `/mnt/stor/data/ura-work/runs/rig-web/console.db` |
-   | **--candidates** | `/mnt/stor/data/ura-work/runs/engineering/hosted-expansion-common-inputs-20260910/source-candidates.json.gz` |
-   | **--campaign** | Your Flash campaign ID from 10.1 |
-   | **--matched-campaign** | The same Flash campaign ID |
-   | **--judge-condition** | `anthropic:claude-haiku-4-5-20251001:bfa4fb6070288b6770631cb8` |
-   | **--out** | `/mnt/stor/data/ura-work/runs/ui-demos/my-flash-svm-export-01` |
+1. Optionally expand **Scientific analysis options**. The documented defaults
+   are split seed `0` and `1000` bootstrap samples.
+2. Click **Start classifier study** once. The job extracts saved input metadata,
+   exports eligible text answers, evaluates the three tasks and saves reusable
+   classifiers. You do not enter file paths or run intermediate jobs.
+3. Follow the Jobs page. **Stop job** stops the process. To return later, open
+   **Campaigns -> your campaign -> SVM analysis -> Saved analyses**.
+4. Open the finished job's artifacts. The top-level `result.json` links its
+   dataset, evaluation and fitted-model directories. Inspect the dataset
+   extraction dispositions and the evaluation's class support and group splits
+   before interpreting its metrics. Images and unlabeled answers are excluded
+   explicitly; usable truncated text remains identified.
+5. For a failed or interrupted study, read its error, then use **Resume
+   unfinished analysis** under **Saved analyses**. Completed stages are reused.
+   Changing the scientific selection requires a new study.
 
-3. Leave the dataset, fitted-model, study-result, study-predictions, feature,
-   seed, bootstrap and holdout fields blank for export. Use a **new** `--out`
-   directory name if the example name already exists; the command does not
-   overwrite an earlier export. Record that directory for the next step.
-4. Click **Start job**. Wait on its Jobs page until complete. In the job's
-   artifact list, open `result.json` and inspect `response_rows` and
-   `dispositions`; `dataset.jsonl` contains the actual eligible rows. Missing
-   answers, invalid/missing Haiku labels and images are not training examples.
-   The export can therefore contain fewer rows than campaign Results.
-5. If zero rows are exported, inspect those dispositions. Do not evaluate an
-   empty file. In particular, `no_source_metadata` means the supplied candidates
-   do not describe those inputs, not that the model produced no answer. Direct
-   route-2b inputs need their corresponding retained source-candidate file;
-   this Tools form does not create that file for arbitrary new corpora.
+A small demonstration may have insufficient class support. That is a reported
+limitation, not a reason to search seeds or generate extra answers silently.
+Inspect existing study results without clicking Start to avoid recomputation.
 
-To include existing local counterparts as a separate population, use
-**Add another value** beside **--campaign** and enter the Local campaign ID
-`d74685e6af8e4e199d46db201c557858`; keep **--matched-campaign** equal to your
-Flash campaign. This can include multiple historical local conditions, not one
-preferred answer per input. It is optional, not required for the small export.
+### 10.3. Advanced reuse
 
-### 10.3. Apply the already fitted classifiers
+The optional **Tools -> Advanced CLI tools and troubleshooting -> Analysis
+and native imports -> response_svm** form remains available for importing a
+previous dataset or applying a trusted fitted package. These are advanced
+reuse tasks, not required preparation for the workflow above. Never load an
+untrusted joblib file. Prediction margins are not safety probabilities, and
+classifier outputs do not replace campaign judging records.
 
-1. Return to **Tools -> Analysis and native imports -> response_svm**. Select
-   your campaign in **Save under campaign** again if necessary.
-2. Check only **--predict**; the other three mode checkboxes must be unchecked.
-3. Set **--dataset** to your export directory followed by `/dataset.jsonl`,
-   for example `/mnt/stor/data/ura-work/runs/ui-demos/my-flash-svm-export-01/dataset.jsonl`.
-4. Set **--models** to the existing trusted package:
-   `/mnt/stor/data/ura-work/runs/engineering/response-svm-persistence-20260913/fitted/models.joblib`.
-   Do not download an arbitrary joblib file; this format loads Python objects.
-5. Choose **--features -> response**. Set **--out** to a new directory, such as
-   `/mnt/stor/data/ura-work/runs/ui-demos/my-flash-svm-predict-01`.
-   Leave export and training fields blank. Click **Start job**.
-6. After completion, open `result.json` for the input/prediction counts, and
-   `predictions.json` for each task's decision, score or non-applicable status.
-   A score is an uncalibrated decision margin, not a safety probability.
-   These are derived classifier outputs, not new Haiku or human verdicts.
-
-The package was fitted on earlier retained study data. Running it on related
-or reused inputs demonstrates the UI and model reuse; it does not establish
-independent held-out accuracy. Do not report these few predictions as a new
-SVM evaluation result or pool them with campaign judging counts.
-
-### 10.4. Train/evaluate a larger study only when intended
-
-This is an alternative to prediction, not another mandatory step for the small
-campaign. To inspect completed findings without recomputation, click **Artifacts**
-and open the retained `response-svm-20260913-r-checkpoints/analysis` directory
-under `runs/engineering`; its `result.json` and `predictions.json` are the saved
-study reports. Do not click Start merely to read them.
-
-For a new sufficiently supported dataset:
-
-1. In the same Tools form, check only **--evaluate**. Supply its **--dataset**
-   file and a new **--out** directory.
-2. Set **--seed** to `0`, **--max-feature-characters** to `20000`, and
-   **--bootstrap** to `1000` for the documented protocol. The feature-character
-   allowance limits analysis text, not model generation tokens. Leave
-   **--holdout-model** and **--holdout-corpus** blank for the base study;
-   optional values request additional model/corpus holdouts.
-3. Select **Save under campaign**, click **Start job**, and follow its log.
-   On completion, inspect `result.json` for support, group splits, baselines,
-   precision/recall, macro-F1, average precision and intervals. Inspect
-   `predictions.json` for held-out predictions. Unsupported tasks remain
-   reported; do not search for a convenient seed to make them pass.
-4. Only if you need a reusable package from this new study, return to the form
-   and check only **--package**. Supply the same **--dataset**, the completed
-   **--study-result** (`result.json`), **--study-predictions** (`predictions.json`)
-   and another fresh **--out** directory. Click **Start job**. Its `models.joblib`
-   can then be used in 10.3. Do not repeat packaging for the existing package.
-
-Jobs and its artifacts are the current SVM results interface. There is no
-dedicated SVM tab inside the campaign and no automatic publication into Compare.
-[RESPONSE_SVM](RESPONSE_SVM.md) describes the statistical protocol and limitations.
+[RESPONSE_SVM](RESPONSE_SVM.md) documents the protocol and advanced CLI modes.

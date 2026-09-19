@@ -57,48 +57,45 @@ score this baseline but do not determine its predictions or ranking.
 
 ## CLI and UI flow
 
-In **Tools -> Analysis and native imports -> response_svm**, described as
-**Retained response classifiers**, check **--export** first. The four modes
-are separate checkboxes; check exactly one per job. **Save under campaign**
-groups the job but does not fill the input selection fields. Supply the campaign SQLite path, retained source
-candidate JSON/JSON.GZ, one or more campaign IDs, the hosted campaign defining
-the matched input population, and one exact Haiku condition. The fresh output
-directory receives `dataset.jsonl` and an extraction report. Original responses
-are read once per selected file; the command makes no recursive model-store
-scan and never reads provider credentials.
+Open **Campaigns -> your campaign -> SVM analysis**. Choose the saved local
+input source, matched input campaign and recorded Haiku condition. Optionally
+include local counterparts. **Start classifier study** automatically extracts
+input metadata, exports labeled static-text answers, evaluates the fixed
+three-task protocol and packages reusable classifiers. Its job is grouped
+under the campaign. Output locations and intermediate files are system-managed.
 
-Then check only **--evaluate**, select that dataset and a different fresh output
-directory. Seed, feature-character allowance, bootstrap draws, held-out model
-prefixes and held-out corpus IDs are configurable. Jobs retains the log and
-analysis artifacts. Export and evaluation are separate reproducible operations,
-not generation jobs.
+**Saved analyses** links previous work. **Resume unfinished analysis** reuses
+completed stages and retains failed attempts. It also handles an interruption
+between stage completion and controller publication. Changed scientific
+settings require a new study. The interface does not silently fill missing
+labels, refit completed work or treat insufficient class support as success.
 
-For exact clicks, field values and a small export/predict demonstration, see
-[SMALL_API_CAMPAIGN section 10](SMALL_API_CAMPAIGN.md#10-optional-response-svm-analysis).
-Small demonstration datasets are not sufficient for a new grouped training/test
-study. Use **--predict** with a trusted existing package when demonstrating reuse.
+The CLI equivalent is `python -m experiments.response_svm --study`, with
+`--database`, one or more `--campaign`, `--matched-campaign`,
+`--judge-condition` and `--out`. Use `--source-campaign` for already-indexed
+local attempts, including retained partial outputs. This reads selected saved
+files and checks record ownership without repeating corpus reconstruction or
+historical grid validation. Missing source metadata is reported explicitly.
+Advanced callers can supply explicit `--source-root` and `--run-id` selections,
+or an existing `--candidates` file. The same output directory and arguments
+resume that study; a different selection is rejected.
 
-The equivalent export and evaluation commands are:
+Raw export/evaluate/package/predict modes remain available under **Tools ->
+Advanced CLI tools and troubleshooting -> Analysis and native imports**.
+They support exceptional imports and trusted-package prediction, not required
+operator handoffs. Source files are read for selected data; no model-store
+scan or provider calls occur. UI-launched analysis caps numerical-library
+threads at two and records the analysis code checkout separately from Runner.
 
-```bash
-python -m experiments.response_svm --export --database /path/console.db \
-  --candidates /path/source-candidates.json.gz --campaign LOCAL_ID \
-  --campaign API_ID --matched-campaign API_ID --judge-condition EXACT_JUDGE \
-  --exclude-model ollama:mollysama/rwkv --out /path/svm-dataset
-python -m experiments.response_svm --evaluate \
-  --dataset /path/svm-dataset/dataset.jsonl --out /path/svm-analysis \
-  --seed 0 --bootstrap 1000
-```
+See [SMALL_API_CAMPAIGN section 10](SMALL_API_CAMPAIGN.md#10-optional-response-svm-analysis)
+for exact clicks. A few demonstration answers do not establish held-out
+accuracy, even when every preparation stage completes.
 
-The three classifiers completed a rig evaluation on 7,541 static-text records
-on 13 September 2026. Focused regressions and leakage mutation checks passed.
-An actual browser-launched export produced 4,682 hosted records in four seconds
-on an isolated console; its job completed, with no JavaScript errors or stuck
-busy state. This covers export, not a paid campaign's full Build flow. The
-general Build acceptance and Google collection are separate from this SVM
-export check; their current state is recorded in the campaign plans. Exact
-numerical results and split membership accompany each run;
-the thesis reports observed limitations instead of selecting a universal winner.
+The earlier rig study evaluated 7,541 static-text records on 13 September 2026.
+Its numerical results, predictions and split membership remain retained. An
+isolated browser-launched export also produced 4,682 hosted records without
+provider calls. The automatic workflow changes operator handoffs, not those
+historical results or their scientific limitations.
 
 ## Reusable fitted classifiers
 

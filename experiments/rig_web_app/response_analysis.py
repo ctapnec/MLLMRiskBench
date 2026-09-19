@@ -1,11 +1,10 @@
 """Scientific SVM choices, with no operator-managed export or file handoffs."""
 import html
 import json
-from pathlib import Path
 from uuid import uuid4
 
 from .builder_replays import argument
-from .builder_sources import source_runs, source_arguments
+from .builder_sources import source_runs
 from .ui import _page
 from .workspace_judge_settings import indexed_settings, judge_name
 

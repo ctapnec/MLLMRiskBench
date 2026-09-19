@@ -30,8 +30,6 @@ def checkpoint(path, value):
 
 def study(args):
     """One user-selected study; preserve completed stages when resuming."""
-    from experiments.hosted_retained_inputs import candidates_from_cells
-    from experiments.retained_local_sources import read_sources
     root=args.out.resolve()
     root.mkdir(parents=True,exist_ok=True)
     configuration={key:str(value) if isinstance(value,Path) else value
@@ -79,6 +77,8 @@ def study(args):
             rows,source_report=indexed_candidates(args.database,args.source_campaign)
             checkpoint(root/'source-metadata.json',source_report)
         else:
+            from experiments.hosted_retained_inputs import candidates_from_cells
+            from experiments.retained_local_sources import read_sources
             rows=candidates_from_cells(read_sources(args.source_root,args.run_id))
         checkpoint(candidates,rows)
     export=['--export','--database',str(args.database),'--candidates',str(candidates),

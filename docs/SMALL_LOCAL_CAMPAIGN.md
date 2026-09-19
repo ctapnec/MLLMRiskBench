@@ -173,12 +173,11 @@ update can retain the Runner checkout, so it need not invalidate existing probes
 
 ### 3.1. Prepare automatically
 
-1. On **Review execution**, check the model, input corpus, mode and bounds.
-2. Click **Prepare and review**.
-3. Stay on the progress page. Planning, reuse of installed models, the no-call
+1. **Compose & review** opens automatic preparation directly.
+2. Stay on the progress page. Planning, reuse of installed models, the no-call
    workload check and final preparation happen automatically. Do not open or
    launch the internal child jobs.
-4. When preparation finishes, the same page shows **Review prepared run**.
+3. When preparation finishes, the same page shows **Review prepared run**.
    Check the projected workload. Preparation has made no target or judge calls.
 
 You can leave this page. Return through **Campaigns -> your campaign name ->
@@ -205,7 +204,7 @@ receipt rows, and do not repeat a successful probe.
 A connection check establishes the observed transport, not benchmark performance.
 An expired or incompatible probe may need renewal, but an unrelated console-only
 update does not require rerunning it. Historical probes created before automatic
-completion can still be selected through **Run tools -> live_attestation -> Use a
+completion can still be selected through **Tools -> Advanced CLI tools and troubleshooting -> live_attestation -> Use a
 completed probe**; that is a compatibility path, not part of a new campaign.
 
 ## 5. Repeat for one image input
@@ -223,7 +222,7 @@ completed probe**; that is a compatibility path, not part of a new campaign.
 
 ### 5.2. Run the image probe
 
-1. Follow **3.1-3.2** with the image selection: **Prepare and review**, then
+1. Follow **3.1-3.2** with the image selection: **Compose & review**, then
    **Start probe** after checking the workload.
 2. Wait for **Probe and connection check complete**. Connection bookkeeping
    happens automatically. No tool form, filename or receipt row is required.
@@ -254,7 +253,7 @@ a measured benchmark result.
 1. Open **Campaigns -> your campaign name -> Configure in Build -> General ->
    Compose & review**.
 2. Check **measured**, Qwen, `xstest_full,vlsbench_release` and per-arm limit
-   `2`. Click **Prepare and review**.
+   `2`. Click **Compose & review**.
 3. Wait on the single progress page. The console reuses matching completed
    preparation and installed models. Any needed planning, no-call preflight and
    execution preparation happen automatically.
@@ -406,72 +405,42 @@ campaigns. [HUMAN_REVIEW_UI](HUMAN_REVIEW_UI.md) explains the study protocol.
 
 ## 10. Optional: response-SVM analysis
 
-These four demonstration answers are insufficient for meaningful SVM training
-and held-out evaluation. SVM work is separate from campaign generation and has
-no dedicated campaign tab. Use the **response_svm** form in Tools. It makes no
-target or judge calls and does not classify images or replace human assessment.
+These four demonstration answers are insufficient for a meaningful new grouped
+training/test study. Classifier analysis is optional, makes no target or judge
+calls, and does not replace human assessment.
 
-### 10.1. Inspect the completed SVM work without running it again
+### 10.1. Inspect existing results
 
-1. Click **Artifacts** in the top navigation. Browse the results root's
-   `engineering/response-svm-20260913-r-checkpoints/analysis` directory.
-2. Open `result.json` for the completed grouped study and `predictions.json`
-   for its held-out predictions. The three tasks are harmful compliance,
-   over-refusal and judge disagreement. They predict recorded teacher labels,
-   not independently established human truth.
-3. The existing fitted package is at
-   `/mnt/stor/data/ura-work/runs/engineering/response-svm-persistence-20260913/fitted/models.joblib`.
-   Do not rerun training or packaging just to inspect these artifacts.
+1. Click **Campaigns -> your campaign -> SVM analysis**.
+2. Under **Saved analyses**, open an existing study if present. Its Jobs page
+   links the dataset, evaluation and fitted classifiers.
+3. Historical thesis analysis remains available under **Artifacts ->
+   engineering/response-svm-20260913-r-checkpoints/analysis**. Open
+   `result.json` and `predictions.json`; do not start training just to read them.
 
-### 10.2. Apply that package through the UI
+### 10.2. Start a new study when scientifically appropriate
 
-1. Click **Tools -> Analysis and native imports -> response_svm**. Its
-   description starts **Retained response classifiers**. Direct link:
-   <http://localhost:8642/commands?cmd=response_svm>.
-2. In this form's **Save under campaign**, select your local campaign. This
-   groups the analysis job; it does not select its input dataset for you.
-3. Check **--predict** only. Uncheck **--export**, **--evaluate** and **--package**.
-4. Supply **--dataset**, a prepared static-text `dataset.jsonl`, and set
-   **--models** to the trusted package path in 10.1. Do not load an arbitrary
-   downloaded joblib file. Choose **--features -> response**.
-5. Set **--out** to a new directory, for example
-   `/mnt/stor/data/ura-work/runs/ui-demos/my-local-svm-predict-01`. Leave the
-   export/training fields blank. Click **Start job** inside this form.
-6. Follow the job until complete, then open `result.json` for counts and
-   `predictions.json` for decisions, uncalibrated scores and non-applicable
-   cases. Scores are not safety probabilities. These derived outputs do not
-   replace campaign judging records.
+1. On **SVM analysis**, choose this local campaign under **Saved local input
+   source**.
+2. Choose the hosted counterpart under **Restrict to inputs assigned in** when
+   studying matched inputs. Choose this campaign for its own input population.
+3. Choose the **Recorded Haiku condition**. The local guide alone does not
+   supply Haiku labels; the page explains this prerequisite when none exist.
+4. Review **Include matching answers from the local source campaign** and,
+   optionally, **Scientific analysis options**.
+5. Click **Start classifier study**. Source metadata extraction, dataset export,
+   grouped evaluation and model packaging run together. No campaign IDs,
+   database paths or intermediate output paths need entering.
+6. Inspect extraction dispositions, class support and held-out metrics on the
+   resulting Jobs page. Missing labels and unsupported modalities are not
+   invented. For interruption, reopen **Saved analyses** and click **Resume
+   unfinished analysis**; completed stages are reused.
 
-For a workflow-only demonstration, the already exported study dataset is
-`/mnt/stor/data/ura-work/runs/engineering/response-svm-20260913-r-checkpoints/dataset/dataset.jsonl`.
-Using it demonstrates reuse, not evaluation of the four new local answers and
-not independent held-out accuracy. Name the job accordingly.
-
-### 10.3. Use your new local outputs or fit a new study
-
-The current **--export** mode needs a matching source-candidate file and valid
-Haiku judgments on the selected outputs. Completing the local guide alone
-does not supply those Haiku labels. If you completed the matched hosted
-continuation in section 8, use **Tools -> response_svm -> --export**, set
-**--campaign** to your local demonstration ID, and **--matched-campaign** to
-its hosted counterpart's ID. Copy IDs from their `/campaigns/ID` addresses.
-Use **Add another value** beside **--campaign** if including both populations.
-Do not use the old thesis Local campaign ID as a substitute for your new one.
-
-[SMALL_API_CAMPAIGN 10.2](SMALL_API_CAMPAIGN.md#102-export-the-small-campaigns-eligible-text-answers)
-lists the database, candidates, judge-condition and output fields, including
-the limits of the historical candidates file. A newly selected corpus may need
-its own candidates; there is no automatic arbitrary-corpus exporter in this
-form. Inspect the export's `dispositions` before predicting or fitting.
-
-For a sufficiently supported new study, check only **--evaluate**, supply
-**--dataset**, a fresh **--out**, **--seed -> 0**, **--max-feature-characters ->
-20000** and **--bootstrap -> 1000**, then click **Start job**. Read its support,
-group-split, baseline and held-out metrics in `result.json`. Optional
-**--package** takes that same dataset plus **--study-result** and
-**--study-predictions**, producing a new reusable `models.joblib`; it is not
-required for an ordinary evaluation. See [RESPONSE_SVM](RESPONSE_SVM.md) for
-the scientific protocol, not additional mandatory campaign stages.
+The three tasks are harmful compliance, over-refusal and local/Haiku
+disagreement. They predict recorded teacher labels, not independent human
+truth. A small sample can be insufficient for one or all tasks. For advanced
+prediction from a trusted existing package, see
+[RESPONSE_SVM](RESPONSE_SVM.md); that is not another required campaign stage.
 
 ## If a step fails or is interrupted
 
@@ -491,9 +460,8 @@ is not a recovery procedure for every possible failure.
 2. Save and compose a fresh review. After an earlier execution has ended,
    automatic setup assigns the next output location without overwriting it.
    Review or recovery links on an old job intentionally keep its old location.
-3. Complete the probe through section 3, then choose that new completed probe
-   under **Run tools -> live_attestation -> Completed probe** and click
-   **Prepare transport check**. The filename is automatic too.
+3. Complete the probe through section 3. Its connection check is saved
+   automatically; do not run a separate transport-check job.
 4. Return to the measured configuration in section 6. Automatic setup selects
    the newer check and retains any other still-valid modality check. Nothing
    needs to be copied or cleared.

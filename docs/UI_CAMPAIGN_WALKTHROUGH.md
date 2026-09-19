@@ -77,9 +77,9 @@ a pooled safety ranking. Inspection and exports make no model calls.
    supplies software/source records, an output directory and execution scope.
    Completed transport checks are selected from this campaign's saved jobs (or
    unattached jobs for a single run). No paths, hashes or receipt rows need entry.
-   Under **Tools -> live_attestation**, select a **Completed probe** by name and
-   click **Prepare transport check**. Its technical fields and campaign are
-   derived automatically; an existing check opens without another job.
+   New probes save their connection check automatically. For older probes only,
+   **Tools -> Advanced CLI tools and troubleshooting -> live_attestation** can
+   select a completed probe by name without repeating generation.
    **Advanced overrides** keeps explicit fields available for exceptional work.
    A fresh review uses the configured Runner records. Previously reviewed jobs,
    plans and recovery links keep their original settings. A UI-only deployment

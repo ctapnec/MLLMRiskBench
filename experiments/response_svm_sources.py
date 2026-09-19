@@ -23,11 +23,23 @@ def indexed_candidates(database, campaign):
     candidates={};dispositions=Counter();files_read=0
     for path,selected in files.items():
         wanted={number for number,_ in selected};records={};last=max(wanted)
+        moved_checkpoint=not path.exists() and path.name.endswith('.responses.checkpoint.jsonl')
+        if moved_checkpoint:
+            path=path.with_name(path.name.replace('.responses.checkpoint.jsonl','.responses.jsonl'))
+            # Final files can have a different order. Match durable identity,
+            # never reuse a checkpoint line number in its finalized file.
+            by_identity=defaultdict(list)
+            for number,row in selected:by_identity[row['response_id']].append(number)
         with path.open(encoding='utf-8') as stream:
             files_read+=1
             for number,line in enumerate(stream,1):
-                if number in wanted:records[number]=json.loads(line)
-                if number>=last:break
+                if moved_checkpoint:
+                    record=json.loads(line)
+                    identity=str(record.get('run_id'))+':'+str(record.get('attempt_id'))
+                    for original_number in by_identity.get(identity,[]):records[original_number]=record
+                else:
+                    if number in wanted:records[number]=json.loads(line)
+                    if number>=last:break
         attempts={};metadata={}
         if path.name.endswith('.responses.jsonl'):
             prefix=path.name.removesuffix('.responses.jsonl')

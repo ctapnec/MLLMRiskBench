@@ -3,8 +3,9 @@
 Status: ordinary preparation flows deployed on 19 September 2026. Direct runs,
 matched hosted collection, local/Haiku judging and personal review now advance
 without manual internal job handoffs. The coverage table below also records
-the wider design scope; specialized attacker setup and the advanced SVM tool
-have not yet been converted to this simplified workflow.
+the wider design scope. SVM studies now combine extraction, export, evaluation
+and supported classifier packaging. Attack capture derives installed runtime
+settings and output locations, then attaches completed material automatically.
 
 Operators choose experimental inputs, models, sampling, evaluation and resource
 limits. They must not coordinate internal planning, acquisition, conversion,
@@ -29,9 +30,13 @@ in the reviewed execution workload, not an undisclosed preparation step.
 | Personal review | Saved outputs, rubric, optional sample | Sample preparation and opening the evaluation form |
 | Independent study | Actual participant and study arrangements | Artifact creation and assignment bookkeeping, not invented ethical or scientific decisions |
 | SVM analysis | Cohort, target task, feature set and scientific analysis settings | Dataset export, file handoffs, evaluation/package/prediction stages appropriate to the chosen task |
+| Prepared attacks | Corpus, attack method, source model or imported attack material | Installed runtime identity/location, output allocation, completed capture attachment and saved-capture selection |
 | Recovery | Which interrupted operation to continue; any changed limit | Restore successful checkpoints and run only unfinished internal work |
 
 Advanced CLI forms remain available for debugging and exceptional imports.
+They are collapsed together under Tools, not presented as the ordinary flow.
+Compose & review begins no-call preparation directly, without a second Prepare
+confirmation. Real model calls still require the resulting execution start.
 Normal flows use named saved objects and system-derived paths. They do not ask
 for database filenames, receipt hashes, campaign IDs or intermediate output
 directories.
