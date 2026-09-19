@@ -522,7 +522,7 @@ def test_reviewed_builder_stage_creates_only_a_plan_job_before_acquisition(
         "_model_acquisition_next": "preflight",
     }
 
-    monkeypatch.setattr(app, "_validate_builder", lambda _params: {})
+    monkeypatch.setattr(app, "_validate_builder", lambda _params, **_kw: {})
 
     def fake_start(command, values, *, builder_params=None, **kwargs):
         captured.update(
@@ -575,7 +575,7 @@ def test_measured_acquisition_plan_rechecks_exact_preflight_caps_before_job(
         "out": "runs/measured",
         "_model_acquisition_next": "run",
     }
-    monkeypatch.setattr(app, "_validate_builder", lambda _params: {})
+    monkeypatch.setattr(app, "_validate_builder", lambda _params, **_kw: {})
     monkeypatch.setattr(app, "_ceilings_card", lambda _params: ("", False))
     monkeypatch.setattr(
         app,
@@ -612,7 +612,7 @@ def test_builder_hub_preflight_starts_plan_not_unreceipted_preflight(
     direct_starts: list[object] = []
     monkeypatch.setattr(app, "_builder_params", lambda _data: dict(params))
     monkeypatch.setattr(app, "_runtime_builder_params", lambda value: dict(value))
-    monkeypatch.setattr(app, "_validate_builder", lambda _params: {})
+    monkeypatch.setattr(app, "_validate_builder", lambda _params, **_kw: {})
     monkeypatch.setattr(
         app,
         "_compose_from_builder",
@@ -711,7 +711,7 @@ def test_reviewed_plan_download_and_receipted_run_are_one_shot(
     app.jobs[plan_job.job_id] = plan_job
     workflow["plan_job_id"] = plan_job.job_id
     app._model_acquisition_workflows[plan_job.job_id] = workflow
-    monkeypatch.setattr(app, "_validate_builder", lambda _params: {})
+    monkeypatch.setattr(app, "_validate_builder", lambda _params, **_kw: {})
     monkeypatch.setattr(
         app,
         "_compose_from_builder",

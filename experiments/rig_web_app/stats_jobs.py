@@ -8,6 +8,7 @@ from urllib.parse import urlencode
 
 from .ui import _page
 from .workspace_comparison import coverage_chart
+from .workspace_charts import EXPORT_SCRIPT
 
 
 def choices(app):
@@ -110,5 +111,5 @@ def response(app,query):
             body+='<tr>'+''.join('<td>'+esc(str(v))+'</td>' for v in cells)+'</tr>'
         body+='</tbody></table></div>'
         if not reports:body+='<p>No indexed outcomes resolve to these jobs. Use their campaign reports; no results have been inferred from job names.</p>'
-        body+='<div class="action-row"><a href="/stats?'+esc(urlencode(dict(query,download='csv')),quote=True)+'">Export these job statistics (CSV)</a></div></section>'
+        body+='<div id="campaign-exports" class="action-row"><a data-campaign-export download="job-comparison.csv" href="/stats?'+esc(urlencode(dict(query,download='csv')),quote=True)+'">Export these job statistics (CSV)</a></div><p id="campaign-export-status" role="status"></p></section>'+EXPORT_SCRIPT
     return 200,'text/html; charset=utf-8',_page('Compare jobs',body,active='Stats')
