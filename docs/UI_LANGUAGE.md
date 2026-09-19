@@ -5,6 +5,7 @@ Language initially offers only **English (flag + EN)**. It does not reload the
 page, discard unsaved fields, change a campaign, or contact any provider. The
 page declares English for browsers and assistive technology. Personal review
 and independent human-review pages use the same header.
+The flag is an inline SVG, so it requires neither an emoji font nor a download.
 
 ## Where interface text belongs
 

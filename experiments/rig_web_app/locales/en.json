@@ -2600,7 +2600,7 @@
   "job_presentation.evaluate_saved_answers": "evaluate saved answers",
   "job_presentation.svm_analysis": "SVM analysis",
   "language.english_only": "English is the only language currently available",
-  "language.english_short": "🇬🇧 EN",
+  "language.english_short": "EN",
   "language.label": "Language",
   "lifecycle.acquire_sealed_models": "Acquire sealed models",
   "lifecycle.acquisition_failed": "Acquisition failed",

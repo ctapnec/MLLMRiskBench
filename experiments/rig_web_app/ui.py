@@ -96,7 +96,10 @@ nav a.active { background:var(--soft); color:var(--accent); }
 .theme-control, .language-control { display:flex; align-items:center; gap:.5rem;
   padding:.25rem 0; color:var(--muted); font-size:.82rem; font-weight:600; }
 .theme-control select { min-width:8rem; max-width:100%; font-size:.82rem; }
-.language-control select { min-width:5.5rem; max-width:100%; font-size:.82rem; }
+.language-choice { position:relative; display:inline-flex; }
+.language-choice svg { position:absolute; left:.65rem; top:50%; transform:translateY(-50%);
+  width:1.3rem; height:.9rem; pointer-events:none; border:1px solid var(--line); border-radius:2px; }
+.language-control select { min-width:5.5rem; max-width:100%; font-size:.82rem; padding-left:2.3rem; }
 .review-theme-bar { max-width:960px; margin:.75rem auto 0; padding:0 1.2rem;
   display:flex; justify-content:flex-end; }
 h1 { font-size:1.3rem; margin:.4rem 0 1rem; display:flex; gap:.55rem;
@@ -1429,10 +1432,17 @@ document.documentElement.setAttribute('data-theme',value);
 })();</script>""".replace("THEME_IDS", json.dumps([key for key, _ in _THEMES]))
 _LANGUAGE_PICKER = _ui_template(
     "<label class='language-control' for='language-picker'>[[text:language.label]] "
+    "<span class='language-choice'>"
+    "<svg data-language-flag='gb' aria-hidden='true' viewBox='0 0 60 30' xmlns='http://www.w3.org/2000/svg'>"
+    "<path fill='#012169' d='M0 0h60v30H0z'/>"
+    "<path stroke='#fff' stroke-width='6' d='m0 0 60 30M60 0 0 30'/>"
+    "<path stroke='#c8102e' stroke-width='2' d='m0 0 60 30M60 0 0 30'/>"
+    "<path stroke='#fff' stroke-width='10' d='M30 0v30M0 15h60'/>"
+    "<path stroke='#c8102e' stroke-width='6' d='M30 0v30M0 15h60'/></svg>"
     "<select id='language-picker' aria-label='[[attr:language.label]]' "
     "title='[[attr:language.english_only]]'>"
     "<option value='en' selected lang='en'>[[text:language.english_short]]</option>"
-    "</select></label>"
+    "</select></span></label>"
 )
 _THEME_SCRIPT = """<script>(function(){
 var language=document.getElementById('language-picker');

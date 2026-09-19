@@ -81,7 +81,10 @@ def test_language_is_next_to_theme_on_navigation_without_requests_or_data_change
     try:
         page.goto("http://ui.test/first", wait_until="networkidle")
         choice = page.get_by_role("combobox", name="Language", exact=True)
-        assert choice.locator("option").all_text_contents() == ["\U0001f1ec\U0001f1e7 EN"]
+        assert choice.locator("option").all_text_contents() == ["EN"]
+        # Inline SVG also works on Windows without a country-flag emoji font.
+        flag = page.locator('.language-choice [data-language-flag="gb"]')
+        assert flag.is_visible() and flag.get_attribute("aria-hidden") == "true"
         assert choice.input_value() == "en"
         assert page.locator("html").get_attribute("lang") == "en"
         assert page.locator(".display-preferences #theme-picker").count() == 1
