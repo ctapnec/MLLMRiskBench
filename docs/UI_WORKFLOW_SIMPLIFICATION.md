@@ -91,6 +91,14 @@ by another assessment cannot duplicate completed paid work. Reuse is recorded
 as a reference, never a fictitious call or a new zero-cost charge. The original
 configuration bytes are preserved when copied into an assessment directory.
 
+Direct hosted runs publish answers and judgments to the same campaign index as
+local runs. Older direct-hosted jobs are reconciled from their own retained
+artifacts at completion or console startup, without generation. Publication
+failure is separate from model execution failure and is visible on the job.
+Reported HTTP attempts and token usage remain available even when monetary
+charges were not retained; unknown charges are not displayed as zero. Completed
+publication is cached, not reconstructed on every page request.
+
 **Stats -> SVM results** presents retained classifier studies, including the
 historical shared local/hosted study. Held-out metrics, baselines, class/group
 counts and uncertainty remain separate by study, task and split. Reading or
@@ -113,3 +121,26 @@ resumed its interrupted stage and reopened completed preparation without new
 jobs. No target or judge call was made, and the user's campaign was unchanged.
 Production acceptance checked both campaign types, standalone setup, shared
 navigation and the absence of the former matched-preparation buttons.
+
+## End-to-end acceptance, 19 September 2026
+
+The subsequent operator audit completed direct Qwen collection, direct Haiku
+collection, a hosted comparison on existing local inputs, local assessment and
+Haiku assessment through the browser. Each path has a measured answer and both
+evaluator conditions in its isolated campaign index. Completed target answers
+were reused during publication and judging recovery. The user's original
+campaigns and drafts were not modified by these acceptance runs.
+
+The audit passed 452 affected regressions and 28 focused follow-up tests,
+including mixed-provider publication, plus twelve detecting fix reversals.
+Desktop/mobile checks covered 60 real-data pages. This includes shared
+navigation, busy handling, job stop/recovery, human-review forms, comparisons,
+SVM reporting, exports and layout. Synthetic human-review labels belong only
+to test fixtures, never to thesis evidence.
+
+The negative small-source scenario correctly prevented paid collection when
+one cluster could not supply both diagnostics and measured inputs. Its message
+now tells the operator which selection to change. No medium/high-severity
+finding remains open in these tested scenarios. This is bounded acceptance,
+not a claim that all combinations of models, datasets and remote failures have
+been exhaustively tested. Frameworks and model runtimes were not reinstalled.
