@@ -74,11 +74,14 @@ Saving does not start preparation or model calls. Continue with section 3.
 
 ## 3. Prepare automatically
 
-1. In **Build -> General**, click **Compose & review** once.
-2. Stay on the progress page. The system plans the workload, reuses installed
+1. In **Build -> General -> Campaign workflow**, keep **Installed corpora and
+   attack frameworks** selected. Keep local assessment checked; leave Haiku
+   unchecked for this fully local example. No API collection ceiling is needed.
+2. Click **Review campaign** once.
+3. Stay on the progress page. The system plans the workload, reuses installed
    models, checks the selection without generation and prepares any required
    connection checks. Do not open or launch its internal jobs.
-3. Wait until the page presents the execution review. No target or judge call
+4. Wait until the page presents the execution review. No target or judge call
    has been made by this preparation.
 
 To return later, open **Campaigns -> your campaign name -> Configure in Build ->
@@ -87,8 +90,8 @@ start**. Refreshing this page does not launch a duplicate.
 
 ## 4. Review the complete workload
 
-If all necessary checks already exist, the page is **Review prepared run**.
-Otherwise it is **Review experiment and required checks**.
+The page is **Review campaign**, with required checks and selected assessment
+shown together.
 
 Check Qwen, both selected arms, per-arm limit 2 and the measured workload.
 Call ceilings are calculated from the actual projection. A positive technical
@@ -101,12 +104,12 @@ the campaign into probe mode, copy receipts or restore settings afterward.
 
 ## 5. Start once
 
-1. Click **Start run**, or **Start experiment including connection checks**
-   when that is the button shown.
+1. Click **Start campaign**.
 2. Follow the single progress page. Required checks run first, their records
    are saved automatically, and then the original measured experiment starts.
-3. Open the measured job from the provided link and follow it to completion.
-   Do not start another copy while it is active.
+3. Stay on campaign progress while collection and any pending selected local
+   assessment finish. **Technical jobs** exposes details without requiring
+   operator handoffs. Do not start another copy while work is active.
 4. Continue to section 7 to inspect saved answers and verdicts.
 
 A failed connection check stops progression before the measured run; its
@@ -121,9 +124,9 @@ your named demonstration, not the historical **Local campaign**.
 Ordinary execution does not require **Run tools**.
 
 **Prepared and active work** in Build General or campaign Overview reopens the
-current operation. **Stop preparation** prevents later internal stages; an
-active execution has **Stop job** on its job page. If preparation fails, inspect
-the reported cause and use **Continue preparation**. Completed stages are
+current operation. **Stop campaign** stops active work and prevents later
+stages. If it is interrupted, inspect the cause and use **Resume campaign**.
+Completed stages are
 reused. A failed real diagnostic has its own retained job and recovery action;
 do not repeatedly start it as if it were a no-call preparation.
 

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from test_operator_operations import app, child  # noqa: F401
+from test_rig_web_busy_browser import browser  # noqa: F401
 from experiments.rig_web_app import campaign_flow as flow
 
 
@@ -154,3 +155,40 @@ def test_direct_resume_keeps_original_acquisition_and_output_settings(app,monkey
     assert selection['resume_job']=='failed' and 'execution_job' not in selection
     assert selection['params']==before and selection['jobs']==['original-acquisition']
     assert operation['step']==1
+
+
+@pytest.mark.parametrize('width',[1440,390])
+def test_shared_builder_controls_hide_other_input_route_and_keep_spinners(app,browser,width):
+    from urllib.parse import urlsplit, parse_qsl
+    owner=app.db.create_workspace('Same workflow','mixed')
+    app.db.save_workspace_definition(owner,dict(campaign_id=owner,work_kind='campaign',campaign_flow='on',
+        campaign_inputs='fresh',campaign_local='off',campaign_haiku='off',mode='measured'))
+    page=browser.new_page(viewport={'width':width,'height':1000})
+    errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
+    def route(request):
+        url=urlsplit(request.request.url)
+        status,mime,body=app.handle(request.request.method,url.path+('?'+url.query if url.query else ''),
+            dict(parse_qsl(request.request.post_data or '',keep_blank_values=True)))
+        if status==303:request.fulfill(status=status,headers={'Location':mime},body=body)
+        else:request.fulfill(status=status,content_type=mime,body=body)
+    page.route('http://ui.test/**',route)
+    try:
+        page.goto('http://ui.test/build?campaign_id='+owner)
+        assert page.locator('body > nav').is_visible()
+        page.get_by_role('tab',name='General',exact=True).click()
+        page.get_by_role('button',name='Review campaign',exact=True).filter(visible=True).wait_for()
+        assert not page.locator('[data-saved-inputs]').is_visible()
+        assert not page.locator('[name=campaign_local]').is_checked()
+        page.locator('[name=campaign_inputs]').select_option('saved')
+        assert page.locator('[data-saved-inputs]').is_visible()
+        assert not page.get_by_role('button',name='Prepare comparison and review',exact=True).count()
+        page.locator('[name=campaign_haiku]').check()
+        assert page.locator('[name=campaign_judge_cost]').is_visible()
+        page.locator('[name=campaign_haiku]').uncheck()
+        assert page.locator('[name=campaign_judge_cost]').is_disabled()
+        page.locator('[name=campaign_inputs]').select_option('fresh')
+        assert page.locator('[name=retained_source_campaign]').is_disabled()
+        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
+        assert not page.evaluate('window.uraBusy.isBusy()')
+        assert not errors
+    finally:page.close()

@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import runpy
 import sqlite3
+import subprocess
 import sys
 import time
 
@@ -39,6 +40,7 @@ def reserve(path, policy, *, provider, model, amount, input_tokens, output_token
 
 @contextmanager
 def spending(policy_path):
+    from ura.targets import api
     from ura.targets.api import build_api_target, provider_attempt_admission
     from experiments.hosted_request_tokens import cached_count_request
     policy_path = Path(policy_path).resolve(strict=True)
@@ -72,8 +74,42 @@ def spending(policy_path):
         reserve(policy_path.parent/'spending.sqlite', policy, provider=provider, model=key[1], amount=amount,
                 input_tokens=count['input_tokens'], output_tokens=allowance)
 
-    with provider_attempt_admission(admit):
+    original = api._call_with_retry
+    def budgeted(call, request, *, provider, max_retries):
+        # Bridge callbacks may run in another thread. Enter the existing
+        # per-attempt hook in that thread rather than relying on ContextVar
+        # propagation. Preserve any pre-existing admission callback as well.
+        prior = api._PROVIDER_ATTEMPT_ADMISSION.get()
+        def both(name, body, number):
+            if prior is not None and prior is not admit:
+                prior(name, body, number)
+            admit(name, body, number)
+        with provider_attempt_admission(both, attempts_used=api._PROVIDER_ATTEMPTS_USED.get()):
+            return original(call, request, provider=provider, max_retries=max_retries)
+    api._call_with_retry = budgeted
+    try:
+        with provider_attempt_admission(admit):
+            yield
+    finally:
+        api._call_with_retry = original
+
+
+@contextmanager
+def recycled_runner(policy, root):
+    """Keep the allowance around the pinned Runner's existing GPU recycling."""
+    original = subprocess.run
+    def run(command, *args, **kwargs):
+        if (isinstance(command,(list,tuple)) and len(command)>=2
+                and command[0]==sys.executable
+                and command[1]==str(root/'experiments'/'run_matrix.py')):
+            command = [sys.executable,str(Path(__file__).resolve()),'--policy',str(policy),
+                       '--runner-root',str(root),'--',*command[2:]]
+        return original(command,*args,**kwargs)
+    subprocess.run = run
+    try:
         yield
+    finally:
+        subprocess.run = original
 
 
 def main(argv=None):
@@ -90,7 +126,7 @@ def main(argv=None):
     if raw[:1] == ['--']:
         raw = raw[1:]
     sys.argv = ['experiments.run_matrix', *raw]
-    with spending(args.policy):
+    with spending(args.policy), recycled_runner(args.policy, root):
         runpy.run_module('experiments.run_matrix', run_name='__main__')
 
 

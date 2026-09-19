@@ -29,6 +29,8 @@ def microusd(value):
 def settings(app, params):
     """Validate operator choices before starting even a preparation job."""
     params = dict(params)
+    if params.get('campaign_local') == 'on' and not params.get('judge_model') and params.get('judges','') in {'','rules,llm'}:
+        params['judges'] = 'rules,guardrail'
     if params.get('campaign_inputs', 'fresh') not in {'fresh', 'saved'}:
         raise ValueError('Choose installed corpora or saved local inputs')
     if params.get('mode') != 'measured':
@@ -241,6 +243,7 @@ def require_complete(job, label):
 def launch_job(app, operation, key, command, values):
     job_id = app._job_id_factory()
     operation[key] = job_id
+    operation.setdefault('launch_values', {})[key] = dict(values)
     app._save_operation(operation)
     return app.start_job(command, values, campaign_id=operation['params']['campaign_id'], reserved_job_id=job_id)
 
@@ -316,6 +319,8 @@ def retry(app, operation):
             child['resume_job'] = job_id
             child.pop('execution_job',None)
             app._save_operation(child)
+        # A lost no-call preparation can restart at the same deterministic
+        # output. Actual assessment execution always resumes that output.
         operation.pop(key, None)
     operation.update(status='preparing', error='')
     app._save_operation(operation)

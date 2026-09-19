@@ -46,3 +46,33 @@ def test_context_checks_request_before_every_physical_attempt(tmp_path,monkeypat
         with pytest.raises(ValueError,match='outside'):
             callback('anthropic',{'model':'other','max_tokens':1},1)
     assert api._PROVIDER_ATTEMPT_ADMISSION.get() is None
+
+
+def test_bridge_thread_cannot_bypass_spending_scope(tmp_path,monkeypatch):
+    from ura.targets import api
+    from experiments import hosted_request_tokens
+    path=tmp_path/'policy.json'
+    path.write_text(json.dumps(dict(max_microusd=60,routes=[dict(provider='anthropic',model='test',spec='anthropic:test',config={},input_price=1,output_price=5)])))
+    monkeypatch.setattr(api,'build_api_target',lambda *a,**kw:object())
+    monkeypatch.setattr(hosted_request_tokens,'cached_count_request',lambda *a,**kw:{'input_tokens':10})
+    requests=[]
+    original=api._call_with_retry
+    def call():
+        return api._call_with_retry(lambda **kw:requests.append(kw),{'model':'test','max_tokens':10},provider='anthropic',max_retries=0)
+    with spending(path), ThreadPoolExecutor(max_workers=1) as pool:
+        pool.submit(call).result()
+        with pytest.raises(ValueError,match='ceiling reached'):pool.submit(call).result()
+    assert len(requests)==1 and api._call_with_retry is original
+
+
+def test_gpu_recycling_keeps_policy_and_other_subprocesses_unchanged(tmp_path,monkeypatch):
+    import subprocess,sys
+    from experiments.campaign_spending import recycled_runner
+    calls=[]
+    monkeypatch.setattr(subprocess,'run',lambda command,**kwargs:calls.append((command,kwargs)))
+    root=tmp_path;policy=tmp_path/'policy.json'
+    with recycled_runner(policy,root):
+        subprocess.run([sys.executable,str(root/'experiments'/'run_matrix.py'),'--local','vllm:test'],env={'kept':'yes'})
+        subprocess.run(['git','status'])
+    assert calls[0][0][-2:]==['--local','vllm:test'] and '--policy' in calls[0][0]
+    assert calls[0][1]=={'env':{'kept':'yes'}} and calls[1][0]==['git','status']

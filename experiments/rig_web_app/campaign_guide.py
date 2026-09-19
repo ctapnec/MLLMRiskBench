@@ -46,7 +46,8 @@ def _guidance(app, params):
     campaign = '/campaigns/' + quote(owner, safe='') if owner else base
     link = lambda tab, target='': base + '#' + (target or 'build-' + tab)
     tool = lambda command: '/commands?cmd=' + command + ('&campaign_id=' + owner if owner else '')
-    matched = bool(params.get('retained_source_campaign'))
+    matched = params.get('campaign_inputs') == 'saved' or (
+        not params.get('campaign_flow') and bool(params.get('retained_source_campaign')))
     local = bool(params.get('local'))
     hosted = bool(params.get('api'))
     route = 'matched' if matched else 'mixed' if local and hosted else 'local' if local else 'hosted' if hosted else 'choose'
@@ -203,6 +204,33 @@ def _guidance(app, params):
          [('Inspect campaign jobs', '/jobs?campaign_id=' + owner if owner else '/jobs'),
           ('Inspect campaign activity', campaign + '?section=activity' if owner else link('general'))])
     ]
+    if params.get('work_kind') == 'campaign' or owner:
+        replacements = {
+            'Prepare': ('Review the complete campaign',
+                'In General, choose Campaign workflow inputs and assessment, then click Review campaign. '
+                'The same action handles installed corpora/frameworks and saved local inputs. Preparation runs '
+                'automatically without target or judge generation. Token counting may contact the selected provider. '
+                'Review required diagnostics, measured requests, output allowances and collection/Haiku spending limits. '
+                'Keep Admission on Automatic; no receipt rows or preparation jobs need coordinating.',
+                [('Open campaign choices',link('general','campaign-workflow')),('Review the campaign',link('general','pipeline-review'))]),
+            'Run': ('Start once and follow campaign progress',
+                'Click Start campaign on the completed review. Required checks, collection and selected saved-answer '
+                'assessment proceed on one progress page. Stop campaign prevents later stages and stops active work. '
+                'Resume campaign retains completed answers and judgments. Prepared and active work reopens the page. '
+                'Technical jobs are for inspection, not required handoffs. The Guide itself never starts work.',
+                [('Open prepared and active work',link('general','pipeline-review')),('Open campaign',campaign)]),
+            'Judge': ('Choose assessment before collection',
+                'Choose local assessment and optional independent Haiku assessment in General -> Campaign workflow. '
+                'They run after collection without another preparation/start action. Haiku has a separate spending '
+                'ceiling and evaluates each model answer independently; images use their saved text proxy. Existing '
+                'valid verdicts are reused. Missing outputs, exclusions and invalid verdicts remain visible. '
+                'Evaluate saved answers remains available for older campaigns or a deliberately changed assessment.',
+                [('Choose automatic assessment',link('general','campaign-workflow')),
+                 ('Inspect saved verdicts',campaign+'?section=judging'),
+                 ('Assess existing saved answers','/assessment?campaign_id='+owner if owner else link('general'))]),
+        }
+        steps = [(short,*replacements[short]) if short in replacements else (short,title,text,links)
+                 for short,title,text,links in steps]
     positions = {step[0]: index for index, step in enumerate(steps)}
     stage = 'Choose a route' if not (local or hosted) else 'Inputs' if not (params.get('corpora') or matched) else 'Settings'
     notice = 'Suggested next step from your saved settings.'
@@ -225,8 +253,10 @@ def _guidance(app, params):
         notice = 'The latest console job completed. Check what that job covered; this does not mean the whole campaign is finished.'
     elif matched:
         stage = 'Prepare'
-    operations = sorted((row for row in getattr(app, '_operations', {}).values()
-        if row['params'].get('campaign_id') == owner and row['status'] in {'preparing', 'ready', 'failed', 'stopped'}),
+    all_operations = getattr(app, '_operations', {})
+    operations = sorted((row for row in all_operations.values()
+        if not row.get('campaign_parent') and row['params'].get('campaign_id') == owner
+        and row['status'] in {'preparing', 'ready', 'failed', 'stopped','complete'}),
         key=lambda row:row.get('created_at', 0))
     if operations and (operations[-1]['status'] == 'preparing' or latest is None
             or operations[-1].get('created_at', 0) >= (dict(latest).get('started_at') or 0)
@@ -236,6 +266,11 @@ def _guidance(app, params):
         notice = ('Preparation is '+current['status']+'. Open the operation, not its internal child jobs. '
             'Completed preparation still requires an explicit execution start.')
         steps[positions[stage]][3].insert(0, ('Open prepared or active work', '/operations/'+current['id']))
+        if current['kind'] == 'campaign':
+            stage = ('Results' if current['status'] == 'complete' else 'Recovery' if current['status'] in {'failed','stopped'}
+                     else 'Run' if current.get('execution_authorized') else 'Prepare')
+            notice = 'Campaign is '+current['status']+'. Follow its progress page; internal jobs need no separate starts.'
+            steps[positions[stage]][3].insert(0,('Open campaign progress','/operations/'+current['id']))
     if latest is not None and latest['role'] == 'collection' and not matched and params.get('mode') == 'attestation_probe':
         notice += ' A diagnostic probe is not a measured result; finish its transport evidence before measured execution.'
         if latest['state'] == 'complete':
