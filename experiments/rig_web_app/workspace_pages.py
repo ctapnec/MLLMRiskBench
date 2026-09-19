@@ -102,7 +102,8 @@ class WorkspacePagesMixin:
     def _work_view_tabs(context: str, selected: str) -> str:
         views = [("campaigns", "Campaigns"), ("standalone", "Standalone runs")]
         if context == "jobs":
-            views.append(("all", "All jobs and tools"))
+            views.insert(0, ("work", "Substantive work"))
+            views.append(("all", "Technical - all jobs"))
         else:
             views.append(("svm", "SVM results"))
             views.append(("legacy", "Earlier reports"))

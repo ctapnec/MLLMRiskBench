@@ -1275,7 +1275,7 @@ _NAV_LINKS = (
     ("/build", "flask", "Build"),
     ("/campaigns", "book", "Campaigns"),
     ("/commands", "terminal", "Tools"),
-    ("/jobs", "pulse", "Jobs"),
+    ("/jobs?view=work", "pulse", "Jobs"),
     ("/stats", "chart", "Stats"),
     ("/config", "sliders", "Config"),
     ("/artifacts", "folder", "Artifacts"),

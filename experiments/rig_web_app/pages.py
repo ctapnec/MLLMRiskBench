@@ -85,6 +85,9 @@ class PagesMixin:
             return "model capture"
         if job.command == "harmbench_capture":
             return "preparation"
+        from .job_presentation import work_label
+        if label := work_label(job.command, job.argv):
+            return label
         return "tool / validation"
 
     @staticmethod
@@ -1023,6 +1026,30 @@ class PagesMixin:
             campaigns = [c for c in campaigns if campaign_id and selected("controller", c.route_id)]
             pinned_console_ids.intersection_update(j.job_id for j in history_jobs)
             pinned_campaign_ids.intersection_update(c.route_id for c in campaigns)
+        technical_note = ''
+        if scope == 'work':
+            from .job_presentation import substantive
+            hidden = [j for j in history_jobs if not substantive(j.command, j.argv)]
+            history_jobs = [j for j in history_jobs if substantive(j.command, j.argv)]
+            indexed_work = self.db._query("SELECT member_id FROM campaign_members WHERE member_kind='controller' "
+                "AND role IN ('collection','judging','analysis')")
+            if indexed_work is None:
+                raise ValueError('Campaign work index unavailable')
+            work_ids = {r['member_id'] for r in indexed_work}
+            hidden_controllers = [c for c in campaigns if not c.model_tasks and c.route_id not in work_ids]
+            campaigns = [c for c in campaigns if c.model_tasks or c.route_id in work_ids]
+            pinned_console_ids.intersection_update(j.job_id for j in history_jobs)
+            pinned_campaign_ids.intersection_update(c.route_id for c in campaigns)
+            attention = sum(j.state() in {'failed','interrupted','orphaned','running'} for j in hidden)
+            attention += sum(c.state in {'failed','interrupted','orphaned','running'} for c in hidden_controllers)
+            technical_query = dict(filters, view='all')
+            technical_note = ("<p class='notice blue'>Collection, judging and analysis are shown here. "
+                f"{len(hidden)+len(hidden_controllers)} technical stages in this window are listed separately; "
+                f"{attention} are active or need attention. <a href='/jobs?"
+                + html.escape(urlencode(technical_query),quote=True) + "'>Open technical jobs</a>.</p>"
+                "<style>#jobstable th:nth-child(2),#jobstable td:nth-child(2),"
+                "#jobstable th:nth-child(4),#jobstable td:nth-child(4),"
+                "#jobstable th:nth-child(9),#jobstable td:nth-child(9){display:none}</style>")
         pinned_external_ids = {
             job.job_id
             for job in external_jobs
@@ -1389,9 +1416,12 @@ class PagesMixin:
             if state is None:
                 overview_cards_parts.append("<div class='card'>" + content + "</div>")
             else:
+                card_query = {k:v for k,v in filters.items() if k in {'view','campaign_id','from','to','from_ms','to_ms','q'}}
+                if state:
+                    card_query['state'] = state
                 overview_cards_parts.append(
                     "<a class='card' href='/jobs"
-                    + (f"?state={quote(state)}" if state else "")
+                    + ('?' + html.escape(urlencode(card_query),quote=True) if card_query else '')
                     + "#jobs-history'>"
                     + content
                     + "</a>"
@@ -1422,7 +1452,7 @@ class PagesMixin:
             str(filters.get(name, "")).strip()
             for name in ("from", "to", "from_ms", "to_ms", "state", "q")
         )
-        jobs_default = "jobs-history" if explicit_filter else "jobs-overview"
+        jobs_default = "jobs-history" if explicit_filter or scope == 'work' else "jobs-overview"
         force_default = " data-force-default='true'" if explicit_filter else ""
         return _page(
             "Jobs",
@@ -1431,6 +1461,7 @@ class PagesMixin:
             + "Jobs</h1>"
             + self._work_view_tabs("jobs", "campaigns" if campaign_id else scope)
             + (self._campaign_banner(campaign_id) if campaign_id else "")
+            + technical_note
             + ("<p>Standalone runs exclude campaign-owned jobs and administrative tools.</p>" if scope == "standalone" else "")
             + self._health_banner()
             + (

@@ -196,7 +196,7 @@ def response(app, query):
         raise ValueError('Unknown SVM export')
 
     def select(name, caption, choices, value):
-        return '<label class="campaign-field">'+caption+'<select name="'+name+'">'+''.join(
+        return '<label class="campaign-field">'+caption+'<select aria-label="'+caption+'" name="'+name+'">'+''.join(
             '<option value="'+html.escape(k, quote=True)+'"'+(' selected' if k==value else '')+'>'+html.escape(v)+'</option>' for k,v in choices)+'</select></label>'
 
     body += '<form method="get" action="/stats"><input type="hidden" name="view" value="svm"><div class="campaign-grid">'
