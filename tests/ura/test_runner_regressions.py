@@ -1700,6 +1700,7 @@ def test_local_probe_receipt_admits_measured_run_and_level1(
     assert probe_grid["request"]["models"] == [resolved_target]
     resolved_local_config = {
         **local_config,
+        "timeout": 120.0,
         "max_model_len": -1,
         "parameter_count_b": None,
         "multi_gpu_compatible": True,
@@ -2322,11 +2323,13 @@ def test_precall_identity_prioritizes_immutable_local_digest_over_ollama_tag() -
     digest = "a" * 64
     first = run_matrix.build_target(
         "ollama:alias-a",
-        local_identity={"digest": digest, "modalities": ["text"], "num_ctx": "fit"},
+        local_identity={"digest": digest, "modalities": ["text"], "num_ctx": "fit",
+                        "num_predict": 4096, "think": False},
     )
     second = run_matrix.build_target(
         "ollama:alias-b",
-        local_identity={"digest": digest, "modalities": ["text"], "num_ctx": "fit"},
+        local_identity={"digest": digest, "modalities": ["text"], "num_ctx": "fit",
+                        "num_predict": 4096, "think": False},
     )
 
     assert run_matrix._precall_model_identity(first) == frozenset({

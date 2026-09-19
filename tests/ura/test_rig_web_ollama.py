@@ -1315,6 +1315,7 @@ def _builder_repo(tmp_path: Path) -> Path:
 
 def test_builder_uses_only_exact_live_rows_and_ignores_catalog_only_overlap(
     tmp_path: Path,
+    approved_local_profile,
 ) -> None:
     root = _builder_repo(tmp_path)
     live = {
@@ -1340,6 +1341,10 @@ def test_builder_uses_only_exact_live_rows_and_ignores_catalog_only_overlap(
         "num_ctx": "fit",
         "think": False,
     }
+    with pytest.raises(ValueError, match="passing readiness profile"):
+        builder._materialize_selected_local_config(
+            ["ollama:granite:latest"], require_live_ollama=True)
+    approved_local_profile("ollama:granite:latest", catalog["ollama:granite:latest"])
     generated = builder._materialize_selected_local_config(
         ["ollama:granite:latest"], require_live_ollama=True
     )
@@ -1348,6 +1353,8 @@ def test_builder_uses_only_exact_live_rows_and_ignores_catalog_only_overlap(
             "digest": "b" * 64,
             "modalities": ["text", "image"],
             "num_ctx": "fit",
+            "num_predict": 4096,
+            "timeout": 120.0,
             "think": False,
         }
     }
@@ -1361,6 +1368,10 @@ def test_builder_uses_only_exact_live_rows_and_ignores_catalog_only_overlap(
         }
     }
     manual_path.write_text(json.dumps(manual), encoding="utf-8")
+    approved_local_profile(manual_spec, manual[manual_spec])
+    approved_local_profile("vllm:llava-hf/llava-v1.6-mistral-7b-hf", {
+        "revision": "a" * 40, "modalities": ["text", "image"],
+    })
     live["models"].append(
         {
             "spec": manual_spec,
@@ -1553,9 +1564,11 @@ def test_crafted_measured_post_rejects_unavailable_absent_or_stale_live_model(
     monkeypatch: pytest.MonkeyPatch,
     roster: dict[str, object],
     message: str,
+    approved_local_profile,
 ) -> None:
     root = _builder_repo(tmp_path)
     spec = "ollama:fixture:latest"
+    approved_local_profile(spec, {"digest": "a" * 64, "modalities": ["text"]})
     (root / "experiments" / "local-targets.json").write_text(
         json.dumps(
             {

@@ -2126,7 +2126,7 @@ def test_modality_shown_as_icons_not_word_tags(tmp_path: Path) -> None:
         # Selects are custom-styled everywhere (no generic browser chrome):
         # appearance reset + themed chevron (light and dark), hover and focus.
         assert "select { appearance:none;" in css
-        assert css.count("--chevron:url(") == 2  # light + dark chevron
+        assert css.count("--chevron:url(") == 3  # default, automatic dark, named dark
         assert "background-image:var(--chevron)" in css
         assert "select:hover" in css and "select:focus" in css
         # The sticky Compose & review bar is a solid panel - content must not
@@ -2854,12 +2854,14 @@ def test_builder_paid_modes_preview_exact_argv_then_confirm(
         "launch_ticket": ticket_match.group(1),
     })
     assert status == 303 and len(app.jobs) == started + 1
-    job = app.jobs[location.rsplit("/", 1)[1]]
+    assert location.startswith("/operations/")
+    operation = app._operations[location.rsplit("/", 1)[1]]
+    job = app.jobs[operation["params"]["probe_job"]]
     assert "--attestation-probe" in job.argv
     assert job.builder_params and job.builder_params["mode"] == "attestation_probe"
     # The probe argv parses with the real parser.
     run_matrix.build_parser().parse_args(job.argv[3:])
-    app.stop_job(job.job_id)
+    app._stop_operation(operation["id"])
     app.close()
 
 
@@ -3702,6 +3704,18 @@ def test_command_groups_partition_the_allowlist_exactly() -> None:
     )
 
 
+def test_assessment_controller_has_no_raw_operator_launch(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    try:
+        page = app.handle("GET", "/run")[2].decode("utf-8")
+        assert "name='command' value='campaign_assess'" not in page
+        code, _, body = app.handle("POST", "/jobs", {"command": "campaign_assess"})
+        assert code == 400 and b"Evaluate saved answers" in body
+        assert not app.jobs
+    finally:
+        app.close()
+
+
 def test_dashboard_shows_presence_only_pipeline(tmp_path: Path) -> None:
     # The dashboard pipeline counts retained files by name only and says so;
     # it must never label presence as validity or authorization.  Files under
@@ -3847,7 +3861,7 @@ def test_jobs_page_has_filter_chips_and_row_stop(tmp_path: Path) -> None:
         assert "url.searchParams.delete('to')" in text
         assert "url.searchParams.set('from_ms',String(fromMs))" in text
         assert "url.searchParams.set('to_ms',String(toMs))" in text
-        assert "syncFilters();uraBusy.reload()" in text
+        assert "syncFilters();window.uraBusy.reload()" in text
         assert "fromBox.addEventListener('change',function(){explicitFrom=true" in text
         assert "toBox.addEventListener('change',function(){explicitTo=true" in text
         # The default seven-day window remains implicit. Initial sync and the
@@ -6840,7 +6854,8 @@ def test_corrupt_database_is_visible_never_silent_empty(tmp_path: Path) -> None:
     # corrupt file for recovery and refuse before starting a child.
     with pytest.raises(OSError, match="retain job identity before process launch"):
         app.start_job("webui_selftest", {"--selftest-sleep": "30"})
-    assert not app.jobs
+    assert app.jobs and all(job.process is None and job.state() == "failed"
+                            for job in app.jobs.values())
     assert (state / "console.db").read_bytes() == b"not a sqlite file at all"
     app.close()
 

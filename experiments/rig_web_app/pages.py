@@ -806,7 +806,7 @@ class PagesMixin:
             )
         # Internal controller commands have dedicated validated Build actions;
         # exposing their raw generic form would bypass that controller contract.
-        internal_ui_commands = {"model_acquire", "ollama_pull", "run_matrix"}
+        internal_ui_commands = {"model_acquire", "ollama_pull", "run_matrix", "campaign_assess"}
         leftovers = "".join(
             card(name)
             for name in sorted(set(self.commands) - grouped - internal_ui_commands)

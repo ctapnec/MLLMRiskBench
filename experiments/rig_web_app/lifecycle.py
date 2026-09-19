@@ -4316,6 +4316,9 @@ class LifecycleMixin:
                     campaign_id, data, existing_job = self._transport_check_from_job(probe_job, campaign_id)
                     if existing_job:
                         return 303, '/jobs/' + existing_job, b''
+                if command == "campaign_assess":
+                    return (400, "text/plain; charset=utf-8",
+                            b"use the campaign's Evaluate saved answers workflow")
                 if command in {
                     "run_matrix",
                     "model_acquire",
