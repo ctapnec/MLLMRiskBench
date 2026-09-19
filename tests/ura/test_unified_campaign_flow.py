@@ -249,6 +249,8 @@ def test_shared_builder_controls_hide_other_input_route_and_keep_spinners(app,br
         assert page.locator('[name=campaign_judge_cost]').is_visible()
         page.locator('[name=campaign_haiku]').uncheck()
         assert page.locator('[name=campaign_judge_cost]').is_disabled()
+        assert not page.locator('[name=campaign_judge_cost]').is_visible()
+        assert not page.locator('[name=campaign_judge_model]').is_visible()
         page.locator('[name=campaign_inputs]').select_option('fresh')
         assert page.locator('[name=retained_source_campaign]').is_disabled()
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')

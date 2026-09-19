@@ -107,6 +107,7 @@ h2 .ic { color:var(--muted); }
   gap:.9rem; }
 .cols .card { margin:0; }
 .campaign-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr)); gap:1rem; margin:1.25rem 0; }
+.campaign-grid[hidden] { display:none; }
 .campaign-grid .campaign-card { margin:0; padding:1.35rem; min-width:0; }
 .campaign-assessment-options { min-width:0; border:1px solid var(--line); border-radius:10px; padding:1rem; margin:1.25rem 0; }
 .campaign-assessment-options legend { font-weight:600; padding:0 .4rem; }
