@@ -2552,7 +2552,7 @@ class BuilderPageMixin:
                 kind="number",
             )
             + "</div></div>"
-            "<div class='card'><h2>"
+            "<details class='card'><summary>Advanced execution and recovery options</summary><h2>"
             + _icon("chart")
             + "Aggregation, row admission &amp; resume</h2>"
             "<p class='note'>The same --group, --reset-open-circuits, and "
@@ -2606,13 +2606,16 @@ class BuilderPageMixin:
             "operator acknowledgement that the provider/judge fault behind an "
             "open circuit was corrected before rerunning the identical lane "
             "(runbook section 17); never a default</span></span></label>"
-            "</div>"
+            "</details>"
             "<div class='card' id='execution-budgets'><h2>"
             + _icon("coins")
             + "Call ceilings &amp; deadline (budget guards)</h2>"
-            "<p class='note'>Required finite positive ceilings on every "
-            "non-dry run; run_matrix refuses a lane they cannot cover.</p>"
-            "<div class='cols'>"
+            "<p class='note'>The workload check calculates target, judge and transport limits. "
+            "Review the resulting counts before starting.</p>"
+            "<label class='checkrow'><input type='checkbox' name='automatic_caps'"
+            + (" checked" if prefill.get('automatic_caps') == 'on' or not any(prefill.get(k) for k in ('cap_target','cap_judge','cap_http')) else "")
+            + "><span>Calculate call limits automatically</span></label>"
+            "<details><summary>Manual call-limit overrides</summary><p>Uncheck automatic calculation to use these limits.</p><div class='cols'>"
             + text_field(
                 "cap_target", "--max-total-target-calls", "hard cap on target calls", kind="number"
             )
@@ -2628,6 +2631,7 @@ class BuilderPageMixin:
                 "hard cap on transport attempts",
                 kind="number",
             )
+            + "</div></details><div class='cols'>"
             + text_field(
                 "local_budget_hours",
                 "Local process wall-time cap (hours)",
@@ -2639,6 +2643,7 @@ class BuilderPageMixin:
                 "--deadline-seconds",
                 "durable call-start window from first invocation; not a "
                 "completion timeout and does not interrupt an admitted call",
+                default="3600",
                 kind="number",
             )
             + "</div></div>"

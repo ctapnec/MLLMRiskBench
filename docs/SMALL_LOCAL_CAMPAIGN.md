@@ -245,15 +245,15 @@ a measured benchmark result.
    to `2`. In **Call ceilings & deadline (budget guards)** set **Local process
    wall-time cap (hours)** to `1`. The measured output directory is automatic.
    Keep the other bounds and the one-answer-retry policy unchanged.
-4. Click **General -> Save campaign**, then return to Build and click
-   **General -> Compose & review**.
+4. Click **General -> Save campaign**. Build stays open with the saved draft.
+   Continue below; do not start preparation twice.
 
 ### 6.2. Prepare, review and start the measured run
 
-1. Open **Campaigns -> your campaign name -> Configure in Build -> General ->
-   Compose & review**.
+1. Stay in **Build -> General**. If you left, return through **Campaigns ->
+   your campaign name -> Configure in Build**.
 2. Check **measured**, Qwen, `xstest_full,vlsbench_release` and per-arm limit
-   `2`. Click **Compose & review**.
+   `2`. Click **Compose & review** once.
 3. Wait on the single progress page. The console reuses matching completed
    preparation and installed models. Any needed planning, no-call preflight and
    execution preparation happen automatically.

@@ -71,6 +71,9 @@ def page(app, owner):
             argv=json.loads(row['argv'])
             label='Classifier study' if '--study' in argv else 'Classifier analysis'
             body+='<li><a href="/jobs/'+row['job_id']+'">'+label+' - '+html.escape(row['state'])+'</a>'
+            from .analysis_summary import render
+            if argument(argv, '--out'):
+                body += render(app, argument(argv, '--out'))
             if '--study' in argv and row['state'] in {'failed','stopped','interrupted'}:
                 ticket=app._new_launch_ticket(dict(campaign_id=owner,job=row['job_id']),purpose='svm-resume')
                 body+='<form class="action-row" method="post" action="/analysis/resume"><input type="hidden" name="launch_ticket" value="'+ticket+'"><button>Resume unfinished analysis</button></form>'

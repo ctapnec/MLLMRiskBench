@@ -1410,7 +1410,7 @@ class BuilderValidationMixin:
         ).hexdigest()[:16]
         return self.results_root / "preflight" / f"builder-{condition}"
 
-    def _validate_builder(self, params: Mapping[str, str]) -> dict[str, str]:
+    def _validate_builder(self, params: Mapping[str, str], *, preparation: bool = False) -> dict[str, str]:
         """Mode-specific builder validation, keyed by form field.
 
         Mirrors the run_matrix admission gates so an invalid lane is rejected
@@ -2048,7 +2048,7 @@ class BuilderValidationMixin:
                 age_value = 0.0
             if not 0 < age_value <= 8760:
                 errors["max_age"] = "required: maximum attestation age in hours, in (0, 8760]"
-            if not att_rows:
+            if not att_rows and not (preparation and params.get('setup_mode') == 'automatic'):
                 errors["att"] = ("No matching completed transport checks are available for this selection. "
                                  "Use Tools - live_attestation to select a completed probe; no receipt copying is needed."
                                  if params.get('setup_mode') == 'automatic' else
@@ -2545,7 +2545,8 @@ class BuilderValidationMixin:
         # (never estimated here).  Compare each entered ceiling against its
         # projected requirement; a shortfall blocks Start.
         projection, why = self._read_lane_projection(params)
-        caps_ok = projection is not None
+        caps_ok = projection is not None and not (
+            params.get('automatic_caps') == 'on' and params.get('_caps_resolved') != 'yes')
         if projection is not None:
             call_projection = projection.get("call_projection", projection)
             if not isinstance(call_projection, Mapping):
@@ -2596,6 +2597,8 @@ class BuilderValidationMixin:
             projection_html = (
                 "<h3>No-call projection</h3><p class='note'>" + html.escape(why) + ".</p>"
             )
+        from .direct_costs import forecast
+        cost_card = forecast(self, params, projection)
         return (
             "<div class='card'><h2>" + _icon("coins") + "Calculated call "
             "ceilings</h2>"
@@ -2609,7 +2612,7 @@ class BuilderValidationMixin:
             "guards; run_matrix rejects the lane if they cannot cover its "
             "exact no-call projection. The projection above is computed by the "
             "CLI preflight from the real corpus (a call bound, not a price "
-            "estimate), never estimated here.</p></div>"
+            "estimate), never estimated here.</p></div>" + cost_card
         ), caps_ok
 
     def _preview_page(

@@ -1421,6 +1421,8 @@ class BuilderModelsMixin:
         "modality_scope",
         "setup_mode",
         "_setup_resolved",
+        "automatic_caps",
+        "_caps_resolved",
         "verify_model_sha256",
         "reset_open_circuits",
         "lock_stale_seconds",

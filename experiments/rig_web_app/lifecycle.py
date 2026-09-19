@@ -3035,9 +3035,9 @@ class LifecycleMixin:
         next_stage = params.pop("_model_acquisition_next", "")
         if next_stage not in {"preflight", "run"}:
             raise ValueError("reviewed model-acquisition stage is invalid")
-        errors = self._validate_builder(params)
+        errors = self._validate_builder(params, preparation=next_stage == 'preflight')
         if errors:
-            raise ValueError("reviewed Builder lane is no longer admissible")
+            raise ValueError("reviewed Builder lane is no longer admissible: "+'; '.join(errors.values()))
         if execution_snapshot:
             snapshot = self._validate_execution_snapshot(params, execution_snapshot)
         else:
@@ -4094,6 +4094,21 @@ class LifecycleMixin:
                 return 303, '/jobs/'+job.job_id, b''
             if method == 'GET' and path.startswith('/operations/'):
                 return 200, 'text/html; charset=utf-8', self._operation_page(path.removeprefix('/operations/'))
+            if method == 'POST' and path == '/operations/start-experiment':
+                data = dict(form or {})
+                if set(data) != {'launch_ticket'}:
+                    raise ValueError('Review the experiment before starting')
+                ticket = self._consume_launch_ticket(data['launch_ticket'], purpose='experiment-with-checks')
+                if ticket is None:
+                    raise ValueError('This start has already been used or expired; reopen the prepared experiment')
+                with self._app_lock:
+                    operation = self._operations[ticket[0]['operation']]
+                    if operation['status'] != 'ready' or not operation.get('awaiting_connections') or operation.get('execution_authorized'):
+                        raise ValueError('The experiment is not waiting for a start')
+                    operation.update(execution_authorized=True, awaiting_connections=False, status='preparing')
+                    self._save_operation(operation)
+                    self._ensure_operation_worker(operation['id'])
+                return 303, '/operations/'+operation['id'], b''
             if method == 'POST' and path.startswith('/operations/') and path.endswith('/stop'):
                 operation_id = path.split('/')[2]
                 self._stop_operation(operation_id)
@@ -4355,7 +4370,7 @@ class LifecycleMixin:
                 if params.get("work_kind") != "campaign" and not params.get("campaign_id"):
                     raise ValueError("Select Campaign to save a campaign definition")
                 params = self._save_build_campaign(params)
-                return 303, "/campaigns/" + params["campaign_id"] + "?section=definition", b""
+                return 303, "/build?campaign_id=" + params["campaign_id"] + "&saved=1#build-general", b""
             if method == "POST" and path in {"/build/source-runs", "/build/prepare-inputs"}:
                 from .builder_sources import prepare_selected_inputs
                 params = self._builder_params(form or {})
@@ -4594,7 +4609,7 @@ class LifecycleMixin:
                                 },
                             ),
                         )
-                errors = self._validate_builder(params)
+                errors = self._validate_builder(params, preparation=not confirmed)
                 if errors:
                     # Reject before any subprocess exists; re-render with
                     # field-level errors and the operator's selections kept.

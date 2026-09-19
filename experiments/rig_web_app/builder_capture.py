@@ -24,6 +24,8 @@ class BuilderCaptureMixin:
         "campaign_guide",
         "modality_scope",
         "setup_mode",
+        "automatic_caps",
+        "_caps_resolved",
         "_setup_resolved",
         "retained_source_campaign",
         "retained_source_runs",
@@ -623,6 +625,11 @@ class BuilderCaptureMixin:
                 params.pop(field, None)
         if params.get('setup_mode') not in {None, 'automatic', 'manual'}:
             raise ValueError('Unknown campaign setup mode')
+        if params.get('automatic_caps') == 'on' and params.get('_caps_resolved') != 'yes':
+            # Temporary no-call planning bounds only. The exact projection
+            # replaces these before the execution acquisition plan is derived.
+            for field in ('cap_target', 'cap_judge', 'cap_http'):
+                params[field] = '1000000000'
         return self._automatic_campaign_setup(params, refresh=form.get('_refresh_setup') == 'yes')
 
     def _compose_from_builder(

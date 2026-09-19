@@ -229,7 +229,22 @@ class OperationsMixin:
                 operation['step'] += 1
                 self._save_operation(operation)
             length = len(self._operation_labels(operation))
+            if operation['kind'] == 'direct' and operation['step'] == (3 if operation['acquisition'] else 1):
+                self._resolve_operation_caps(operation)
+                from .connection_workflow import advance
+                if advance(self, operation):
+                    return
+                # A fresh transport binding may require an exact no-call
+                # projection before the execution plan can use that binding.
+                if operation.get('refresh_after_connections'):
+                    operation.pop('refresh_after_connections')
+                    operation.update(step=0, jobs=[])
+                    self._save_operation(operation)
+                    return
             if operation['step'] == length:
+                if operation['kind'] == 'direct' and operation.get('execution_authorized'):
+                    from .connection_workflow import launch
+                    launch(self, operation)
                 operation['status'] = 'ready'
                 self._publish_operation_selection(operation)
                 self._save_operation(operation)
@@ -259,6 +274,18 @@ class OperationsMixin:
             saved = self.db.workspace_definition(owner)
             if saved == operation['original_params']:
                 self.db.save_workspace_definition(owner, operation['params'])
+
+    def _resolve_operation_caps(self, operation):
+        params = operation['params']
+        if params.get('automatic_caps') != 'on' or params.get('_caps_resolved') == 'yes':
+            return
+        projection, why = self._read_lane_projection(params)
+        if projection is None:
+            raise ValueError('Could not calculate execution limits: '+why)
+        for field, key in (('cap_target','target_calls'), ('cap_judge','judge_calls'), ('cap_http','http_attempts')):
+            params[field] = str(max(1, int(projection['call_projection'][key])))
+        params['_caps_resolved'] = 'yes'
+        self._save_operation(operation)
 
     def _launch_direct_preparation_step(self, operation):
         step = operation['step']
@@ -315,6 +342,11 @@ class OperationsMixin:
                 raise ValueError('Only an active preparation can be stopped')
             operation['status'] = 'stopped'
             self._save_operation(operation)  # Prevent the next handoff first.
+            for item in operation.get('connection_operations', []):
+                for key in ('preparation','check'):
+                    child = self._operations.get(item.get(key))
+                    if child and child['status'] == 'preparing':
+                        self._stop_operation(child['id'])
             job = self.jobs.get(operation['current_job'])
             if job is not None and job.state() == 'running':
                 self.stop_job(job.job_id)
@@ -355,6 +387,12 @@ class OperationsMixin:
 
     def _operation_review(self, operation):
         params = dict(operation['params'])
+        if operation.get('execution_job'):
+            return _page('Experiment started','<h1>Experiment started</h1>'+self._campaign_banner(params.get('campaign_id',''))+
+                '<p>Connection checks are saved separately. Your measured job is available below.</p><p><a href="/jobs/'+html.escape(operation['execution_job'])+'">Open measured job and results</a></p>',active='Build')
+        if operation.get('awaiting_connections'):
+            from .connection_workflow import review
+            return review(self, operation)
         if operation['kind']=='attack-capture':
             owner=params.get('campaign_id','')
             return _page('Attack material ready','<h1>Attack material ready</h1>'+self._campaign_banner(owner)+
@@ -417,6 +455,8 @@ class OperationsMixin:
         body += ('Your explicitly started probe may make real calls. Its connection record is saved automatically afterwards.'
             if operation['kind'] == 'transport-check' else 'Your explicitly started attack capture may invoke its source model. The saved output is attached automatically.'
             if operation['kind'] == 'attack-capture' else
+            'The reviewed connection checks and measured experiment run automatically; real model calls may be in progress.'
+            if operation.get('execution_authorized') else
             'Preparation runs automatically. No target answers or judge decisions are generated.')
         body += ' You can leave this page and return.</p>'
         if operation['status'] == 'preparing':
