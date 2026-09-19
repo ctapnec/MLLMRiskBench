@@ -12,6 +12,15 @@ def test_save_stays_in_build(app):
     assert status==303 and location=='/build?campaign_id='+owner+'&saved=1#build-general'
 
 
+def test_automatic_admission_explains_checks_without_manual_probe_task(app,monkeypatch):
+    monkeypatch.setattr(app,'_automatic_campaign_setup',lambda p,**kw:p)
+    monkeypatch.setattr(app,'_campaign_transport_receipts',lambda p:([],'Old manual instruction'))
+    page=app._build_page(prefill=dict(mode='measured',setup_mode='automatic')).decode()
+    assert 'Keep your measured settings; no separate probe setup is required.' in page
+    assert 'Old manual instruction' not in page
+    assert '<details><summary>Advanced: reuse an older diagnostic</summary>' in page
+
+
 def test_automatic_bounds_use_exact_projection_before_execution(app,monkeypatch):
     operation=dict(id='a'*32,params=dict(automatic_caps='on',cap_target='1000000000'))
     monkeypatch.setattr(app,'_read_lane_projection',lambda p:({'call_projection':dict(target_calls=8,judge_calls=4,http_attempts=0)},''))

@@ -454,7 +454,10 @@ class BuilderPageMixin:
         setup_preview = dict(prefill, setup_mode=setup_mode)
         if setup_mode == 'automatic':
             setup_preview = self._automatic_campaign_setup(setup_preview, refresh=True)
-        _, transport_status = self._campaign_transport_receipts(setup_preview)
+        transport_records, transport_status = self._campaign_transport_receipts(setup_preview)
+        if setup_mode == 'automatic' and setup_preview.get('mode') == 'measured' and not transport_records:
+            transport_status = ('Missing connection checks will be included in your reviewed experiment start. '
+                                'Keep your measured settings; no separate probe setup is required.')
         if setup_preview.get('mode', 'dry_run') in {'dry_run', 'attestation_probe'}:
             transport_status = ('This mode does not require an existing transport check. '
                                 'Saved checks are selected automatically when you review measured work.')
@@ -469,8 +472,8 @@ class BuilderPageMixin:
             "<p id='automatic-transport-status' class='note' role='status'>"
             + html.escape(transport_status) + "</p><p class='note'>Existing completed checks are reused; "
             "the maximum age defaults to 24 hours. Review shows the exact resolved settings.</p>"
-            + "<p><a href='/commands?cmd=live_attestation&amp;campaign_id="
-            + html.escape(prefill.get('campaign_id','')) + "'>Select a completed probe</a></p>"
+            + "<details><summary>Advanced: reuse an older diagnostic</summary><p><a href='/commands?cmd=live_attestation&amp;campaign_id="
+            + html.escape(prefill.get('campaign_id','')) + "'>Select a completed probe</a></p></details>"
             + "<p class='fielderr'>" + html.escape((errors or {}).get('att','')) + "</p></div>"
         )
         errors = {
