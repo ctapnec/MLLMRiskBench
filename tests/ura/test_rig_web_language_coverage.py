@@ -299,6 +299,31 @@ def test_fixed_runtime_and_classifier_vocabularies_are_catalogued():
     assert display_labels.label("unknown_input_kind:raw_value") == "unknown_input_kind:raw_value"
 
 
+def test_lifecycle_count_fields_and_job_filter_states_have_labels():
+    from experiments.rig_web_app import display_labels
+
+    assert {"unknown", "partial", "orphaned", "passed", "idle"} <= display_labels.LABELS.keys()
+    path = ROOT.parent / "level1_evidence.py"
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Dict):
+            continue
+        if any(
+            isinstance(target, ast.Name)
+            and target.id
+            in {
+                "planning_counts",
+                "execution_counts",
+                "judgment_counts",
+                "approximate_proxy_counts",
+            }
+            for target in node.targets
+        ):
+            keys = {key.value for key in node.value.keys if isinstance(key, ast.Constant)} - {
+                "unit"
+            }
+            assert keys <= display_labels.LABELS.keys(), keys - display_labels.LABELS.keys()
+
+
 @pytest.mark.parametrize(
     "source",
     [
