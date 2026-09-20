@@ -6,7 +6,7 @@ current operating procedure. Use [the maintained reference](../HUMAN_REVIEW_UI.m
 for current guidance. Relative documentation links below are adjusted for
 this archive directory; the original content is otherwise retained.
 
----
+<!-- BEGIN PRESERVED DOCUMENT -->
 
 # Human evaluation through Rig Web
 
@@ -234,4 +234,3 @@ module with `--snapshot <sample.SNAPSHOT.json.gz> --prepared-rating-form
 Preparation and analysis make no model or judge calls. Indexed media lookup
 visits only the selected response files' neighboring manifests, not the whole
 campaign store. Unchanged source files are not rewritten.
-

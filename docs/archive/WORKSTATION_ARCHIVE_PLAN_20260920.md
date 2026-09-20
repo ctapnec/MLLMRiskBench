@@ -6,7 +6,7 @@ current operating procedure. Use [the maintained reference](../WORKSTATION_ARCHI
 for current guidance. Relative documentation links below are adjusted for
 this archive directory; the original content is otherwise retained.
 
----
+<!-- BEGIN PRESERVED DOCUMENT -->
 
 # Campaign demonstration and subsequent workstation archive
 
@@ -168,4 +168,3 @@ Human ratings, if later collected on Windows, must remain real independent
 records with the applicable study arrangements. Automated tests must continue
 to use separate storage. Only after these checks should the rig be retired from
 the workflow; no rig data is scheduled for deletion by this plan.
-

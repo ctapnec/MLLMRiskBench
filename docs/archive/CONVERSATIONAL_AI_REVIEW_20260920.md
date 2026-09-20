@@ -6,7 +6,7 @@ current operating procedure. Use [the maintained reference](../CONVERSATIONAL_AI
 for current guidance. Relative documentation links below are adjusted for
 this archive directory; the original content is otherwise retained.
 
----
+<!-- BEGIN PRESERVED DOCUMENT -->
 
 # AI-assisted review of retained campaign responses
 
@@ -196,4 +196,3 @@ originals permanently unless the operator separately requests deletion. Verify
 destination readability and campaign presentation. Inspection on Windows must
 not require downloading every framework runtime or model. No data transfer or
 rig-data cleanup is initiated by this plan.
-
