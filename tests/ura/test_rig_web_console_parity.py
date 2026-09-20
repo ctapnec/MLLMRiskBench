@@ -440,7 +440,7 @@ def test_builder_sampling_control_and_local_wall_time_keep_cli_semantics(
         assert f"value='{SOURCE_ORDER_CLUSTER_PREFIX}' selected" in selected
         assert "syncSampleSizeControl" in _BUILDER_SCRIPT
         assert "matching no-call preflight" in _BUILDER_SCRIPT
-    assert ui_text("ui.effective_selection_summary") in _BUILDER_SCRIPT
+        assert ui_text("ui.effective_selection_summary") in _BUILDER_SCRIPT
         assert "Math.min(value,exactMax)" in _BUILDER_SCRIPT
         assert "data-base-max='1000'" not in selected
         unknown_range = _opening_tag(selected, "id='sample-limit-range'")
