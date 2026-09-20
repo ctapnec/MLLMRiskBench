@@ -278,7 +278,7 @@ def haiku_judging_review(app, params):
             + _ui_text("builder_haiku_judging.matched_input_comparisons")
             + f"{len(plan['selected']):,}"
             + _ui_template(
-                " [[text:builder_haiku_judging.distinct_saved_answers_each_answer_has_its_own_verdict_a_shared_l]]</p><p>Judge: "
+                " [[text:builder_haiku_judging.distinct_saved_answers_each_answer_has_its_own_verdict_a_shared_l]]</p><p>[[text:builder_haiku_judging.judge]] "
             )
         )
         + html.escape(condition["model"])

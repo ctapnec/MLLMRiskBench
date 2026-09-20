@@ -67,6 +67,46 @@ def test_keyboard_protocol_is_not_a_translated_message():
     assert not {"Escape", "ArrowLeft", "ArrowRight", "Home", "End", "Tab"}.intersection(
         i18n.catalog().values()
     )
+    assert ".modelquant select" not in i18n.catalog().values()
+    assert "querySelector('.modelquant select')" in ui._BUILDER_SCRIPT
+
+
+@pytest.mark.parametrize(
+    "module,key,kind",
+    [
+        ("builder_sources", "builder_sources.run", "text"),
+        ("builder_sources", "builder_sources.run_s_selected_copy", "js"),
+        ("campaign_flow", "campaign_flow.compose_review", "js"),
+        ("settings", "settings.saved", "text"),
+        ("workspace_comparison", "workspace_comparison.only", "text"),
+        ("workspace_pages", "workspace_pages.condition_copy", "text"),
+        ("ui", "ui.modalities", "js"),
+    ],
+)
+def test_fragmented_and_client_copy_uses_the_catalog(monkeypatch, module, key, kind):
+    """A missing message extraction must fail even when unchanged English renders."""
+    tree = ast.parse(Path(ui.__file__).with_name(module + ".py").read_text(encoding="utf-8"))
+    marker = f"[[{kind}:{key}]]"
+    fragments = [
+        node.args[0].value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_ui_template"
+        and marker in node.args[0].value
+    ]
+    assert fragments, (module, key)
+    messages = dict(i18n.catalog())
+    messages[key] = "Catalog sentinel <&>"
+    monkeypatch.setattr(i18n, "catalog", lambda: messages)
+    i18n.template.cache_clear()
+    try:
+        for fragment in fragments:
+            rendered = i18n.template(fragment)
+            assert "Catalog sentinel" in rendered
+            assert "Catalog sentinel <&>" not in rendered
+    finally:
+        i18n.template.cache_clear()
 
 
 @pytest.mark.parametrize("width", [360, 390, 1440])

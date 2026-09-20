@@ -3046,7 +3046,7 @@ class BuilderValidationMixin:
                 )
             )
             + (
-                "<p class='note'>Mode: <code>"
+                _ui_template("<p class='note'>[[text:builder_validation.mode]] <code>")
                 + f"{html.escape(mode)}"
                 + _ui_template(
                     "</code>[[text:builder_validation.review_the_exact_command_and_ceilings_below_nothing_has_started_y]]</p></div>"

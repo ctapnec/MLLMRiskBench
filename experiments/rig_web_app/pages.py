@@ -1162,10 +1162,9 @@ class PagesMixin:
                     + _ui_template(" [[text:pages.are_active_or_need_attention]] <a href='/jobs?")
                 )
                 + html.escape(urlencode(technical_query), quote=True)
-                + "'>Open technical jobs</a>.</p>"
-                "<style>#jobstable th:nth-child(2),#jobstable td:nth-child(2),"
-                "#jobstable th:nth-child(4),#jobstable td:nth-child(4),"
-                "#jobstable th:nth-child(9),#jobstable td:nth-child(9){display:none}</style>"
+                + _ui_template(
+                    "'>[[text:pages.open_technical_jobs]]</a>.</p><style>#jobstable th:nth-child(2),#jobstable td:nth-child(2),#jobstable th:nth-child(4),#jobstable td:nth-child(4),#jobstable th:nth-child(9),#jobstable td:nth-child(9){display:none}</style>"
+                )
             )
         pinned_external_ids = {
             job.job_id
@@ -1448,7 +1447,7 @@ class PagesMixin:
             + "</table></div>"
             if rows
             else _ui_template(
-                "<div class='card'><p class='note'>No jobs are retained in this window. Start one from the <a href='/commands'>[[text:pages.run]]</a> page.</p></div>"
+                "<div class='card'><p class='note'>[[text:pages.no_jobs_are_retained_in_this_window_start_one_from_the]] <a href='/commands'>[[text:pages.run]]</a> [[text:pages.page]]</p></div>"
             )
         )
         script = (

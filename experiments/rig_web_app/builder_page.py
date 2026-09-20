@@ -687,7 +687,7 @@ class BuilderPageMixin:
                         f"data-arm='{html.escape(arm)}'>"
                         f"<span>{_arm_head(html.escape(arm), mods)}"
                         "<span class='badge amber tip' tabindex='0'>"
-                        "source-metric<span class='tiptext'>"
+                        f"{html.escape(_ui_text('builder_page.source_metric'))}<span class='tiptext'>"
                         f"{html.escape(source_note)}</span></span>"
                         "</span></label>"
                     )
@@ -1473,7 +1473,7 @@ class BuilderPageMixin:
                 )
             )
             + _ui_template(
-                "</div><p class='filter-empty' id='api-filter-empty'>[[text:builder_page.no_hosted_models_match_the_current_provider_and_modality_filters]]</p></section><section class='picker-model-panel' data-picker-panel='local' hidden><div class='grouphead'><h3>[[text:builder_page.local_vllm_on_rig_gpus]]</h3><span class='fieldhint' id='local-filter-count'></span></div><div class='targetfilters'><div class='fieldcell'><label class='fieldlabel' for='local-name-filter'>[[text:builder_page.name_contains]]</label><input class='wide' id='local-name-filter' type='search' autocomplete='off' placeholder='[[attr:builder_page.type_to_filter_model_names]]'></div><div class='fieldcell'><label class='fieldlabel' for='local-param-range'>[[text:builder_page.maximum_parameters]] <span class='fieldhint'>(billions; 0.01B = 10M, 3000B = 3T)</span></label><div class='paramfilter'><input id='local-param-range' type='range' min='0.01' max='3000' step='0.01' value='3000' aria-label='[[attr:builder_page.maximum_parameters_slider]]'><input class='wide' id='local-param-number' type='number' min='0.01' max='3000' step='0.01' value='3000' aria-label='[[attr:builder_page.maximum_parameters_in_billions]]'></div></div><label class='compatfilter'><input type='checkbox' id='local-compatible-filter' checked><span class='compatcopy'><strong>[[text:builder_page.automatic_16_8_4_bit_fit]]</strong><span class='fieldhint'>[[text:builder_page.show_only_models_estimated_to_fit_this_hardware_at_automatically]]</span></span></label><label class='compatfilter'><input type='checkbox' id='local-unknown-filter'><span class='compatcopy'><strong>[[text:builder_page.include_unknown_fit]]</strong><span class='fieldhint'>[[text:builder_page.show_models_whose_fit_cannot_be_estimated_live_runs_require_an_ex]]</span></span></label></div><div class='checkgrid' id='vllm-target-list'>"
+                "</div><p class='filter-empty' id='api-filter-empty'>[[text:builder_page.no_hosted_models_match_the_current_provider_and_modality_filters]]</p></section><section class='picker-model-panel' data-picker-panel='local' hidden><div class='grouphead'><h3>[[text:builder_page.local_vllm_on_rig_gpus]]</h3><span class='fieldhint' id='local-filter-count'></span></div><div class='targetfilters'><div class='fieldcell'><label class='fieldlabel' for='local-name-filter'>[[text:builder_page.name_contains]]</label><input class='wide' id='local-name-filter' type='search' autocomplete='off' placeholder='[[attr:builder_page.type_to_filter_model_names]]'></div><div class='fieldcell'><label class='fieldlabel' for='local-param-range'>[[text:builder_page.maximum_parameters]] <span class='fieldhint'>[[text:builder_page.billions_0_01b_10m_3000b_3t]]</span></label><div class='paramfilter'><input id='local-param-range' type='range' min='0.01' max='3000' step='0.01' value='3000' aria-label='[[attr:builder_page.maximum_parameters_slider]]'><input class='wide' id='local-param-number' type='number' min='0.01' max='3000' step='0.01' value='3000' aria-label='[[attr:builder_page.maximum_parameters_in_billions]]'></div></div><label class='compatfilter'><input type='checkbox' id='local-compatible-filter' checked><span class='compatcopy'><strong>[[text:builder_page.automatic_16_8_4_bit_fit]]</strong><span class='fieldhint'>[[text:builder_page.show_only_models_estimated_to_fit_this_hardware_at_automatically]]</span></span></label><label class='compatfilter'><input type='checkbox' id='local-unknown-filter'><span class='compatcopy'><strong>[[text:builder_page.include_unknown_fit]]</strong><span class='fieldhint'>[[text:builder_page.show_models_whose_fit_cannot_be_estimated_live_runs_require_an_ex]]</span></span></label></div><div class='checkgrid' id='vllm-target-list'>"
             )
             + (
                 vllm_boxes
@@ -1635,11 +1635,11 @@ class BuilderPageMixin:
                     + "'><span><strong>"
                     + f"{html.escape(fw)}"
                     + _ui_template(
-                        "</strong> <span class='badge gray tip' tabindex='0' role='button' aria-label='[[attr:builder_page.native_only_why_this_framework_is_disabled]]'>native-only<span class='tiptext'>"
+                        "</strong> <span class='badge gray tip' tabindex='0' role='button' aria-label='[[attr:builder_page.native_only_why_this_framework_is_disabled]]'>[[text:builder_page.native_only]]<span class='tiptext'>"
                     )
                     + f"{html.escape(desc)}"
                     + _ui_template(
-                        " [[text:builder_page.a_native_artifact_integration_run_matrix_cannot_replay_it_through]] <code>native_import</code> command.</span></span></span></label>"
+                        " [[text:builder_page.a_native_artifact_integration_run_matrix_cannot_replay_it_through]] <code>native_import</code> [[text:builder_page.command]]</span></span></span></label>"
                     )
                 )
             cli_only_reason = _CLI_ONLY_ATTACKERS.get(fw)
@@ -2274,7 +2274,7 @@ class BuilderPageMixin:
             + arm_cardinality_json
             + "'"
             + _ui_template(
-                "><div class='sample-size-head'><div><h3>[[text:builder_page.per_arm_sample_size]]</h3><p class='note'>[[text:builder_page.the_same_value_applies_independently_to_every_selected_arm]] <strong>0 = full selected release</strong>[[text:builder_page.a_positive_value_is_the_maximum_source_cluster_count_per_selected]]</p></div><span class='badge blue' id='sample-arm-count'>"
+                "><div class='sample-size-head'><div><h3>[[text:builder_page.per_arm_sample_size]]</h3><p class='note'>[[text:builder_page.the_same_value_applies_independently_to_every_selected_arm]] <strong>[[text:builder_page.0_full_selected_release]]</strong>[[text:builder_page.a_positive_value_is_the_maximum_source_cluster_count_per_selected]]</p></div><span class='badge blue' id='sample-arm-count'>"
             )
             + html.escape(sampling_arm_label)
             + "</span></div>"
@@ -2466,7 +2466,7 @@ class BuilderPageMixin:
             "<div class='card' id='pipeline-details'><h2>"
             + _icon("flask")
             + _ui_template(
-                "[[text:builder_page.current_pipeline]]</h2><p class='note'>[[text:builder_page.a_live_summary_of_the_controls_across_every_builder_section_recei]]</p><dl class='builder-summary' aria-live='polite'><div><dt>[[text:builder_page.composition]]</dt><dd id='build-summary-composition'>[[text:builder_page.initializing]]</dd></div><div><dt>[[text:builder_page.evaluation]]</dt><dd id='build-summary-evaluation'>[[text:builder_page.initializing]]</dd></div><div><dt>[[text:builder_page.admission]]</dt><dd id='build-summary-admission'>[[text:builder_page.initializing]]</dd></div><div><dt>[[text:builder_page.trajectory]]</dt><dd id='build-summary-trajectory'>[[text:builder_page.initializing]]</dd></div><div><dt>[[text:builder_page.budget_guards]]</dt><dd id='build-summary-budget'>[[text:builder_page.initializing]]</dd></div><div><dt>[[text:builder_page.local_serving]]</dt><dd id='build-summary-local'>[[text:builder_page.initializing]]</dd></div><div><dt>[[text:builder_page.output]]</dt><dd id='build-summary-output'>[[text:builder_page.initializing]]</dd></div></dl><p class='fieldlabel'>[[text:builder_page.high_level_composition_preview]] <span class='fieldhint'>[[text:builder_page.not_the_final_reviewed_command]]</span></p><code id='buildpreview'>run_matrix (initializing current choices)</code></div>"
+                "[[text:builder_page.current_pipeline]]</h2><p class='note'>[[text:builder_page.a_live_summary_of_the_controls_across_every_builder_section_recei]]</p><dl class='builder-summary' aria-live='polite'><div><dt>[[text:builder_page.composition]]</dt><dd id='build-summary-composition'>[[text:builder_page.initializing]]</dd></div><div><dt>[[text:builder_page.evaluation]]</dt><dd id='build-summary-evaluation'>[[text:builder_page.initializing]]</dd></div><div><dt>[[text:builder_page.admission]]</dt><dd id='build-summary-admission'>[[text:builder_page.initializing]]</dd></div><div><dt>[[text:builder_page.trajectory]]</dt><dd id='build-summary-trajectory'>[[text:builder_page.initializing]]</dd></div><div><dt>[[text:builder_page.budget_guards]]</dt><dd id='build-summary-budget'>[[text:builder_page.initializing]]</dd></div><div><dt>[[text:builder_page.local_serving]]</dt><dd id='build-summary-local'>[[text:builder_page.initializing]]</dd></div><div><dt>[[text:builder_page.output]]</dt><dd id='build-summary-output'>[[text:builder_page.initializing]]</dd></div></dl><p class='fieldlabel'>[[text:builder_page.high_level_composition_preview]] <span class='fieldhint'>[[text:builder_page.not_the_final_reviewed_command]]</span></p><code id='buildpreview'>run_matrix ([[text:builder_page.initializing_current_choices]])</code></div>"
             )
         )
         from .builder_sources import source_panel
@@ -2648,7 +2648,7 @@ class BuilderPageMixin:
                 placeholder="meta-llama/Llama-Guard-3-8B",
             )
             + _ui_template(
-                "</div><p class='note'>[[text:builder_page.revision_and_device_are_automatic_the_installed_model_revision_is]]</p><h3>[[text:builder_page.defense_guardrail]] <span class='fieldhint'>the model-backed defense guard (defense-guard = guardrail); MUST be a different model from the scoring guardrail - a guard never grades its own output</span></h3><div class='cols'>"
+                "</div><p class='note'>[[text:builder_page.revision_and_device_are_automatic_the_installed_model_revision_is]]</p><h3>[[text:builder_page.defense_guardrail]] <span class='fieldhint'>[[text:builder_page.the_model_backed_defense_guard_defense_guard_guardrail_must_be_a]]</span></h3><div class='cols'>"
             )
             + text_field(
                 "defense_guardrail_model",
@@ -2805,7 +2805,7 @@ class BuilderPageMixin:
             "name='reset_open_circuits'"
             + (" checked" if prefill.get("reset_open_circuits") == "on" else "")
             + _ui_template(
-                "><span><strong>[[text:builder_page.reset_open_circuits_reset_open_circuits]]</strong> <span class='fieldhint'>measured-lane resume only: operator acknowledgement that the provider/judge fault behind an open circuit was corrected before rerunning the identical lane (runbook section 17); never a default</span></span></label></details><div class='card' id='execution-budgets'><h2>"
+                "><span><strong>[[text:builder_page.reset_open_circuits_reset_open_circuits]]</strong> <span class='fieldhint'>[[text:builder_page.measured_lane_resume_only_operator_acknowledgement_that_the_provi]]</span></span></label></details><div class='card' id='execution-budgets'><h2>"
             )
             + _icon("coins")
             + _ui_template(

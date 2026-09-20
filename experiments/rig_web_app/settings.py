@@ -63,9 +63,7 @@ class SettingsMixin:
             + rows
             + "</table></div>"
             if configured
-            else _ui_template(
-                "<p class='note'>[[text:settings.budgets_not_configured]]</p>"
-            )
+            else _ui_template("<p class='note'>[[text:settings.budgets_not_configured]]</p>")
         )
         return (
             "<div class='card'><h2>"
@@ -655,7 +653,7 @@ class SettingsMixin:
                 "<h1>"
                 + _icon("sliders", size=22)
                 + _ui_template(
-                    "[[text:settings.configuration]]</h1><p class='note'>Edit the operator-local registries in place. Saves are JSON-validated and the prior version is backed up under the console state directory. These files are read fresh by each run, so an edit takes effect on the next job. Secret API keys are managed separately (presence only, never displayed); nothing here shows a stored key.</p>"
+                    "[[text:settings.configuration]]</h1><p class='note'>[[text:settings.edit_the_operator_local_registries_in_place_saves_are_json_valida]]</p>"
                 )
                 + "".join(cards)
             )
@@ -685,7 +683,7 @@ class SettingsMixin:
         banner = seeded
         if saved:
             banner = _ui_template(
-                "<div class='notice blue'><strong>Saved.</strong><p class='note'>[[text:settings.prior_version_backed_up_under_the_console_state_directory]]</p></div>"
+                "<div class='notice blue'><strong>[[text:settings.saved]]</strong><p class='note'>[[text:settings.prior_version_backed_up_under_the_console_state_directory]]</p></div>"
             )
         if error:
             banner = (

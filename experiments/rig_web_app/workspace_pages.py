@@ -534,7 +534,7 @@ class WorkspacePagesMixin:
         self.db.require_workspace(campaign_id)
         campaign = self.db.workspace(campaign_id)
         return (
-            "<p>Campaign: <a href='/campaigns/"
+            _ui_template("<p>[[text:workspace_pages.campaign_copy]] <a href='/campaigns/")
             + campaign_id
             + "'>"
             + html.escape(campaign["name"])
@@ -1197,12 +1197,12 @@ class WorkspacePagesMixin:
                 + "</p>"
             )
             metadata += (
-                "<p>Condition: "
+                _ui_template("<p>[[text:workspace_pages.condition_copy]] ")
                 + html.escape(row["response_condition"] or row["condition_id"])
                 + "</p>"
             )
             metadata += (
-                "<p>Source: "
+                _ui_template("<p>[[text:workspace_pages.source]] ")
                 + (
                     self._workspace_source_link(details["source_ref"])
                     if details.get("source_ref")

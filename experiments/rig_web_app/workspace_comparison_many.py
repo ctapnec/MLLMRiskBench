@@ -397,12 +397,12 @@ def render(data, campaign, query):
                 + f"{valid:,}"
                 + "</summary>"
             )
-            + "<p>Left: "
+            + _ui_template("<p>[[text:workspace_comparison_many.left]] ")
             + label(pair["left"])
-            + "</p><p>Right: "
+            + _ui_template("</p><p>[[text:workspace_comparison_many.right]] ")
             + label(pair["right"])
             + "</p>"
-            + "<p>Judges: "
+            + _ui_template("<p>[[text:workspace_comparison_many.judges]] ")
             + escape(
                 _judge_name(query["left_judge"], data.get("judge_settings", {}).get("left"))
                 if query["left_judge"] != UNJUDGED

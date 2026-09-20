@@ -617,7 +617,7 @@ let current=Number(root.dataset.guideInitial),focusBefore,restoreFocus=true;
 function show(index,focus=false){current=Math.max(0,Math.min(index,panels.length-1));
 panels.forEach((p,i)=>p.hidden=i!==current);steps.forEach((b,i)=>{if(i===current)b.setAttribute('aria-current','step');else b.removeAttribute('aria-current');});
 back.disabled=current===0;next.textContent=current===panels.length-1?[[js:campaign_guide.done]]:[[js:campaign_guide.next]];
-root.querySelector('[data-guide-progress]').textContent=[[js:campaign_guide.step]]+(current+1)+' of '+panels.length;
+root.querySelector('[data-guide-progress]').textContent=[[js:campaign_guide.step]]+(current+1)+[[js:campaign_guide.of]]+panels.length;
 if(focus)panels[current].focus();}
 const key='ura-campaign-guide:'+root.dataset.guideKey;
 function launch(){if(dialog.open||!dialog.showModal||window.uraBusy?.isBusy())return;

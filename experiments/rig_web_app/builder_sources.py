@@ -151,7 +151,7 @@ def source_panel(app, params: dict[str, str], *, unified=False) -> str:
                         + _ui_text("builder_sources.saved_outputs")
                     )
                 )
-                + "</span><small>Run: "
+                + _ui_template("</span><small>[[text:builder_sources.run]] ")
                 + escape(row["run_id"])
                 + "</small></span></label>"
                 for row in rows
@@ -170,7 +170,7 @@ def source_panel(app, params: dict[str, str], *, unified=False) -> str:
             )
             + escape(json.dumps(chosen))
             + _ui_template(
-                "'><p class='note' id='retained-source-help'>[[text:builder_sources.missing_and_truncated_responses_are_included_only_measured_local]]</p><script>document.addEventListener('DOMContentLoaded',()=>{const boxes=Array.from(document.querySelectorAll('[data-source-run]'));const hidden=document.getElementById('retained-source-runs');const sync=()=>{const chosen=boxes.filter(o=>o.checked);hidden.value=JSON.stringify(chosen.map(o=>o.value));document.getElementById('source-run-count').textContent=chosen.length+' run(s) selected';};boxes.forEach(o=>o.addEventListener('change',sync));document.getElementById('builder')?.addEventListener('submit',sync);document.getElementById('source-run-search').addEventListener('input',e=>{const term=e.target.value.toLowerCase();boxes.forEach(o=>{const row=o.closest('label');row.hidden=!row.textContent.toLowerCase().includes(term);});});});</script>"
+                "'><p class='note' id='retained-source-help'>[[text:builder_sources.missing_and_truncated_responses_are_included_only_measured_local]]</p><script>document.addEventListener('DOMContentLoaded',()=>{const boxes=Array.from(document.querySelectorAll('[data-source-run]'));const hidden=document.getElementById('retained-source-runs');const sync=()=>{const chosen=boxes.filter(o=>o.checked);hidden.value=JSON.stringify(chosen.map(o=>o.value));document.getElementById('source-run-count').textContent=chosen.length+[[js:builder_sources.run_s_selected_copy]];};boxes.forEach(o=>o.addEventListener('change',sync));document.getElementById('builder')?.addEventListener('submit',sync);document.getElementById('source-run-search').addEventListener('input',e=>{const term=e.target.value.toLowerCase();boxes.forEach(o=>{const row=o.closest('label');row.hidden=!row.textContent.toLowerCase().includes(term);});});});</script>"
             )
         )
     job_id = params.get("retained_sources_job", "")

@@ -139,7 +139,7 @@ def panel(app, params):
         )
         + escape(params.get("campaign_judge_cost", ""))
         + _ui_template(
-            '"></label></div></fieldset><p>[[text:campaign_flow.assessment_uses_saved_measured_answers_in_this_campaign_including]]</p><script>document.addEventListener("DOMContentLoaded",()=>{const mode=document.querySelector("[name=campaign_inputs]");const haiku=document.querySelector("[name=campaign_haiku]");const update=()=>{const campaign=document.querySelector("[name=work_kind]:checked")?.value==="campaign";document.querySelectorAll("[data-campaign-only]").forEach(e=>{e.hidden=!campaign;e.querySelectorAll("input,select").forEach(i=>i.disabled=!campaign);});document.querySelectorAll("[data-review-campaign]").forEach(e=>e.textContent=campaign?[[js:campaign_flow.review_campaign]]:"Compose & review");document.querySelectorAll("[data-saved-inputs]").forEach(e=>{e.hidden=!campaign||mode.value!=="saved";e.querySelectorAll("input,select,button").forEach(i=>i.disabled=e.hidden);});document.querySelectorAll("[data-campaign-haiku]").forEach(e=>{e.hidden=!haiku.checked;e.querySelectorAll("input,select").forEach(i=>i.disabled=e.hidden||!campaign);});};document.querySelectorAll("[name=work_kind]").forEach(e=>e.addEventListener("change",update));mode.addEventListener("change",update);haiku.addEventListener("change",update);update();});</script></section>'
+            '"></label></div></fieldset><p>[[text:campaign_flow.assessment_uses_saved_measured_answers_in_this_campaign_including]]</p><script>document.addEventListener("DOMContentLoaded",()=>{const mode=document.querySelector("[name=campaign_inputs]");const haiku=document.querySelector("[name=campaign_haiku]");const update=()=>{const campaign=document.querySelector("[name=work_kind]:checked")?.value==="campaign";document.querySelectorAll("[data-campaign-only]").forEach(e=>{e.hidden=!campaign;e.querySelectorAll("input,select").forEach(i=>i.disabled=!campaign);});document.querySelectorAll("[data-review-campaign]").forEach(e=>e.textContent=campaign?[[js:campaign_flow.review_campaign]]:[[js:campaign_flow.compose_review]]);document.querySelectorAll("[data-saved-inputs]").forEach(e=>{e.hidden=!campaign||mode.value!=="saved";e.querySelectorAll("input,select,button").forEach(i=>i.disabled=e.hidden);});document.querySelectorAll("[data-campaign-haiku]").forEach(e=>{e.hidden=!haiku.checked;e.querySelectorAll("input,select").forEach(i=>i.disabled=e.hidden||!campaign);});};document.querySelectorAll("[name=work_kind]").forEach(e=>e.addEventListener("change",update));mode.addEventListener("change",update);haiku.addEventListener("change",update);update();});</script></section>'
         )
     )
 
@@ -332,7 +332,7 @@ def review(app, operation):
         "[[text:campaign_flow.collects_answers_and_completes_the_selected_assessments_no_calls]]</p>"
     )
     body += (
-        "<p>Models: "
+        _ui_template("<p>[[text:campaign_flow.models]] ")
         + html.escape(", ".join(filter(None, (params.get("api"), params.get("local")))))
         + "</p>"
     )

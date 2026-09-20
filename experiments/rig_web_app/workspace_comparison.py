@@ -404,7 +404,9 @@ def _comparison_body(db, campaign, query):
                 form += (
                     "<p class='fieldhint' data-comparison-scope='"
                     + side
-                    + "' style='overflow-wrap:anywhere'>Only "
+                    + _ui_template(
+                        "' style='overflow-wrap:anywhere'>[[text:workspace_comparison.only]] "
+                    )
                     + html.escape(owners[owner])
                     + " / "
                     + html.escape(many.model_label(model))
@@ -442,9 +444,9 @@ def _comparison_body(db, campaign, query):
                             ),
                         )
                     )
-                    + "</p><p>Frameworks: "
+                    + _ui_template("</p><p>[[text:workspace_comparison.frameworks]] ")
                     + html.escape(_condition_sources(selected, "frameworks"))
-                    + "</p><p>Corpora: "
+                    + _ui_template("</p><p>[[text:workspace_comparison.corpora]] ")
                     + html.escape(_condition_sources(selected, "corpora"))
                     + _ui_template(
                         "</p><p>[[text:workspace_comparison.similar_token_allowances_do_not_make_conditions_identical_retaine]]</p></details>"

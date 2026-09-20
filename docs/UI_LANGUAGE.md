@@ -46,6 +46,8 @@ independent of the UI catalog and can still execute directly.
    rig. Reference coverage rejects missing and unused messages and dynamic
    template arguments. Test escaping, mobile layout, unsaved controls and
    JavaScript-created messages, not only the server-rendered heading.
+   Include labels split around dynamic values and summaries rebuilt by scripts;
+   an unchanged English screenshot alone cannot establish catalog coverage.
 4. Exercise the relevant real page and its errors, loading states and recovery
    controls. Language work must not change execution semantics or research data.
 

@@ -105,10 +105,10 @@ def judgment_breakdown_html(rows, *, settings=None):
             + "</svg><p>"
             + html.escape(counts)
             + _ui_template(
-                "</p><details><summary>[[text:workspace_judging_charts.exact_generation_and_judging_conditions]]</summary><p>Generation: "
+                "</p><details><summary>[[text:workspace_judging_charts.exact_generation_and_judging_conditions]]</summary><p>[[text:workspace_judging_charts.generation]] "
             )
             + html.escape(first["condition_id"])
-            + "</p><p>Judge: "
+            + _ui_template("</p><p>[[text:workspace_judging_charts.judge]] ")
             + html.escape(first["judge_id"])
             + "</p></details></figure>"
         )

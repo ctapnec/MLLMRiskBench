@@ -870,7 +870,7 @@ function updateUnknownPrecisionBadges(){
 var labels={none:'16-bit',fp8:[[js:ui.8_bit_fp8]],bitsandbytes:[[js:ui.4_bit_bitsandbytes]],
 awq:[[js:ui.4_bit_awq]],gptq:[[js:ui.4_bit_gptq]]};
 form.querySelectorAll(\".modelrow[data-compatible='unknown']\").forEach(function(row){
-var badge=row.querySelector('.precision-badge');var select=row.querySelector([[js:ui.modelquant_select]]);
+var badge=row.querySelector('.precision-badge');var select=row.querySelector('.modelquant select');
 var label=badge&&badge.querySelector('.precision-label');
 var tip=badge&&badge.querySelector('.tiptext');
 if(!badge||!select||!label){return;}var value=select.value;
@@ -880,7 +880,7 @@ if(tip){tip.textContent=value==='auto'?
 [[js:ui.the_operator_must_choose_a_per_model_precision_before_a_live_run]]:
 [[js:ui.operator_selected_precision_hardware_fit_remains_unknown]];}});
 form.querySelectorAll(\".modelrow[data-profile-overrides='true']\").forEach(function(row){
-var select=row.querySelector([[js:ui.modelquant_select]]);if(!select){return;}
+var select=row.querySelector('.modelquant select');if(!select){return;}
 var option=select.options[select.selectedIndex];var fit=option&&option.getAttribute('data-fit');
 if(!fit){return;}row.setAttribute('data-compatible',fit);
 var disabled=row.getAttribute('data-config-invalid')==='true'||fit==='false';
@@ -1002,7 +1002,7 @@ var targets=checkedKind('api','data-model').concat(
 checkedKind('local','data-model'));
 var targetOut=document.getElementById('target-model-summary');
 if(targetOut){targetOut.textContent=targets.length?
-targets.length+' selected: '+targets.join(', '):[[js:ui.no_target_models_selected]];}
+targets.length+[[js:ui.selected]]+targets.join(', '):[[js:ui.no_target_models_selected]];}
 var judgeInput=document.getElementById('judge-model-input');
 var judgeOut=document.getElementById('judge-model-summary');
 if(judgeOut){judgeOut.textContent=judgeInput&&judgeInput.value?
@@ -1139,10 +1139,10 @@ if(checkedName('verify_model_sha256')){parts.push('--verify-model-sha256');}
 var stale=namedValue('lock_stale_seconds','');if(stale){parts.push('--lock-stale-seconds '+stale);}
 var mods=checked('.modbox','data-mod');var targets=api.concat(loc);
 form.querySelector('input[name=modality_scope]').value=mods.join(',');
-setBuildSummary('build-summary-composition',mode+'; modalities: '+
-selectionLabel(mods)+'; targets: '+selectionLabel(drySynthetic?[]:targets)+
-'; corpora: '+selectionLabel(drySynthetic?[[[js:ui.synth_automatic]]]:arms)+
-'; attacks: '+selectionLabel(fw));
+setBuildSummary('build-summary-composition',mode+[[js:ui.modalities]]+
+selectionLabel(mods)+[[js:ui.targets]]+selectionLabel(drySynthetic?[]:targets)+
+[[js:ui.corpora]]+selectionLabel(drySynthetic?[[[js:ui.synth_automatic]]]:arms)+
+[[js:ui.attacks]]+selectionLabel(fw));
 var judgeModel=namedValue('judge_model',[[js:ui.not_selected]]);
 var approx=checkedName('approximate_common_metrics')?'enabled':'off';
 var defense=namedValue('defense','none');var defenseGuard=namedValue('defense_guard','rules');
@@ -1156,9 +1156,9 @@ var deferredLocalJudge=loc.length&&!drySynthetic&&!responseConditioned&&
 (jg.indexOf('guardrail')>=0||localJudge)&&
 (mode==='measured'||mode==='diagnostic_canary'||mode==='attestation_probe');
 var judgeSchedule=deferredLocalJudge?[[js:ui.post_factum_after_target_gpu_release]]:'inline';
-setBuildSummary('build-summary-evaluation','judges: '+selectionLabel(jg)+
- '; schedule: '+judgeSchedule+[[js:ui.llm_model]]+judgeModel+
- [[js:ui.approximate_metrics]]+approx+'; defense: '+
+setBuildSummary('build-summary-evaluation',[[js:ui.judges]]+selectionLabel(jg)+
+ [[js:ui.schedule]]+judgeSchedule+[[js:ui.llm_model]]+judgeModel+
+ [[js:ui.approximate_metrics]]+approx+[[js:ui.defense]]+
 defense+' / '+defenseGuard+[[js:ui.scoring_guardrail]]+scoringGuard+
 [[js:ui.defense_guardrail]]+defenseGuardrail);
 var completeAtt=0;var incompleteAtt=0;
@@ -1168,22 +1168,22 @@ var digest=(fields[1]&&fields[1].value.trim())||'';
 if(path&&digest){completeAtt++;}else if(path||digest){incompleteAtt++;}});
 setBuildSummary('build-summary-admission',[[js:ui.project_receipt]]+
 pairState('project_revision','project_revision_sha')+[[js:ui.source_receipt]]+
-pairState('source_conformance','source_conformance_sha')+'; attestations: '+
-completeAtt+' complete'+(incompleteAtt?(', '+incompleteAtt+' incomplete'):'')+
-'; scope: '+namedValue('scope',[[js:ui.not_set]])+[[js:ui.max_age]]+namedValue('max_age',[[js:ui.not_set]]));
+pairState('source_conformance','source_conformance_sha')+[[js:ui.attestations]]+
+completeAtt+[[js:ui.complete_count]]+(incompleteAtt?(', '+incompleteAtt+[[js:ui.incomplete_count]]):'')+
+[[js:ui.scope]]+namedValue('scope',[[js:ui.not_set]])+[[js:ui.max_age]]+namedValue('max_age',[[js:ui.not_set]]));
 setBuildSummary('build-summary-trajectory',[[js:ui.per_arm_limit]]+namedValue('limit',
 localOnlyMeasured?[[js:ui.0_complete_release]]:[[js:ui.not_set]])+
  [[js:ui.sampling_policy]]+namedValue('sampling_policy',[[js:ui.legacy_seeded_default]])+
- [[js:ui.sample_seed]]+namedValue('sample_seed',[[js:ui.not_set]])+'; seeds: '+
- namedValue('seeds',[[js:ui.not_set]])+'; queries: '+namedValue('max_queries',[[js:ui.not_set]])+
- '; turns: '+namedValue('max_turns',[[js:ui.not_set]])+[[js:ui.answer_retries]]+
+ [[js:ui.sample_seed]]+namedValue('sample_seed',[[js:ui.not_set]])+[[js:ui.seeds]]+
+ namedValue('seeds',[[js:ui.not_set]])+[[js:ui.queries]]+namedValue('max_queries',[[js:ui.not_set]])+
+ [[js:ui.turns]]+namedValue('max_turns',[[js:ui.not_set]])+[[js:ui.answer_retries]]+
  namedValue('target_answer_retries','1')+[[js:ui.hosted_http_error_retries]]+
- (api.length?'3 (max 4 attempts)':'N/A')+'; group: '+namedValue('group',[[js:ui.cli_default]])+
+ (api.length?[[js:ui.3_max_4_attempts]]:'N/A')+[[js:ui.group]]+namedValue('group',[[js:ui.cli_default]])+
  [[js:ui.ideator_pair_limit]]+namedValue('ideator_pair_limit','0 (all)')+
 [[js:ui.exclude_tool_conditioned]]+(checkedName('exclude_tool_conditioned')?'on':'off')+
 [[js:ui.reset_open_circuits]]+(checkedName('reset_open_circuits')?'on':'off')+
 [[js:ui.lock_stale_seconds]]+namedValue('lock_stale_seconds',[[js:ui.cli_default]]));
-setBuildSummary('build-summary-budget','target / judge / HTTP: '+
+setBuildSummary('build-summary-budget',[[js:ui.target_judge_http]]+
 (checkedName('automatic_caps')?[[js:ui.calculated_during_review]]:
 namedValue('cap_target',[[js:ui.not_set]])+' / '+namedValue('cap_judge',[[js:ui.not_set]])+
  ' / '+namedValue('cap_http',[[js:ui.not_set]]))+[[js:ui.local_process_wall_time_cap]]+
@@ -1192,9 +1192,9 @@ namedValue('deadline',[[js:ui.not_set]])+[[js:ui.s_not_a_completion_timeout]]);
 var localPrecisions=[];
 form.querySelectorAll(\".modelbox[data-kind='local'][data-target-selected='true']\")
 .forEach(function(input){var row=input.closest('.modelrow');var precision=row&&
-row.querySelector([[js:ui.modelquant_select]]);if(precision){localPrecisions.push(
+row.querySelector('.modelquant select');if(precision){localPrecisions.push(
 (input.getAttribute('data-model')||'local')+': '+precision.value);}});
-setBuildSummary('build-summary-local','dtype: '+namedValue('dtype','auto')+
+setBuildSummary('build-summary-local',[[js:ui.dtype]]+namedValue('dtype','auto')+
 [[js:ui.model_file_checks]]+(checkedName('verify_model_sha256')?[[js:ui.full_sha_slow]]:[[js:ui.metadata_no_weight_hashing]])+
 [[js:ui.default_quantization]]+namedValue('quantization','auto')+
 (localPrecisions.length?[[js:ui.selected_model]]+localPrecisions.join(', '):''));
@@ -1270,7 +1270,7 @@ div.setAttribute('data-row',n);
 div.innerHTML=\"<input class='wide' type='text' name='att_path\"+n+
 \"' placeholder='runs/thesis/attest/receipt.live-attestation.json'>\"+
 \"<input class='wide' type='text' name='att_sha\"+n+
-("' placeholder='"+[[jshtml:ui.exact_64_hex_sha256]]+"'>");
+(\"' placeholder='\"+[[jshtml:ui.exact_64_hex_sha256]]+\"'>\");
 rows.appendChild(div);refresh();});}
 form.addEventListener('submit',function(){
 form.querySelector(\"input[name=corpora]\").value=checked('.armbox','data-arm').join(',');

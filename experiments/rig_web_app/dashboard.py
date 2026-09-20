@@ -223,7 +223,7 @@ class DashboardMixin:
                         + _ui_template("</strong> [[text:dashboard.the]] <code>")
                         + f"{html.escape(form)}"
                         + _ui_template(
-                            "</code> [[text:dashboard.form_on_the]] <a href='/commands'>[[text:dashboard.run]]</a> page.</p>"
+                            "</code> [[text:dashboard.form_on_the]] <a href='/commands'>[[text:dashboard.run]]</a> [[text:dashboard.page_copy]]</p>"
                         )
                     )
                     + note
@@ -386,7 +386,9 @@ class DashboardMixin:
                         " - <span class='badge amber'>[[text:dashboard.auto_fetched_verify]]</span>"
                     )
                     if row.get("auto_fetched")
-                    else " - <span class='badge gray'>operator-set</span>"
+                    else _ui_template(
+                        " - <span class='badge gray'>[[text:dashboard.operator_set]]</span>"
+                    )
                 )
                 cost_cell = (
                     "<td><strong>"
@@ -549,7 +551,7 @@ class DashboardMixin:
             + "</table></div>"
             + detail_table
             + _ui_template(
-                "<p class='note'>[[text:dashboard.tokens_are_the_recorded_usage_read_from_completion_bound_run_arti]] <a href='/config?file=pricing'>[[text:dashboard.pricing]]</a> table (effective-dated); a missing token count or price renders as N/A, never as zero. <code>target_failed</code>/<code>judge_failed</code> rows are observable paid work from cells that later errored (operational spend only, never part of any scientific result); <code>reserved</code> [[text:dashboard.rows_are_attempted_calls_with_no_recorded_token_detail_shown_as_n]] <a href='/config?file=budgets'>[[text:dashboard.budgets]]</a> [[text:dashboard.config_if_a_provider_ever_reports_an_actually_billed_amount_in_an]]</p></div>"
+                "<p class='note'>[[text:dashboard.tokens_are_the_recorded_usage_read_from_completion_bound_run_arti]] <a href='/config?file=pricing'>[[text:dashboard.pricing]]</a> [[text:dashboard.table_effective_dated_a_missing_token_count_or_price_renders_as_n]] <code>target_failed</code>/<code>judge_failed</code> [[text:dashboard.rows_are_observable_paid_work_from_cells_that_later_errored_opera]] <code>reserved</code> [[text:dashboard.rows_are_attempted_calls_with_no_recorded_token_detail_shown_as_n]] <a href='/config?file=budgets'>[[text:dashboard.budgets]]</a> [[text:dashboard.config_if_a_provider_ever_reports_an_actually_billed_amount_in_an]]</p></div>"
             )
         )
 
@@ -1767,7 +1769,7 @@ class DashboardMixin:
             "<div class='card'><h2>"
             + _icon("chart")
             + _ui_template(
-                "[[text:dashboard.runner_cell_aggregates]] <span class='badge blue'>[[text:dashboard.exact_job]]</span></h2><p class='note'>Digest-verified <code>*.results.jsonl</code> [[text:dashboard.rows_bound_by_each_completed_cell_marker_this_is_a_per_job_view_o]]</p>"
+                "[[text:dashboard.runner_cell_aggregates]] <span class='badge blue'>[[text:dashboard.exact_job]]</span></h2><p class='note'>[[text:dashboard.digest_verified]] <code>*.results.jsonl</code> [[text:dashboard.rows_bound_by_each_completed_cell_marker_this_is_a_per_job_view_o]]</p>"
             )
             + "".join(sections)
             + "</div>"
@@ -2140,7 +2142,7 @@ class DashboardMixin:
             )
         else:
             usage = (
-                "<p>Haiku: "
+                _ui_template("<p>[[text:dashboard.haiku]] ")
                 + f"{completion['judge_calls']}"
                 + _ui_text("dashboard.logical_calls")
                 + f"{completion['http_attempts']}"
@@ -3085,7 +3087,7 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
                 + f"{len(rows):,}"
                 + _ui_template("</strong> [[text:dashboard.terminal_rows_across]] <strong>")
                 + f"{len(cohort_order):,}"
-                + "</strong> cohorts.</p>"
+                + _ui_template("</strong> [[text:dashboard.cohorts]]</p>")
             )
             + _ui_template("<h3>[[text:dashboard.rows_by_cohort]]</h3>")
             + cohort_chart
@@ -3427,7 +3429,7 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
                 + chart
                 + stability_chart
                 + _ui_template(
-                    "<div class='scroll'><table><tr><th>model_spec</th><th>corpus_arm</th><th>[[text:dashboard.attacker_2]]</th><th>[[text:dashboard.defense]]</th><th>[[text:dashboard.value_2]]</th><th>[[text:dashboard.ci_low_ci_high]]</th><th>n_records</th><th>n_clusters</th><th>decided/completed</th><th>[[text:dashboard.failed_missing_responses_all_causes]]</th><th>[[text:dashboard.model_queries_reference_uses]]</th><th>[[text:dashboard.evidence_2]]</th><th>[[text:dashboard.reliability]]</th></tr>"
+                    "<div class='scroll'><table><tr><th>model_spec</th><th>corpus_arm</th><th>[[text:dashboard.attacker_2]]</th><th>[[text:dashboard.defense]]</th><th>[[text:dashboard.value_2]]</th><th>[[text:dashboard.ci_low_ci_high]]</th><th>n_records</th><th>n_clusters</th><th>[[text:dashboard.decided_completed]]</th><th>[[text:dashboard.failed_missing_responses_all_causes]]</th><th>[[text:dashboard.model_queries_reference_uses]]</th><th>[[text:dashboard.evidence_2]]</th><th>[[text:dashboard.reliability]]</th></tr>"
                 )
                 + "".join(table_rows)
                 + "</table></div>"
@@ -3463,7 +3465,7 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
             )
             + "</h2>"
             + _ui_template(
-                "<p class='note'>[[text:dashboard.deterministic_level_2_export]]<code>common.estimates</code>). One chart per COMPATIBLE metric stratum (exact run/served target/source/policy/modality/population/attacker/defense/judge/sampling condition); distinct targets or runs are not presented as a ranking, and no universal safety score exists. Diagnostic evidence cannot reach this report by construction.</p>"
+                "<p class='note'>[[text:dashboard.deterministic_level_2_export]]<code>common.estimates</code>[[text:dashboard.one_chart_per_compatible_metric_stratum_exact_run_served_target_s]]</p>"
             )
             + self._render_generation_conditions(doc)
             + "".join(sections)
