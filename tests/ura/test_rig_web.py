@@ -4427,8 +4427,8 @@ def test_external_campaign_separates_process_results_from_model_execution(
     assert "model + support" in jobs and "not reported" in jobs
     assert "model execution: not reported" in jobs
     assert "A passed support task proves only that its command exited successfully" in detail
-    assert "<td>support</td><td>passed</td>" in detail
-    assert "<td>model</td><td>passed</td>" in detail
+    assert "<td>support</td><td>Passed</td>" in detail
+    assert "<td>model</td><td>Passed</td>" in detail
 
     (campaign / "model-execution.jsonl").write_text(
         json.dumps({
@@ -4919,7 +4919,7 @@ def test_external_campaign_malformed_and_oversized_logs_do_not_break_jobs(
     assert status == 200
     assert "All (<span class='chip-count'>1</span>)" in text
     assert "local-only-20260817T000000Z" in text
-    assert "<span class='badge gray'>unknown</span>" in text
+    assert "<span class='badge gray'>Unknown</span>" in text
     assert "(last recorded)" not in text
     assert "activity status unavailable" in text
     assert "0 tasks finished" not in text
@@ -5066,7 +5066,7 @@ def test_dashboard_lists_external_indeterminate_and_failed_campaigns(
     assert "<span class='value'><span class='dot amber'></span>1</span>" in running
     assert "running (external task-log report)" in running
     assert "External running state is a task-log report" not in running
-    assert "Needs attention" in running and "external, unknown" in running
+    assert "Needs attention" in running and "external, Unknown" in running
     assert "/jobs/campaign/local-only-20260817T000000Z" in running
     assert "<img src=x onerror=alert(1)>" not in running
     assert "&lt;img src=x onerror=alert(1)&gt;" in running
@@ -5092,7 +5092,7 @@ def test_dashboard_lists_external_indeterminate_and_failed_campaigns(
     assert status == 200
     assert "<span class='value'><span class='dot blue'></span>0</span>" in failed
     assert "<span class='value'><span class='dot red'></span>1</span>" in failed
-    assert "Needs attention" in failed and "external, blocked" in failed
+    assert "Needs attention" in failed and "external, Blocked" in failed
     assert "wrong_release" in failed
     assert "/jobs/campaign/local-only-20260817T000000Z" in failed
     assert "/jobs/campaign/local-only-20260817T000000Z/stop" not in failed
@@ -5101,7 +5101,7 @@ def test_dashboard_lists_external_indeterminate_and_failed_campaigns(
     status, _, body = app.handle("GET", "/jobs")
     jobs = body.decode("utf-8")
     assert status == 200 and "Blocked (<span class='chip-count'>1</span>)" in jobs
-    assert "<span class='badge red'>blocked</span>" in jobs
+    assert "<span class='badge red'>Blocked</span>" in jobs
     assert "(last recorded)" not in jobs
     assert "task processes: 1 succeeded; 1 failed; 0 skipped; 0 active" in jobs
     assert "pending: 1" in jobs
@@ -5176,8 +5176,8 @@ def test_dashboard_surfaces_indeterminate_console_jobs(
     assert "orphaned / unknown" in text
     assert "Needs attention" in text
     assert "console-orphaned" in text and "console-unknown" in text
-    assert "<span class='badge amber'>orphaned</span>" in text
-    assert "<span class='badge amber'>unknown</span>" in text
+    assert "<span class='badge amber'>Orphaned</span>" in text
+    assert "<span class='badge amber'>Unknown</span>" in text
     app.jobs.clear()
     app.close()
 
@@ -6829,7 +6829,7 @@ def test_v1_database_migrates_preserving_history(tmp_path: Path) -> None:
     assert rows is not None and str(rows[0]["state"]) == "orphaned"
     dashboard = app.handle("GET", "/")[2].decode("utf-8")
     assert "Needs attention" in dashboard and "job-v1" in dashboard
-    assert "<span class='badge amber'>orphaned</span>" in dashboard
+    assert "<span class='badge amber'>Orphaned</span>" in dashboard
     app.close()
 
 

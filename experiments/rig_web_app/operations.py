@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .display_labels import label as _ui_label
 from .i18n import template as _ui_template, text as _ui_text
 
 import hashlib
@@ -1059,7 +1060,7 @@ class OperationsMixin:
                 "<li>"
                 + html.escape(_TITLES[row["kind"]])
                 + " - "
-                + html.escape(row["status"])
+                + html.escape(_ui_label(row["status"]))
                 + ' - <a href="/operations/'
                 + row["id"]
                 + '">'

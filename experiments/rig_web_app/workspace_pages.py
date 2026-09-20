@@ -747,7 +747,7 @@ class WorkspacePagesMixin:
                         "<tr><td>"
                         + link
                         + "</td><td>"
-                        + html.escape(row["role"])
+                        + html.escape(_ui_label(row["role"]))
                         + "</td><td>"
                         + (
                             _ui_text("workspace_pages.console")

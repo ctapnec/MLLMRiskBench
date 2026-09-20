@@ -234,10 +234,10 @@ def test_activity_is_paginated_and_keeps_failed_process_status(tmp_path):
             app.db.upsert_job(job)
             app.db.attach_workspace_member(campaign, "job", job.job_id, "collection")
         page = app.handle("GET", f"/campaigns/{campaign}?section=activity")[2].decode()
-        assert page.count("<td>failed</td>") == 50
+        assert page.count("<td>Failed</td>") == 50
         assert "Next</a>" in page
         next_page = app.handle("GET", f"/campaigns/{campaign}?section=activity&page=1")[2].decode()
-        assert next_page.count("<td>failed</td>") == 2
+        assert next_page.count("<td>Failed</td>") == 2
         assert "Previous</a>" in next_page
     finally:
         app.close()

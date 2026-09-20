@@ -669,8 +669,9 @@ def test_installer_campaign_uses_its_exact_named_session_liveness(
     )
     assert observed.state == expected_state
     assert observed.status_tag == expected_state
-    assert f"<span class='badge {expected_tone}'>{expected_state}</span>" in jobs
-    assert f"<span class='dot {expected_tone}'></span>{expected_state}" in detail
+    expected_label = {"running": "Running", "orphaned": "Orphaned"}[expected_state]
+    assert f"<span class='badge {expected_tone}'>{expected_label}</span>" in jobs
+    assert f"<span class='dot {expected_tone}'></span>{expected_label}" in detail
     if expected_state == "orphaned":
         assert observed.active_tasks == ()
         assert observed.task_outcomes == (

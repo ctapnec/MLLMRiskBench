@@ -3,6 +3,7 @@
 # ruff: noqa: F811
 
 import html
+from types import SimpleNamespace
 from urllib.parse import urlsplit
 
 import pytest
@@ -13,6 +14,7 @@ from test_operator_operations import app  # noqa: F401
 from test_rig_web_busy_browser import browser  # noqa: F401
 from test_builder_native_judging import native, complete_preparation  # noqa: F401
 from test_builder_collection import study  # noqa: F401
+from test_rig_web import _write_external_engineering_campaign
 
 
 def saved_job(app, command="run_matrix", state="failed"):
@@ -174,3 +176,86 @@ def test_jobs_filter_uses_raw_state_despite_translated_visible_labels(
         assert page.evaluate("document.documentElement.scrollWidth<=innerWidth+1")
     finally:
         page.close()
+
+
+@pytest.mark.parametrize("state", ["preparing", "ready", "complete", "failed", "stopped"])
+def test_operation_status_is_translated_without_changing_continuation(app, monkeypatch, state):
+    assert state in display_labels.LABELS
+    monkeypatch.setitem(display_labels.LABELS, state, "Operation <&>")
+    owner = app.db.create_workspace("Operations", "local")
+    key = app._start_operation("local-judging", dict(campaign_id=owner))
+    app._operations[key]["status"] = state
+    body = app._operation_links(owner)
+    assert "Operation &lt;&amp;&gt;" in body
+    assert "/operations/" + key in body
+    assert app._operations[key]["status"] == state
+
+
+def test_framework_campaign_summary_translates_state_without_loading_runtime(app, monkeypatch):
+    monkeypatch.setitem(display_labels.LABELS, "failed", "Runtime <&>")
+    snapshot = SimpleNamespace(
+        available=True,
+        rows=[],
+        campaign_state="failed",
+        campaign_status_tag="failed",
+        campaign_route_id="example",
+        lock_id="a" * 64,
+    )
+    monkeypatch.setattr(app.framework_runtimes, "snapshot", lambda: snapshot)
+    assert "Runtime &lt;&amp;&gt;" in app._framework_runtime_panel()
+    assert snapshot.campaign_state == snapshot.campaign_status_tag == "failed"
+
+
+def test_every_framework_action_has_a_display_label():
+    assert {"install", "resume", "verify", "repair"} <= display_labels.LABELS.keys()
+
+
+@pytest.mark.parametrize("role", ["preparation", "collection", "judging", "analysis", "budget"])
+def test_campaign_activity_stage_is_display_only(app, monkeypatch, role):
+    assert role in display_labels.LABELS
+    monkeypatch.setitem(display_labels.LABELS, role, "Stage <&>")
+    owner = app.db.create_workspace("Stages", "local")
+    job = saved_job(app)
+    app.db.attach_workspace_member(owner, "job", job.job_id, role)
+    status, _, body = app.handle("GET", "/campaigns/" + owner + "?section=activity")
+    assert status == 200 and b"Stage &lt;&amp;&gt;" in body
+    assert app.db.workspace_activity(owner)[0]["role"] == role
+
+
+def test_failed_runtime_action_uses_catalog_but_keeps_resume_value(app, monkeypatch):
+    monkeypatch.setitem(display_labels.LABELS, "resume", "Continuation <&>")
+    runtime = SimpleNamespace(
+        latest=SimpleNamespace(status="failed", action="resume", at=""),
+        plan_action="resume",
+        display_name="Example",
+        framework="example",
+        version="1",
+        runtime="example",
+        kind="bridge",
+    )
+    snapshot = SimpleNamespace(
+        available=True,
+        rows=[runtime],
+        campaign_state="failed",
+        campaign_status_tag="failed",
+        campaign_route_id="example",
+        lock_id="a" * 64,
+    )
+    monkeypatch.setattr(app.framework_runtimes, "snapshot", lambda: snapshot)
+    body = app._framework_runtime_panel()
+    assert "Continuation &lt;&amp;&gt;" in body
+    assert "name='action' value='resume'" in body
+
+
+@pytest.mark.parametrize("surface", ["overview", "detail"])
+def test_external_campaign_status_uses_catalog_without_claiming_live_work(
+    app, monkeypatch, surface
+):
+    monkeypatch.setitem(display_labels.LABELS, "unknown", "Unconfirmed <&>")
+    folder = _write_external_engineering_campaign(app.results_root)
+    route = "/" if surface == "overview" else "/jobs/campaign/" + folder.name
+    status, _, body = app.handle("GET", route)
+    assert status == 200
+    assert b"Unconfirmed &lt;&amp;&gt;" in body
+    assert not app.jobs
+    assert app.db.health()["counts"]["jobs"] == 0

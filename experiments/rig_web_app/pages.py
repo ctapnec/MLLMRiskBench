@@ -525,7 +525,7 @@ class PagesMixin:
                         )
                         + f"{tag_tone}"
                         + _ui_template("'>[[text:pages.external_2]] ")
-                        + f"{html.escape(campaign.status_tag)}"
+                        + f"{html.escape(_ui_label(campaign.status_tag))}"
                         + "</span>"
                         + f"{detail}"
                         + "</td><td>"
@@ -1786,7 +1786,7 @@ class PagesMixin:
             + "</td><td>"
             + html.escape(role)
             + "</td><td>"
-            + html.escape(status)
+            + html.escape(_ui_label(status))
             + "</td></tr>"
             for task, status, role in campaign.task_outcomes
         )
@@ -1875,7 +1875,7 @@ class PagesMixin:
                 )
                 + f"{tone}"
                 + "'></span>"
-                + f"{html.escape(campaign.status_tag)}"
+                + f"{html.escape(_ui_label(campaign.status_tag))}"
                 + _ui_template(
                     "</span><span class='label'>[[text:pages.campaign_status]]</span></div></div><div class='card'><div class='stat'><span class='value'>"
                 )

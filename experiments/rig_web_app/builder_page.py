@@ -283,7 +283,7 @@ class BuilderPageMixin:
                     "builder_page.the_retained_task_log_has_no_terminal_event_the_exact_plan_remain"
                 )
             elif latest_reports_running:
-                campaign_label = (
+                campaign_label = _ui_label(
                     snapshot.campaign_status_tag.strip()
                     or snapshot.campaign_state.strip()
                     or "unknown"
@@ -357,7 +357,11 @@ class BuilderPageMixin:
                         + ". "
                     ) + history
                 elif latest.status == "failed":
-                    attempted = latest.action or _ui_text("builder_page.installer_action")
+                    attempted = (
+                        _ui_label(latest.action)
+                        if latest.action
+                        else _ui_text("builder_page.installer_action")
+                    )
                     history = (
                         _ui_text("builder_page.last")
                         + f"{attempted}"
@@ -428,7 +432,7 @@ class BuilderPageMixin:
             )
             + campaign_tone
             + "'>"
-            + html.escape(snapshot.campaign_status_tag)
+            + html.escape(_ui_label(snapshot.campaign_status_tag))
             + "</span>"
             + campaign_link
             + _ui_template(
