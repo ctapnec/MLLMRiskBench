@@ -39,6 +39,7 @@ from experiments.rig_web_app.catalog import (
     _SUGGEST_STATIC,
 )
 from experiments.rig_web_app.ui import _BUILDER_SCRIPT
+from experiments.rig_web_app.i18n import text as ui_text
 from ura.sampling import (
     DEFAULT_SAMPLING_POLICY,
     SOURCE_ORDER_CLUSTER_PREFIX,
@@ -439,7 +440,7 @@ def test_builder_sampling_control_and_local_wall_time_keep_cli_semantics(
         assert f"value='{SOURCE_ORDER_CLUSTER_PREFIX}' selected" in selected
         assert "syncSampleSizeControl" in _BUILDER_SCRIPT
         assert "matching no-call preflight" in _BUILDER_SCRIPT
-        assert "Effective selection: " in _BUILDER_SCRIPT
+    assert ui_text("ui.effective_selection_summary") in _BUILDER_SCRIPT
         assert "Math.min(value,exactMax)" in _BUILDER_SCRIPT
         assert "data-base-max='1000'" not in selected
         unknown_range = _opening_tag(selected, "id='sample-limit-range'")
