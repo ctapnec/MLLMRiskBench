@@ -19,8 +19,9 @@ The operator completed the local demonstration and explicitly waived another
 hosted demonstration. The next task is copying retained data, not generating
 another campaign. The rig originals are to remain intact.
 
-The selected copy contains 98,057 files (13.1 GiB), compressed into 14 resumable
-parts totaling 1.63 GiB. Selection includes the console's consistent SQLite
+The selected core copy contains 98,057 files, compressed into 14 resumable
+parts totaling 1.63 GiB. Source-attribution and SVM support supplements bring
+the retained total to 98,088 files (13.15 GiB). Selection includes the console's consistent SQLite
 backup, campaign and demonstration results, referenced engineering artifacts,
 judgments, recoveries, SVM reports, human/Astra review state and referenced media.
 Unrelated regression trees, model weights, framework environments, provider
@@ -28,9 +29,13 @@ secrets and live console process logs are not part of the transfer. Historical
 failed records are retained rather than filtered out of the evidence.
 
 The workstation's existing Ubuntu environment under WSL provides the Linux
-filesystem semantics used by retained paths. Local directory mounts preserve
-those paths without rewriting prompts, answers, scientific identities or stored
-accounting. Only the lightweight console dependencies are needed for browsing.
+filesystem semantics used by retained paths. Active data is on native WSL
+storage at `/mnt/stor/data/ura-work`; only console source is mounted from the
+Windows archive directory. Original paths remain valid without rewriting
+prompts, answers, scientific identities or stored accounting. Only lightweight
+console dependencies are needed for browsing. The initial NTFS data mount was
+replaced after dashboard requests timed out on small-file reads; the native
+working copy returned the cold dashboard in approximately 4.5 seconds.
 
 The console's `--archive-view` option disables mutation requests, direct job
 launches, process recovery, automatic preparation and acquisition continuation.
@@ -42,8 +47,24 @@ extracted working copy supplies the local console's derived caches.
 Acceptance requires compressed-stream integrity, archive member counts, file
 sizes, SQLite record counts and actual local UI/media/export checks. It does not
 repeat model-weight hashing, reinstall framework runtimes or make paid calls.
-Transfer and workstation UI acceptance are in progress; this paragraph is not
-a claim that either has completed.
+Transfer and workstation browsing acceptance are complete. All 98,088 selected
+files passed existence and size checks, the consistent database passed its
+integrity check, and record counts remained unchanged after browsing. Sixteen
+data-backed HTTP routes passed, followed by actual Sol/Qwen matched-condition
+comparison and CSV export, cost CSV export, research SVM CSV/SVG exports and
+retained-artifact access. Desktop screenshots and an emulated 390-pixel mobile
+viewport were checked. Human-review media resolve for the study containing
+seven actual ratings. An old unrated QA study has an empty media index on both
+rig and workstation; its two images are retained and resolve in the later QA
+study. This historical defect is not a transfer loss.
+
+The local service is at `http://127.0.0.1:8644/`, independent of the existing rig
+tunnel on port 8642. Its Start/Stop launchers and restoration notes reside in
+`CampaignArchive/rig-20260920` beside the compressed backup. No provider secrets,
+LLM weights or framework runtimes were copied. The extra initial NTFS extraction
+remains redundant because automatic cleanup was blocked; it is not active data.
+The rig originals remain intact. These migration checks do not assert completion
+of statistical synthesis, academic revision or independent human assessment.
 
 ## Small UI demonstrations
 
@@ -98,8 +119,8 @@ invalid-format assessment. Seven existing local Haiku verdicts remain attached
 to their original answers, with no duplicate paid judging. Live desktop/mobile
 acceptance passed for results, charts, costs, exports and the seven-input
 comparison. The separate small local-run demonstration is also complete as
-described below. The operator's own walkthrough remains outstanding; archive
-transfer has not started.
+described below. This was the state before the operator's final walkthrough;
+the 20 September migration status above supersedes that remaining step.
 
 The [combined campaign guide](SMALL_CAMPAIGNS.md) records concrete fields and
 buttons accepted on the rig. Text/image probes, saved-answer continuation and
