@@ -88,7 +88,7 @@ def page(app, owner):
                 + "&job="
                 + row["job_id"]
                 + _ui_template('">[[text:campaign_assessment.saved_assessment]] ')
-                + html.escape(row["state"])
+                + html.escape(_ui_label(row["state"]))
                 + "</a></li>"
             )
         body += "</ul></section>"

@@ -73,7 +73,7 @@ class PagesMixin:
         if kind == "acquisition_plan":
             return _ui_text("pages.acquisition_plan")
         if kind == "preflight":
-            return "preflight"
+            return _ui_text("pages.preflight_work")
         if kind == "dry_run":
             return _ui_text("pages.offline_dry_run")
         if kind == "attestation_probe":
@@ -87,7 +87,7 @@ class PagesMixin:
         if job.command == "capture_t3mp3st":
             return _ui_text("pages.model_capture")
         if job.command == "harmbench_capture":
-            return "preparation"
+            return _ui_text("pages.preparation_work")
         from .job_presentation import work_label
 
         if label := work_label(job.command, job.argv):
@@ -490,7 +490,7 @@ class PagesMixin:
                     f"<tr><td><a href='/jobs/{html.escape(job.job_id)}'>"
                     f"{html.escape(job.job_id)}</a></td>"
                     f"<td>{html.escape(job.command)} "
-                    f"<span class='badge amber'>{html.escape(state)}</span></td>"
+                    f"<span class='badge amber'>{html.escape(_ui_label(state))}</span></td>"
                     f"<td>{_human_duration(job.runtime_seconds())}</td></tr>",
                 )
             )
@@ -1250,7 +1250,7 @@ class PagesMixin:
                 f"<td>{html.escape(self._job_work_label(job))}</td>"
                 f"<td>{html.escape(self._job_execution_label(job))}</td>"
                 f"<td><span class='dot {tone}'></span>"
-                f"<span class='badge {tone}'>{html.escape(state_tag)}</span></td>"
+                f"<span class='badge {tone}'>{html.escape(_ui_label(state_tag))}</span></td>"
                 f"<td><time class='job-started' data-epoch-ms='{started_ms}'>"
                 f"{started}</time></td>"
                 f"<td>{_human_duration(job.runtime_seconds())}</td>"
@@ -1300,7 +1300,7 @@ class PagesMixin:
                     + "'></span><span class='badge "
                     + f"{tone}"
                     + "'>"
-                    + f"{html.escape(state_tag)}"
+                    + f"{html.escape(_ui_label(state_tag))}"
                     + "</span></td><td><time class='job-started' data-epoch-ms='"
                     + f"{started_ms}"
                     + "'>"
@@ -1407,7 +1407,7 @@ class PagesMixin:
                     + "'></span><span class='badge "
                     + f"{tone}"
                     + "'>"
-                    + f"{html.escape(state_tag)}"
+                    + f"{html.escape(_ui_label(state_tag))}"
                     + "</span></td><td><time class='job-started' data-epoch-ms='"
                     + f"{started_ms}"
                     + "'>"
@@ -1449,7 +1449,7 @@ class PagesMixin:
             )
             + "".join(
                 f"<button type='button' class='chip' data-state='{state}'>"
-                f"{_ui_label(state)} (<span class='chip-count'>{count}</span>)</button>"
+                f"{html.escape(_ui_label(state))} (<span class='chip-count'>{count}</span>)</button>"
                 for state, count in sorted(tallies.items())
             )
             + "</div>"
@@ -1948,7 +1948,7 @@ class PagesMixin:
                 )
                 + f"{tone}"
                 + "'></span>"
-                + f"{html.escape(state_tag)}"
+                + f"{html.escape(_ui_label(state_tag))}"
                 + _ui_template(
                     "</span><span class='label'>[[text:pages.state_2]]</span></div></div><div class='card'><div class='stat'><span class='value'>"
                 )
@@ -2213,7 +2213,7 @@ class PagesMixin:
             "<div class='cols'><div class='card'><div class='stat'><span class='value'><span class='dot "
             + f"{tone}"
             + "'></span>"
-            + f"{html.escape(state_tag)}"
+            + f"{html.escape(_ui_label(state_tag))}"
             + _ui_template(
                 "</span><span class='label'>[[text:pages.state_2]]</span></div></div><div class='card'><div class='stat'><span class='value'>"
             )

@@ -691,7 +691,7 @@ class DashboardMixin:
             rows.append(
                 f"<tr><td>{when}</td>"
                 f"<td><span class='badge {tone.get(state, 'gray')}'>"
-                f"{html.escape(state_tag)}</span></td>"
+                f"{html.escape(_ui_label(state_tag))}</span></td>"
                 f"<td>{html.escape(work_labels.get(kind, kind or 'unknown'))}</td>"
                 f"<td>{html.escape(str(row['command'] or ''))}</td>"
                 f"<td>{link}</td>"

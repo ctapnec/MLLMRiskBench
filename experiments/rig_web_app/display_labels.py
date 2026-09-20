@@ -9,6 +9,11 @@ import json
 from .i18n import text as _ui_text
 
 LABELS = {
+    "absent": _ui_text("labels.absent"),
+    "ambiguous": _ui_text("labels.ambiguous"),
+    "busy": _ui_text("labels.busy"),
+    "external": _ui_text("labels.external"),
+    "owned": _ui_text("labels.owned"),
     "abstained": _ui_text("labels.abstained"),
     "associated_execution_unit_error": _ui_text("labels.associated_execution_unit_error"),
     "attempted": _ui_text("labels.attempted"),

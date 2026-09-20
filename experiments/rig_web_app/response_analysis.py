@@ -1,5 +1,6 @@
 """Scientific SVM choices, with no operator-managed export or file handoffs."""
 
+from .display_labels import label as _ui_label
 from .i18n import template as _ui_template, text as _ui_text
 import html
 import json
@@ -163,7 +164,7 @@ def page(app, owner):
                 + '">'
                 + label
                 + " - "
-                + html.escape(row["state"])
+                + html.escape(_ui_label(row["state"]))
                 + "</a>"
             )
             from .analysis_summary import render

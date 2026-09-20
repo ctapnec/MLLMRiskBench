@@ -128,7 +128,7 @@ class BuilderPageMixin:
                 _ui_template(
                     "<div class='notice green'><strong>[[text:builder_page.ollama_action_completed]]</strong> [[text:builder_page.current_state]] "
                 )
-                + html.escape(state)
+                + html.escape(_ui_label(state))
                 + ".</div>"
             )
 
@@ -180,7 +180,7 @@ class BuilderPageMixin:
             + "<p><span class='badge "
             + tone
             + "'>"
-            + html.escape("absent" if state == "stopped" else state)
+            + html.escape(_ui_label("absent" if state == "stopped" else state))
             + "</span> "
             + html.escape(state_copy)
             + _ui_template(".</p><p class='note'>[[text:builder_page.fixed_loopback_api]] <code>")

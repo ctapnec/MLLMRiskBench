@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .display_labels import label as _ui_label
 from .i18n import template as _ui_template, text as _ui_text
 
 import html
@@ -288,7 +289,7 @@ def native_judging_panel(app, params):
             + "'"
             + (" selected" if row["job_id"] == job else "")
             + ">"
-            + html.escape(row["job_id"] + " - " + _state(app, row))
+            + html.escape(row["job_id"] + " - " + _ui_label(_state(app, row)))
             + "</option>"
             for row in history
         )

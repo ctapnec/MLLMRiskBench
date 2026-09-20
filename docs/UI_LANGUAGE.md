@@ -81,6 +81,11 @@ independent of the UI catalog and can still execute directly.
    `tests/ura/test_rig_web_language_confirmation.py` independently round-trips
    every message through HTML, attributes and browser script contexts. It also
    checks browser-generated review states and preserves their stored values.
+   `tests/ura/test_rig_web_language_states.py` changes display labels while
+   exercising actual temporary job records, history panels and browser filters.
+   Keep `data-state`, option values and ownership decisions untranslated; escape
+   the visible label separately. Include single-word work descriptions and
+   failure/preparation states, not only successful campaigns.
 4. Exercise the relevant real page and its errors, loading states and recovery
    controls. Language work must not change execution semantics or research data.
 

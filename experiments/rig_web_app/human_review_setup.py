@@ -1,5 +1,6 @@
 """Campaign-aware human study setup, separate from the blinded rater wizard."""
 
+from .display_labels import label as _ui_label
 from .i18n import template as _ui_template, text as _ui_text
 import csv
 import html
@@ -504,7 +505,7 @@ def setup_route(app, method, path, data, style):
             + "<div class='review-stack'><section class='review-card'><h1>"
             + html.escape(draft["value"]["name"])
             + _ui_template("</h1><p>[[text:human_review_setup.sample_preparation]] ")
-            + html.escape(state)
+            + html.escape(_ui_label(state))
             + "</p><p><a href='/jobs/"
             + draft["job"]
             + _ui_template(

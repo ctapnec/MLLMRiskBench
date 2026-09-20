@@ -329,7 +329,7 @@ class WorkspacePagesMixin:
                     "<td>"
                     + html.escape(row["command"] or "")
                     + "</td><td>"
-                    + html.escape(row["state"] or "unknown")
+                    + html.escape(_ui_label(row["state"] or "unknown"))
                     + "</td><td><a href='/stats/job/"
                     + quote(row["job_id"], safe="")
                     + _ui_template("'>[[text:workspace_pages.results_and_diagrams]]</a></td></tr>")
@@ -756,7 +756,9 @@ class WorkspacePagesMixin:
                         )
                         + "</td><td>"
                         + html.escape(
-                            row["state"] or _ui_text("workspace_pages.see_original_record")
+                            _ui_label(row["state"])
+                            if row["state"]
+                            else _ui_text("workspace_pages.see_original_record")
                         )
                         + "</td></tr>"
                     )
