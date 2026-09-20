@@ -184,14 +184,14 @@ class SettingsMixin:
         ("OPENAI_API_KEY", _ui_text("settings.openai"), True),
         ("GEMINI_API_KEY", _ui_text("settings.google_gemini"), True),
         ("DEEPSEEK_API_KEY", _ui_text("settings.deepseek"), True),
-        ("MOONSHOT_API_KEY", "Moonshot / Kimi", True),
+        ("MOONSHOT_API_KEY", _ui_text("settings.moonshot_kimi"), True),
         (
             "HF_TOKEN",
             _ui_text("settings.hugging_face"),
             False,
         ),
         ("DASHSCOPE_API_KEY", _ui_text("settings.alibaba_dashscope_qwen"), False),
-        ("ZHIPU_API_KEY", "Zhipu / GLM", False),
+        ("ZHIPU_API_KEY", _ui_text("settings.zhipu_glm"), False),
     )
     _SECRET_NAMES = frozenset(name for name, _label, _funded in _SECRET_ENV_VARS)
     # Acquisition credentials are deliberately process-scoped.  Unlike hosted
@@ -439,7 +439,7 @@ class SettingsMixin:
                     )
                     + f"{html.escape(row['name'])}"
                     + _ui_template(
-                        "' type='password' autocomplete='new-password' name='value' placeholder='Paste a new key' required spellcheck='false'><button type='submit'>[[text:settings.save_key]]</button></div></form>"
+                        "' type='password' autocomplete='new-password' name='value' placeholder='[[attr:settings.paste_new_key]]' required spellcheck='false'><button type='submit'>[[text:settings.save_key]]</button></div></form>"
                     )
                 )
                 + clear
@@ -458,8 +458,8 @@ class SettingsMixin:
             )
             banner = (
                 _ui_template("<div class='notice blue'><strong>[[text:settings.key]] ")
-                + html.escape(saved)
-                + " updated.</strong><p class='note'>"
+                + html.escape(_ui_text("settings.updated_provider", provider=saved))
+                + "</strong><p class='note'>"
                 + storage_note
                 + _ui_template(" [[text:settings.the_value_is_never_displayed]]</p></div>")
             )
@@ -480,10 +480,14 @@ class SettingsMixin:
                 _ui_template(
                     "<p class='note'>[[text:settings.manage_access_for_new_jobs_stored_keys_stay_hidden_a_saved_key_do]]</p><p>"
                 )
-                + f"{sum((row['present'] for row in statuses))}"
-                + " of "
-                + f"{len(statuses)}"
-                + " credentials configured</p><style>.provider-key-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:16px}.provider-key-card{min-width:0;margin:0}.provider-key-heading{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px}.provider-key-heading h3{margin:0}.provider-key-variable{display:block;overflow-wrap:anywhere;margin:12px 0}.provider-key-editor summary{cursor:pointer}.provider-key-editor form{margin-top:12px}.provider-key-editor label{display:block;margin-bottom:6px}.provider-key-input-row{display:flex;flex-wrap:wrap;gap:12px;align-items:center}.provider-key-input-row input{min-width:0;flex:1 1 180px;width:auto;font:inherit;min-height:2.65rem;padding:.65rem .8rem;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}.provider-key-input-row input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.provider-key-editor form.provider-key-clear{margin-top:16px}.provider-key-input-row button{flex:0 0 auto}.provider-key-section{margin:24px 0}</style>"
+                + html.escape(
+                    _ui_text(
+                        "settings.credentials_configured",
+                        configured=sum(row["present"] for row in statuses),
+                        total=len(statuses),
+                    )
+                )
+                + "</p><style>.provider-key-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:16px}.provider-key-card{min-width:0;margin:0}.provider-key-heading{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px}.provider-key-heading h3{margin:0}.provider-key-variable{display:block;overflow-wrap:anywhere;margin:12px 0}.provider-key-editor summary{cursor:pointer}.provider-key-editor form{margin-top:12px}.provider-key-editor label{display:block;margin-bottom:6px}.provider-key-input-row{display:flex;flex-wrap:wrap;gap:12px;align-items:center}.provider-key-input-row input{min-width:0;flex:1 1 180px;width:auto;font:inherit;min-height:2.65rem;padding:.65rem .8rem;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}.provider-key-input-row input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.provider-key-editor form.provider-key-clear{margin-top:16px}.provider-key-input-row button{flex:0 0 auto}.provider-key-section{margin:24px 0}</style>"
             )
             + "".join(
                 "<section class='provider-key-section'><h2>"
@@ -642,7 +646,7 @@ class SettingsMixin:
                         "[[text:settings.provider_api_keys]]</h2><p class='note'>[[text:settings.set_or_rotate_the_hosted_provider_keys]]<code>~/.ura_env</code>[[text:settings.mode_600]] "
                     )
                     + f"{set_count}"
-                    + " of "
+                    + _ui_text("settings.of")
                     + f"{len(statuses)}"
                     + _ui_template(
                         " [[text:settings.set_the_console_never_displays_a_stored_key]]</p><p><a href='/config/secrets'><button type='button'>[[text:settings.manage_keys]]</button></a></p></div>"

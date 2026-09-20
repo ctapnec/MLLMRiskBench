@@ -1,5 +1,6 @@
 """Readable saved classifier results; no fitting or artifact reconstruction."""
 
+from .display_labels import label as _ui_label
 from .i18n import template as _ui_template, text as _ui_text
 import html
 import json
@@ -76,10 +77,10 @@ def render(app, directory):
                     else _ui_text("analysis_summary.not_estimated")
                 )
                 cells = (
-                    str(row.get("task", "")).replace("_", " "),
-                    str(row.get("protocol", "")).replace("_", " "),
-                    str(row.get("features", "")).replace("_", " "),
-                    str(row.get("reason") or row.get("status", "unknown")),
+                    _ui_label(str(row.get("task", ""))),
+                    _ui_label(str(row.get("protocol", ""))),
+                    _ui_label(str(row.get("features", ""))),
+                    _ui_label(str(row.get("reason") or row.get("status", "unknown"))),
                     score,
                 )
                 body += (

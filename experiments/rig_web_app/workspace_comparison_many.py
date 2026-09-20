@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 
+from .display_labels import label as _ui_label
 from .i18n import template as _ui_template, text as _ui_text
 
 import html
@@ -31,7 +32,11 @@ def ranked(condition):
 def model_label(identity):
     """Readable labels only; stored identities and exported fields stay exact."""
     match = re.fullmatch(r"(.+)@(?:sha256:)?([0-9a-f]{40}|[0-9a-f]{64})", identity)
-    return match[1] + " (revision " + match[2][:8] + ")" if match else identity
+    return (
+        match[1] + _ui_text("workspace_comparison_many.revision") + match[2][:8] + ")"
+        if match
+        else identity
+    )
 
 
 def normalize(query):
@@ -69,7 +74,7 @@ def scope_judges(db, owner, model, condition, *, selected_units=None, query=None
         if not selected_units:
             return []
         filters = (
-            _ui_text("workspace_comparison_many.and")
+            "AND ("
             + " OR ".join(
                 "(a.model=? AND COALESCE(r.condition_id,a.condition_id)=?)" for _ in selected_units
             )
@@ -125,10 +130,7 @@ def unit_scope(db, owner, model, condition, *, query=None):
         numbers = {(row["model"], row["condition_id"]): row["number"] for row in result}
         filtered_sql = sql.replace(
             "GROUP BY a.model",
-            "".join(
-                _ui_text("workspace_comparison_many.and_a") + facet + "=? " for facet, _ in filters
-            )
-            + "GROUP BY a.model",
+            "".join("AND a." + facet + "=? " for facet, _ in filters) + "GROUP BY a.model",
         )
         filtered = db._query(filtered_sql, (*params, *(value for _, value in filters)))
         if filtered is None:
@@ -271,7 +273,7 @@ def render(data, campaign, query):
         + f"{start:,}"
         + "-"
         + f"{end:,}"
-        + " of "
+        + _ui_text("workspace_comparison_many.of")
         + f"{total:,}"
         + _ui_template(
             "[[text:workspace_comparison_many.each_comparison_is_separate_condition_numbers_belong_to_each_mode]]</p>"
@@ -282,7 +284,7 @@ def render(data, campaign, query):
         if ranked(condition):
             content += (
                 "<p>"
-                + side.title()
+                + _ui_label(side)
                 + _ui_text("workspace_comparison_many.condition_rule")
                 + escape(CONDITION_MODES[condition])
                 + _ui_template(
@@ -301,7 +303,7 @@ def render(data, campaign, query):
             if skipped:
                 content += (
                     "<details><summary>"
-                    + side.title()
+                    + _ui_label(side)
                     + (
                         ": "
                         + f"{len(skipped)}"
@@ -311,7 +313,13 @@ def render(data, campaign, query):
                     )
                 )
                 content += "".join(
-                    "<li>" + escape(model_label(row["model"])) + f"; condition {row['number']}</li>"
+                    "<li>"
+                    + escape(model_label(row["model"]))
+                    + (
+                        _ui_text("workspace_comparison_many.condition")
+                        + f"{row['number']}"
+                        + "</li>"
+                    )
                     for row in skipped
                 )
                 content += "</ul></details>"
@@ -328,10 +336,10 @@ def render(data, campaign, query):
                 '<p class="notice amber" title="'
                 + escape(", ".join(models), quote=True)
                 + '">'
-                + side.title()
+                + _ui_label(side)
                 + ": "
                 + reason
-                + " for "
+                + _ui_text("workspace_comparison_many.for")
                 + escape(", ".join(model_label(model) for model in models))
                 + ".</p>"
             )
@@ -360,7 +368,11 @@ def render(data, campaign, query):
             + "'>"
             + escape(model_label(unit["model"]))
             + "</span>"
-            + f"; condition {unit['number']}; context "
+            + (
+                _ui_text("workspace_comparison_many.condition")
+                + f"{unit['number']}"
+                + _ui_text("workspace_comparison_many.context")
+            )
             + _condition_tokens(unit, "context")
             + _ui_text("workspace_comparison_many.output_allowance")
             + _condition_tokens(unit, "output")
@@ -369,7 +381,7 @@ def render(data, campaign, query):
                 + f"{usable:,}"
                 + "/"
                 + f"{known:,}"
-                + "; assigned "
+                + _ui_text("workspace_comparison_many.assigned")
                 + f"{unit['assigned']:,}"
             )
         )
@@ -387,11 +399,19 @@ def render(data, campaign, query):
         content += (
             "<details class='comparison-pair' data-model-comparison><summary>"
             + escape(model_label(pair["left"]["model"]))
-            + f" (condition {pair['left']['number']}) versus "
-            + escape(model_label(pair["right"]["model"]))
-            + f" (condition {pair['right']['number']})"
             + (
-                " - matched: "
+                _ui_text("workspace_comparison_many.condition_copy")
+                + f"{pair['left']['number']}"
+                + _ui_text("workspace_comparison_many.versus")
+            )
+            + escape(model_label(pair["right"]["model"]))
+            + (
+                _ui_text("workspace_comparison_many.condition_copy")
+                + f"{pair['right']['number']}"
+                + ")"
+            )
+            + (
+                _ui_text("workspace_comparison_many.matched")
                 + f"{matched:,}"
                 + _ui_text("workspace_comparison_many.jointly_valid_judgments")
                 + f"{valid:,}"
@@ -430,7 +450,7 @@ def render(data, campaign, query):
         (_ui_text("workspace_comparison_many.previous"), page - 1),
         (_ui_text("workspace_comparison_many.next"), page + 1),
     ):
-        if number >= 0 and (label == "Previous" or (page + 1) * PAGE_SIZE < total):
+        if number >= 0 and (number < page or (page + 1) * PAGE_SIZE < total):
             url = (
                 "/campaigns/"
                 + campaign

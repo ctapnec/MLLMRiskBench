@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 
+from .display_labels import label as _ui_label
 from .i18n import template as _ui_template, text as _ui_text
 
 import csv
@@ -19,7 +20,7 @@ from .workspace_charts import CHART_STYLE, EXPORT_SCRIPT
 
 TASKS = {
     "harmful_compliance": _ui_text("svm_stats.harmful_compliance"),
-    "over_refusal": "Over-refusal",
+    "over_refusal": _ui_text("svm_stats.over_refusal"),
     "judge_disagreement": _ui_text("svm_stats.local_haiku_disagreement"),
 }
 ESTIMATORS = {
@@ -32,18 +33,20 @@ ESTIMATORS = {
 
 
 def label(value):
-    return TASKS.get(value, ESTIMATORS.get(value, str(value).replace("_", " ")))
+    return TASKS.get(value, ESTIMATORS.get(value, _ui_label(str(value))))
 
 
-def score(value):
+def valid_score(value):
     return (
-        f"{value:.3f}"
-        if isinstance(value, (int, float))
+        isinstance(value, (int, float))
         and not isinstance(value, bool)
         and math.isfinite(value)
         and 0 <= value <= 1
-        else _ui_text("svm_stats.not_estimated")
     )
+
+
+def score(value):
+    return f"{value:.3f}" if valid_score(value) else _ui_text("svm_stats.not_estimated")
 
 
 def load(app, directory):
@@ -184,8 +187,7 @@ def figure(rows, *, scope=""):
     rows = [
         r
         for r in rows
-        if r.get("estimator") == "linear_svm"
-        and score(r.get("test", {}).get("macro_f1")) != "Not estimated"
+        if r.get("estimator") == "linear_svm" and valid_score(r.get("test", {}).get("macro_f1"))
     ]
     height = 60 + len(rows) * 90
     marks = []
@@ -198,13 +200,13 @@ def figure(rows, *, scope=""):
             f"<text x='16' y='{y}'>{html.escape(caption)}</text>"
             f"<rect class='chart-track' x='16' y='{y + 12}' width='360' height='18'/>"
             f"<rect x='16' y='{y + 12}' width='{360 * value:.3f}' height='18' style='fill:var(--viz-series-1,#2563eb)'/>"
-            f"<text x='16' y='{y + 54}'>Macro-F1 {score(value)}</text>"
+            f"<text x='16' y='{y + 54}'>{html.escape(_ui_text('svm_stats.macro_f1_value', value=score(value)))}</text>"
         )
         ci = metric.get("macro_f1_cluster_ci95")
         if (
             isinstance(ci, list)
             and len(ci) == 2
-            and all(score(v) != "Not estimated" for v in ci)
+            and all(valid_score(v) for v in ci)
             and ci[0] <= ci[1]
         ):
             lo, hi = [16 + 360 * v for v in ci]
@@ -238,7 +240,7 @@ def figure(rows, *, scope=""):
             "<svg xmlns='http://www.w3.org/2000/svg' class='campaign-figure' style='max-width:560px' role='img' viewBox='0 0 410 "
             + f"{height}"
             + _ui_template(
-                "' aria-label='SVM held-out macro-F1'><title>[[text:svm_stats.svm_held_out_macro_f1]]</title><desc>[[text:svm_stats.scale_zero_to_one_lines_show_recorded_input_cluster_bootstrap_95]] "
+                "' aria-label='[[attr:svm_stats.svm_held_out_macro_f1]]'><title>[[text:svm_stats.svm_held_out_macro_f1]]</title><desc>[[text:svm_stats.scale_zero_to_one_lines_show_recorded_input_cluster_bootstrap_95]] "
             )
         )
         + html.escape(scope)
@@ -280,10 +282,10 @@ def table(rows):
     headers = [
         _ui_text("svm_stats.task"),
         _ui_text("svm_stats.features"),
-        "Estimator / baseline",
+        _ui_text("svm_stats.estimator_baseline"),
         _ui_text("svm_stats.status"),
         _ui_text("svm_stats.test_macro_f1"),
-        "95% interval",
+        _ui_text("svm_stats.95_interval"),
         _ui_text("svm_stats.average_precision"),
         _ui_text("svm_stats.test_answers"),
         _ui_text("svm_stats.test_input_groups"),
@@ -303,21 +305,21 @@ def figure_html(rows):
     blocks = []
     for row in rows:
         metric = row.get("test", {})
-        if row.get("estimator") != "linear_svm" or score(metric.get("macro_f1")) == "Not estimated":
+        if row.get("estimator") != "linear_svm" or not valid_score(metric.get("macro_f1")):
             continue
         value = metric["macro_f1"]
         ci = metric.get("macro_f1_cluster_ci95")
         marks = f"<rect x='0' y='4' width='100' height='10' fill='var(--soft)'/><rect x='0' y='4' width='{100 * value:.3f}' height='10' fill='var(--viz-series-1,#2563eb)'/>"
-        text = "Macro-F1 " + score(value)
+        text = _ui_text("svm_stats.macro_f1") + score(value)
         if (
             isinstance(ci, list)
             and len(ci) == 2
-            and all(score(v) != "Not estimated" for v in ci)
+            and all(valid_score(v) for v in ci)
             and ci[0] <= ci[1]
         ):
             low, high = [100 * v for v in ci]
             marks += f"<path d='M {low:.3f} 6 v 6 M {low:.3f} 9 H {high:.3f} M {high:.3f} 6 v 6' fill='none' stroke='var(--ink)' stroke-width='.6'/>"
-            text += "; 95% interval " + score(ci[0]) + " - " + score(ci[1])
+            text += _ui_text("svm_stats.95_interval_copy") + score(ci[0]) + " - " + score(ci[1])
         else:
             text += _ui_text("svm_stats.interval_not_estimated")
         caption = label(row.get("task")) + " / " + label(row.get("features", ""))
@@ -397,7 +399,7 @@ def response(app, query):
     )
     chart_scope = (
         item["title"]
-        + "; evaluation: "
+        + _ui_text("svm_stats.evaluation")
         + protocol
         + _ui_text("svm_stats.recorded_teacher")
         + str(report.get("teacher", _ui_text("svm_stats.not_recorded")))

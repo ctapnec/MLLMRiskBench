@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 
+from .display_labels import label as _ui_label
 from .i18n import template as _ui_template, text as _ui_text
 
 import hashlib
@@ -350,7 +351,7 @@ class DashboardMixin:
     @staticmethod
     def _fmt_money(value: float | None, currency: str) -> str:
         if value is None:
-            return "N/A"
+            return _ui_text("dashboard.not_applicable_short")
         unit = {"USD": "$"}.get(currency.upper(), currency + " ")
         return f"{unit}{value:,.4f}"
 
@@ -362,7 +363,11 @@ class DashboardMixin:
             return self._retained_spend_card(retained)
         cost_rows, unavailable = self._usage_cost_rows()
         if cost_rows is None:
-            body = f"<p class='note'><strong>N/A</strong> - {html.escape(unavailable)}.</p>"
+            body = (
+                "<p class='note'><strong>"
+                + html.escape(_ui_text("dashboard.not_applicable_short"))
+                + f"</strong> - {html.escape(unavailable)}.</p>"
+            )
             return (
                 "<div class='card'><h2>"
                 + _icon("coins")
@@ -414,7 +419,13 @@ class DashboardMixin:
                 )
             else:
                 why = "; ".join(row["missing"]) or _ui_text("dashboard.price_not_recorded")
-                cost_cell = "<td>N/A <span class='fieldhint'>" + html.escape(why) + "</span></td>"
+                cost_cell = (
+                    _ui_template(
+                        "<td>[[text:dashboard.not_applicable_short]] <span class='fieldhint'>"
+                    )
+                    + html.escape(why)
+                    + "</span></td>"
+                )
             detail.append(
                 f"<tr><td>{html.escape(row['role'])}</td>"
                 f"<td>{html.escape(row['provider'])}<br><code>"
@@ -431,7 +442,7 @@ class DashboardMixin:
                 )
                 + f"</td>{token_cells}{cost_cell}</tr>"
             )
-        heads = "".join(f"<th>{c.replace('_', ' ')}</th>" for c in _TOKEN_CATEGORIES)
+        heads = "".join(f"<th>{_ui_label(c)}</th>" for c in _TOKEN_CATEGORIES)
         unindexed = not detail and self._has_completion_markers()
         if detail:
             detail_table = (
@@ -489,7 +500,7 @@ class DashboardMixin:
                     "[[text:dashboard.unknown]] <span class='fieldhint'>[[text:dashboard.not_indexed_reindex_from_artifacts]]</span>"
                 )
                 remaining = _ui_template(
-                    "N/A <span class='fieldhint'>[[text:dashboard.cost_incomplete]]</span>"
+                    "[[text:dashboard.not_applicable_short]] <span class='fieldhint'>[[text:dashboard.cost_incomplete]]</span>"
                 )
             elif not matched:
                 # No billable usage recorded under this budget's provider: the
@@ -499,14 +510,14 @@ class DashboardMixin:
                     "[[text:dashboard.no_recorded_usage]] <span class='fieldhint'>[[text:dashboard.no_billable_calls_recorded_for_this_provider]]</span>"
                 )
                 remaining = _ui_template(
-                    "N/A <span class='fieldhint'>[[text:dashboard.no_recorded_spend_to_subtract]]</span>"
+                    "[[text:dashboard.not_applicable_short]] <span class='fieldhint'>[[text:dashboard.no_recorded_spend_to_subtract]]</span>"
                 )
             elif not complete:
                 spent_text = _ui_template(
-                    "N/A <span class='fieldhint'>[[text:dashboard.some_models_lack_a_recorded_price]]</span>"
+                    "[[text:dashboard.not_applicable_short]] <span class='fieldhint'>[[text:dashboard.some_models_lack_a_recorded_price]]</span>"
                 )
                 remaining = _ui_template(
-                    "N/A <span class='fieldhint'>[[text:dashboard.cost_incomplete]]</span>"
+                    "[[text:dashboard.not_applicable_short]] <span class='fieldhint'>[[text:dashboard.cost_incomplete]]</span>"
                 )
             elif len(merged) > 1:
                 # Different currencies are never summed into one spend nor
@@ -517,14 +528,14 @@ class DashboardMixin:
                     " <span class='fieldhint'>[[text:dashboard.mixed_currencies_not_summed]]</span>"
                 )
                 remaining = _ui_template(
-                    "N/A <span class='fieldhint'>[[text:dashboard.mixed_currencies_cannot_net_one_prepaid_figure]]</span>"
+                    "[[text:dashboard.not_applicable_short]] <span class='fieldhint'>[[text:dashboard.mixed_currencies_cannot_net_one_prepaid_figure]]</span>"
                 )
             else:
                 ccy, amt = next(iter(merged.items())) if merged else ("USD", 0.0)
                 spent_text = self._fmt_money(amt, ccy)
                 if prepaid is None:
                     remaining = _ui_template(
-                        "N/A <span class='fieldhint'>[[text:dashboard.prepaid_not_numeric]]</span>"
+                        "[[text:dashboard.not_applicable_short]] <span class='fieldhint'>[[text:dashboard.prepaid_not_numeric]]</span>"
                     )
                 elif ccy != "USD":
                     # The maintained budgets config records dollar-denominated
@@ -532,7 +543,7 @@ class DashboardMixin:
                     # those dollars from a non-USD spend without an exchange
                     # rate that the console deliberately does not invent.
                     remaining = _ui_template(
-                        "N/A <span class='fieldhint'>[[text:dashboard.prepaid_balance_is_usd_no_currency_conversion_recorded]]</span>"
+                        "[[text:dashboard.not_applicable_short]] <span class='fieldhint'>[[text:dashboard.prepaid_balance_is_usd_no_currency_conversion_recorded]]</span>"
                     )
                 else:
                     remaining = self._fmt_money(prepaid - amt, ccy)
@@ -841,7 +852,7 @@ class DashboardMixin:
         external_operational: bool = False,
     ) -> tuple[str, str, str]:
         if engineering:
-            return "engineering", "engineering / non-thesis", "gray"
+            return "engineering", _ui_text("dashboard.engineering_non_thesis"), "gray"
         if external_operational:
             # The create-only external registry is an operational ownership and
             # visibility record. Even valid completion artifacts do not turn
@@ -854,11 +865,11 @@ class DashboardMixin:
                 "gray",
             )
         if kind in {"preflight", "acquisition_plan"}:
-            return "preflight", "preflight / no-call", "gray"
+            return "preflight", _ui_text("dashboard.preflight_no_call"), "gray"
         if kind in {"dry_run", "diagnostic_canary", "attestation_probe"}:
-            return "diagnostic", "diagnostic / non-thesis", "amber"
+            return "diagnostic", _ui_text("dashboard.diagnostic_non_thesis"), "amber"
         if any("synth" in corpus.casefold() for corpus in corpora):
-            return "synthetic", "synthetic / non-authoritative", "amber"
+            return "synthetic", _ui_text("dashboard.synthetic_non_authoritative"), "amber"
         complete = int(evidence.get("markers", 0))
         invalid = (
             int(evidence.get("skipped_invalid", 0))
@@ -873,7 +884,7 @@ class DashboardMixin:
                 _ui_text("dashboard.measured_attempt_evidence_incomplete"),
                 "amber",
             )
-        return "unknown", "unclassified / non-authoritative", "gray"
+        return "unknown", _ui_text("dashboard.unclassified_non_authoritative"), "gray"
 
     _STATS_PAGE_SIZE = 24
 
@@ -1467,9 +1478,9 @@ class DashboardMixin:
         )
         extras = []
         if failed:
-            extras.append(f"{failed} failed")
+            extras.append((f"{failed}" + _ui_text("dashboard.failed")))
         if invalid:
-            extras.append(f"{invalid} invalid/unreadable")
+            extras.append((f"{invalid}" + _ui_text("dashboard.invalid_unreadable")))
         if evidence.get("truncated"):
             extras.append(_ui_text("dashboard.scan_truncated"))
         return text + ("; " + ", ".join(extras) if extras else "")
@@ -1711,7 +1722,7 @@ class DashboardMixin:
                 chart += (
                     _ui_template("<p class='note'>[[text:dashboard.chart_shows]] ")
                     + f"{self._STATS_RUNNER_RESULT_CHART_MAX}"
-                    + " of "
+                    + _ui_text("dashboard.of")
                     + f"{len(chartable)}"
                     + _ui_template(
                         " [[text:dashboard.rate_rows_for_this_metric_the_bounded_table_below_retains_the_per]]</p>"
@@ -1743,7 +1754,7 @@ class DashboardMixin:
                 table_note = (
                     _ui_template("<p class='note'>[[text:dashboard.table_is_bounded_to]] ")
                     + f"{self._STATS_RUNNER_RESULT_TABLE_MAX}"
-                    + " of "
+                    + _ui_text("dashboard.of")
                     + f"{len(ordered)}"
                     + _ui_template(
                         " [[text:dashboard.rows_open_the_exact_output_artifacts_for_the_full_file]]</p>"
@@ -1797,12 +1808,22 @@ class DashboardMixin:
         usage = campaign["usage"]
         usage_reported = campaign.get("usage_reported") is not False
         calls = (
-            f"{usage['target_calls']:,} target / {usage['judge_calls']:,} judge"
+            (
+                f"{usage['target_calls']:,}"
+                + _ui_text("dashboard.target_copy")
+                + f"{usage['judge_calls']:,}"
+                + _ui_text("dashboard.judge")
+            )
             if usage_reported
             else _ui_text("dashboard.not_reported")
         )
         tokens = (
-            f"{usage['input_tokens']:,} input / {usage['output_tokens']:,} output"
+            (
+                f"{usage['input_tokens']:,}"
+                + _ui_text("dashboard.input")
+                + f"{usage['output_tokens']:,}"
+                + _ui_text("dashboard.output_copy")
+            )
             if usage_reported
             else _ui_text("dashboard.not_reported")
         )
@@ -1999,7 +2020,12 @@ class DashboardMixin:
             if point is None:
                 return _ui_text("dashboard.no_comparable_decisions")
             ci = (
-                f"95% CI {value['ci_low']:.3f} to {value['ci_high']:.3f}"
+                (
+                    _ui_text("dashboard.95_ci")
+                    + f"{value['ci_low']:.3f}"
+                    + _ui_text("dashboard.to")
+                    + f"{value['ci_high']:.3f}"
+                )
                 if value["ci_low"] is not None
                 else _ui_text("dashboard.ci_unavailable_fewer_than_two_source_clusters")
             )
@@ -2008,7 +2034,18 @@ class DashboardMixin:
                 if "n_inputs" in value
                 else ""
             )
-            return f"{point:.3f}; {ci}; {value['n_records']} rows{inputs} / {value['n_clusters']} clusters"
+            return (
+                f"{point:.3f}"
+                + "; "
+                + f"{ci}"
+                + "; "
+                + f"{value['n_records']}"
+                + _ui_text("dashboard.rows")
+                + f"{inputs}"
+                + " / "
+                + f"{value['n_clusters']}"
+                + _ui_text("dashboard.clusters")
+            )
 
         def condition_label(condition: Mapping[str, Any]) -> str:
             annotation = (
@@ -2082,11 +2119,11 @@ class DashboardMixin:
                     (
                         "<p class='note'>"
                         + f"{title}"
-                        + ": showing "
+                        + _ui_text("dashboard.showing")
                         + f"{start + 1}"
                         + "-"
                         + f"{start + len(chosen)}"
-                        + " of "
+                        + _ui_text("dashboard.of")
                         + f"{len(rows)}"
                         + _ui_template(
                             "[[text:dashboard.summary_counts_and_rates_above_cover_the_full_selected_population]]</p>"
@@ -2118,7 +2155,13 @@ class DashboardMixin:
                             + "</a>"
                         )
                     )
-                parts.append("<nav aria-label='" + title + " pages'>" + " ".join(links) + "</nav>")
+                parts.append(
+                    "<nav aria-label='"
+                    + html.escape(_ui_text("dashboard.detail_pages", title=title), quote=True)
+                    + "'>"
+                    + " ".join(links)
+                    + "</nav>"
+                )
             return chosen
 
         if doc.get("schema") in {
@@ -2134,7 +2177,7 @@ class DashboardMixin:
                 + f"{completion['http_attempts']}"
                 + _ui_text("dashboard.recorded_http_attempts")
                 + f"{completion['input_tokens']:,}"
-                + " input / "
+                + _ui_text("dashboard.input")
                 + f"{completion['output_tokens']:,}"
                 + _ui_text("dashboard.output_tokens_token_priced_selected_usage_usd")
                 + f"{completion['actual_cost_microusd'] / 1000000.0:.6f}"
@@ -2148,7 +2191,7 @@ class DashboardMixin:
                 + f"{completion['http_attempts']}"
                 + _ui_text("dashboard.http_attempts")
                 + f"{completion['input_tokens']:,}"
-                + " input / "
+                + _ui_text("dashboard.input")
                 + f"{completion['output_tokens']:,}"
                 + _ui_text("dashboard.output_tokens_token_priced_usage_usd")
                 + f"{completion['actual_cost_microusd'] / 1000000.0:.6f}"
@@ -2213,11 +2256,11 @@ class DashboardMixin:
             parts.append(
                 (
                     "<h4>"
-                    + f"{cohort.title()}"
+                    + f"{_ui_label(cohort)}"
                     + _ui_template(" [[text:dashboard.source_frame]]</h4>")
                 )
                 + self._count_bar_chart(
-                    [(key.replace("_", " "), value) for key, value in audit.items()],
+                    [(_ui_label(key), value) for key, value in audit.items()],
                     label=(
                         f"{cohort}"
                         + _ui_text("dashboard.source_view_coverage_not_selected_cohort_rates")
@@ -2258,17 +2301,17 @@ class DashboardMixin:
                 parts.append(
                     (
                         "<h4>"
-                        + f"{judge.title()}"
+                        + f"{_ui_label(judge)}"
                         + ": "
                         + f"{outcome['decided']}"
-                        + " decided / "
+                        + _ui_text("dashboard.decided")
                         + f"{outcome['abstained']}"
                         + _ui_template(" [[text:dashboard.abstained]]</h4>")
                     )
                 )
                 chart = self._bar_chart(
                     [
-                        (label_name.replace("_", " "), rate["value"])
+                        (_ui_label(label_name), rate["value"])
                         for label_name, rate in outcome["rates"].items()
                         if rate["value"] is not None
                     ]
@@ -2277,7 +2320,7 @@ class DashboardMixin:
                     chart.replace(
                         "aria-label='result chart'",
                         "aria-label='"
-                        + html.escape(judge + " outcomes: " + label, quote=True)
+                        + html.escape(judge + _ui_text("dashboard.outcomes") + label, quote=True)
                         + "'",
                     )
                 )
@@ -2306,7 +2349,7 @@ class DashboardMixin:
         for contrast in window("contrasts"):
             label = (
                 condition_label(contrast["hosted_condition"])
-                + " versus "
+                + _ui_text("dashboard.versus")
                 + condition_label(contrast["local_condition"])
             )
             parts.append(
@@ -2325,7 +2368,7 @@ class DashboardMixin:
                 parts.append(
                     (
                         "<p>"
-                        + f"{judge.title()}"
+                        + f"{_ui_label(judge)}"
                         + ": "
                         + f"{estimate(rate)}"
                         + "; "
@@ -2401,7 +2444,7 @@ class DashboardMixin:
             or evidence.get("truncated")
         ):
             evidence_tone = "red"
-            evidence_label = "incomplete / invalid"
+            evidence_label = _ui_text("dashboard.incomplete_invalid")
         elif not evidence.get("markers") and campaign["kind"] not in {
             "preflight",
             "acquisition_plan",
@@ -3004,14 +3047,11 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
             state_counts[state] = state_counts.get(state, 0) + 1
 
         cohort_chart = self._count_bar_chart(
-            [
-                (str(cohort).replace("_", " "), int(cohort_counts[cohort]))
-                for cohort in cohort_order
-            ],
+            [(_ui_label(str(cohort)), int(cohort_counts[cohort])) for cohort in cohort_order],
             label=_ui_text("dashboard.campaign_terminal_rows_by_cohort"),
         )
         state_chart = self._count_bar_chart(
-            [(state.replace("_", " "), count) for state, count in sorted(state_counts.items())],
+            [(_ui_label(state), count) for state, count in sorted(state_counts.items())],
             label=_ui_text("dashboard.campaign_terminal_rows_by_terminal_state"),
         )
         failure_chart = self._count_bar_chart(
@@ -3130,10 +3170,14 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
         def usage(value: Mapping[str, Any], rows: int) -> str:
             n = value["reported_rows"]
             if not n:
-                return _ui_text("dashboard.not_recorded_0") + f"{rows}" + " rows)"
+                return (
+                    _ui_text("dashboard.not_recorded_0")
+                    + f"{rows}"
+                    + _ui_text("dashboard.rows_copy")
+                )
             return (
                 f"{value['sum']:,}"
-                + " total; "
+                + _ui_text("dashboard.total")
                 + f"{value['minimum']:,}"
                 + "-"
                 + f"{value['maximum']:,}"
@@ -3147,7 +3191,12 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
             label = " / ".join(
                 str(row[k]) for k in ("model_spec", "corpus_arm", "attacker", "modality")
             )
-            label += f" / context {shown(row['context_tokens'])}, output {shown(row['output_allowance'])}"
+            label += (
+                _ui_text("dashboard.context")
+                + f"{shown(row['context_tokens'])}"
+                + _ui_text("dashboard.output_copy_copy")
+                + f"{shown(row['output_allowance'])}"
+            )
             sections.append(
                 "<details class='card'><summary>"
                 + html.escape(label)
@@ -3161,7 +3210,7 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
                 )
                 + f"<td>{html.escape(row['run_id'])}</td>"
                 + f"<td>{shown(row['context_tokens'])} ({html.escape(row['context_source'])}; "
-                + f"policy {shown(row['context_policy'])})</td>"
+                + (_ui_text("dashboard.policy") + f"{shown(row['context_policy'])}" + ")</td>")
                 + f"<td>{shown(row['output_allowance'])} ({html.escape(row['output_source'])})</td>"
                 + f"<td>{usage(row['input_tokens'], row['rows'])}</td>"
                 + f"<td>{usage(row['output_tokens'], row['rows'])}</td>"
@@ -3279,7 +3328,7 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
             if chartable:
                 bars = [
                     (
-                        f"{row.get('model_spec', '?')} · {row.get('resolved_model', '?')}",
+                        f"{row.get('model_spec', '?')} - {row.get('resolved_model', '?')}",
                         float(row.get("value", 0.0)),
                     )
                     for row in rows[: self._LEVEL2_CHART_CAP]
@@ -3289,9 +3338,9 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
                     chart += (
                         _ui_template("<p class='note'>[[text:dashboard.chart_shows]] ")
                         + f"{self._LEVEL2_CHART_CAP}"
-                        + " of "
+                        + _ui_text("dashboard.of")
                         + f"{len(rows)}"
-                        + " rows; all "
+                        + _ui_text("dashboard.rows_all")
                         + f"{len(rows)}"
                         + _ui_template(" [[text:dashboard.are_in_the_table_below]]</p>")
                     )
@@ -3361,7 +3410,11 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
                 )
                 if row.get("metric_authority") == "supplementary_non_authoritative":
                     synthetic = row.get("evidence_class") == "synthetic"
-                    evidence = "⚠ synthetic + approximate" if synthetic else "⚠ approximate"
+                    evidence = (
+                        _ui_text("dashboard.synthetic_approximate")
+                        if synthetic
+                        else _ui_text("dashboard.approximate")
+                    )
                     reliability = row.get("reliability_score")
                     reliability_text = (
                         (
@@ -3529,7 +3582,7 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
                 continue
             cells = "".join(
                 "<tr><td>"
-                + html.escape(str(name).replace("_", " "))
+                + html.escape(_ui_label(str(name)))
                 + "</td><td>"
                 + (
                     _ui_text("dashboard.null_by_design")
@@ -3674,7 +3727,7 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
             )
             summary = (
                 f"{self.gpu_hardware.get('gpu_count', len(gpus))}"
-                + " GPU(s), "
+                + _ui_text("dashboard.gpu_s")
                 + f"{self.gpu_hardware.get('aggregate_vram_gib', 0)}"
                 + _ui_text("dashboard.gib_aggregate_vram")
             ) + (f" - {names}" if names else "")
@@ -3688,8 +3741,10 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
         physical = system.get("physical_cpu_count")
         logical = system.get("logical_cpu_count")
         cores = (
-            f"{physical if physical is not None else '?'} physical / "
-            f"{logical if logical is not None else '?'} logical"
+            f"{(physical if physical is not None else '?')}"
+            + _ui_text("dashboard.physical")
+            + f"{(logical if logical is not None else '?')}"
+            + _ui_text("dashboard.logical")
         )
         gpu_rows = []
         for gpu in gpus:
@@ -3699,14 +3754,14 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
             if gpu.get("pci_bus_id"):
                 details.append("PCI " + shown(gpu["pci_bus_id"]))
             if gpu.get("driver_version"):
-                details.append("driver " + shown(gpu["driver_version"]))
+                details.append(_ui_text("dashboard.driver") + shown(gpu["driver_version"]))
             gpu_rows.append(
                 _ui_template("<li><strong>[[text:dashboard.gpu]] ")
                 + shown(gpu.get("index", "?"))
                 + " - "
                 + shown(gpu.get("name", "unknown"))
                 + "</strong>"
-                "<span class='fieldhint'>" + " &middot; ".join(details) + "</span></li>"
+                "<span class='fieldhint'>" + " - ".join(details) + "</span></li>"
             )
         gpu_content = (
             "<ul class='hardware-list'>" + "".join(gpu_rows) + "</ul>"

@@ -1,5 +1,6 @@
 """Compare indexed job outputs without rebuilding campaigns or reading models."""
 
+from .display_labels import label as _ui_label
 from .i18n import template as _ui_template, text as _ui_text
 import csv
 import html
@@ -229,7 +230,7 @@ def response(app, query):
     for side in ("left", "right"):
         body += (
             '<label class="campaign-field">'
-            + side.title()
+            + _ui_label(side)
             + _ui_template(' [[text:stats_jobs.job]]<select name="')
             + side
             + _ui_template(
@@ -263,14 +264,14 @@ def response(app, query):
         body += "".join(outcome_chart(row) for row in reports)
         headers = (
             _ui_text("stats_jobs.side"),
-            "Model / condition",
-            "Corpus / framework / modality",
+            _ui_text("stats_jobs.model_condition"),
+            _ui_text("stats_jobs.corpus_framework_modality"),
             _ui_text("stats_jobs.saved"),
             _ui_text("stats_jobs.usable"),
             _ui_text("stats_jobs.missing"),
             _ui_text("stats_jobs.policy_refusal"),
             _ui_text("stats_jobs.other"),
-            "Truncated / unknown",
+            _ui_text("stats_jobs.truncated_unknown"),
             _ui_text("stats_jobs.known_token_usage"),
         )
         body += (
@@ -291,13 +292,13 @@ def response(app, query):
                 str(row["truncated"]) + " / " + str(row["truncation_unknown"]),
                 (
                     str(row["input_tokens"])
-                    + " in / "
+                    + _ui_text("stats_jobs.in")
                     + str(row["output_tokens"])
-                    + " out; "
+                    + _ui_text("stats_jobs.out")
                     + str(row["usage_known"])
                     + "/"
                     + str(row["outputs"])
-                    + " outputs"
+                    + _ui_text("stats_jobs.outputs")
                 )
                 if row["usage_known"]
                 else _ui_text("stats_jobs.not_recorded"),

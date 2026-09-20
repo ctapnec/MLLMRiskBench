@@ -6,6 +6,7 @@ No real calls occur before the operator starts the reviewed campaign.
 
 from __future__ import annotations
 
+from .display_labels import label as _ui_label
 from .i18n import template as _ui_template, text as _ui_text
 
 from datetime import datetime, timezone
@@ -282,7 +283,7 @@ def advance(app, operation):
                 )
                 return
             job = app.jobs.get(operation[execution])
-            require_complete(job, kind.capitalize() + " assessment")
+            require_complete(job, _ui_label(kind) + _ui_text("campaign_flow.assessment"))
             if job.state() in ACTIVE:
                 return
         operation["step"] += 1
@@ -385,7 +386,7 @@ def review(app, operation):
         _ui_template("<li>[[text:campaign_flow.independent_haiku_assessment]] ")
         + (
             html.escape(params.get("campaign_judge_model", ""))
-            + "; maximum $"
+            + _ui_text("campaign_flow.maximum")
             + html.escape(params.get("campaign_judge_cost", ""))
             if params.get("campaign_haiku") == "on"
             else _ui_text("campaign_flow.not_selected")
@@ -558,14 +559,14 @@ def progress(app, operation):
         if summary:
             body += (
                 '<section class="card"><h2>'
-                + kind.capitalize()
+                + _ui_label(kind)
                 + _ui_template(" [[text:campaign_flow.assessment_coverage]]</h2><p>")
                 + str(summary["selected_outputs"])
                 + _ui_template(" [[text:campaign_flow.selected_answers]]</p><ul>")
             )
             body += (
                 "".join(
-                    "<li>" + html.escape(key.replace("_", " ")) + ": " + str(value) + "</li>"
+                    "<li>" + html.escape(_ui_label(key)) + ": " + str(value) + "</li>"
                     for key, value in summary["dispositions"].items()
                 )
                 + "</ul></section>"
@@ -591,7 +592,7 @@ def progress(app, operation):
                 '<li><a href="/jobs/'
                 + operation[key]
                 + '">'
-                + html.escape(key.replace("_", " "))
+                + html.escape(_ui_label(key))
                 + "</a></li>"
             )
     return _page(

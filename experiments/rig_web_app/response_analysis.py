@@ -81,7 +81,7 @@ def page(app, owner):
         (
             r["judge_id"],
             judge_name(r["judge_id"], settings.get(r["judge_id"]))
-            + " - condition "
+            + _ui_text("response_analysis.condition")
             + str(i + 1)
             + "; "
             + str(r["n"])

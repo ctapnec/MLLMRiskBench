@@ -290,7 +290,7 @@ def judging_inventory_panel(params):
         "<section class='card' id='retained-judging-coverage'><h2>[[text:builder_judging_inventory.same_input_output_coverage]]</h2><p>[[text:builder_judging_inventory.include_all_local_models_and_every_saved_output_on_the_hosted_inp]]</p><div class='haiku-judging-controls'>"
     )
     for field, label, default in (
-        ("limit", "Input limit (0 = all hosted inputs)", "0"),
+        ("limit", _ui_text("builder_judging_inventory.input_limit_0_all_hosted_inputs"), "0"),
         ("seed", _ui_text("builder_judging_inventory.input_selection_seed"), "0"),
     ):
         body += (

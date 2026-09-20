@@ -561,7 +561,7 @@ class LifecycleMixin:
             job.pin = job.pin or pin
             if state == "failed" and job.failure is None:
                 tail = self._log_tail(job, "stderr").strip()
-                job.failure = tail[-500:] if tail else f"exit {code}"
+                job.failure = tail[-500:] if tail else (_ui_text("lifecycle.exit") + f"{code}")
             usage_rows: list[dict[str, Any]] = []
             out_dir = _argv_out_dir(job.argv)
             if out_dir and run_kind(job.command, job.argv) is not None:
@@ -4550,7 +4550,9 @@ class LifecycleMixin:
                     return (
                         400,
                         "text/plain; charset=utf-8",
-                        b"use the campaign's Evaluate saved answers workflow",
+                        _ui_text(
+                            "lifecycle.use_the_campaign_s_evaluate_saved_answers_workflow"
+                        ).encode("utf-8"),
                     )
                 if command in {
                     "run_matrix",
@@ -4562,7 +4564,9 @@ class LifecycleMixin:
                     return (
                         400,
                         "text/plain; charset=utf-8",
-                        b"use the validated Build workflow for this command",
+                        _ui_text(
+                            "lifecycle.use_the_validated_build_workflow_for_this_command"
+                        ).encode("utf-8"),
                     )
                 # A dry preflight from the generic Run form launches with the
                 # campaign receipt env scrubbed exactly like a Build dry lane
@@ -4582,15 +4586,25 @@ class LifecycleMixin:
                 return (
                     405,
                     "text/plain; charset=utf-8",
-                    b"external measured jobs are read-only and are not owned by this console",
+                    _ui_text(
+                        "lifecycle.external_measured_jobs_are_read_only_and_are_not_owned_by_this_co"
+                    ).encode("utf-8"),
                 )
             if method == "GET" and path.startswith("/jobs/external/"):
                 job_id = path.removeprefix("/jobs/external/")
                 if not job_id or "/" in job_id:
-                    return 404, "text/plain; charset=utf-8", b"unknown external job"
+                    return (
+                        404,
+                        "text/plain; charset=utf-8",
+                        _ui_text("lifecycle.unknown_external_job").encode("utf-8"),
+                    )
                 external_job = self._external_measured_job(job_id)
                 if external_job is None:
-                    return 404, "text/plain; charset=utf-8", b"unknown external job"
+                    return (
+                        404,
+                        "text/plain; charset=utf-8",
+                        _ui_text("lifecycle.unknown_external_job").encode("utf-8"),
+                    )
                 return (
                     200,
                     "text/html; charset=utf-8",
@@ -4601,39 +4615,65 @@ class LifecycleMixin:
                 is_log = relative.endswith("/log")
                 route_id = relative.removesuffix("/log") if is_log else relative
                 if not route_id or "/" in route_id:
-                    return 404, "text/plain; charset=utf-8", b"unknown campaign"
+                    return (
+                        404,
+                        "text/plain; charset=utf-8",
+                        _ui_text("lifecycle.unknown_campaign").encode("utf-8"),
+                    )
                 campaign = self._engineering_campaign(route_id)
                 if campaign is None:
-                    return 404, "text/plain; charset=utf-8", b"unknown campaign"
+                    return (
+                        404,
+                        "text/plain; charset=utf-8",
+                        _ui_text("lifecycle.unknown_campaign").encode("utf-8"),
+                    )
                 if is_log:
                     stream = query.get("stream", "bootstrap")
                     text = self._engineering_log_tail(campaign, stream)
                     if text is None:
-                        return 400, "text/plain; charset=utf-8", b"unknown campaign log"
+                        return (
+                            400,
+                            "text/plain; charset=utf-8",
+                            _ui_text("lifecycle.unknown_campaign_log").encode("utf-8"),
+                        )
                     return 200, "text/plain; charset=utf-8", text.encode("utf-8")
                 return 200, "text/html; charset=utf-8", self._campaign_page(campaign)
             if method == "GET" and path.startswith("/jobs/") and path.endswith("/log"):
                 job_id = path.split("/")[2]
                 job = self._job_for_id(job_id)
                 if job is None:
-                    return 404, "text/plain; charset=utf-8", b"unknown job"
+                    return (
+                        404,
+                        "text/plain; charset=utf-8",
+                        _ui_text("lifecycle.unknown_job_copy").encode("utf-8"),
+                    )
                 stream = query.get("stream", "stdout")
                 if stream not in {"stdout", "stderr"}:
-                    return 400, "text/plain; charset=utf-8", b"unknown stream"
+                    return (
+                        400,
+                        "text/plain; charset=utf-8",
+                        _ui_text("lifecycle.unknown_stream").encode("utf-8"),
+                    )
                 text = self._log_tail(job, stream)
                 return 200, "text/plain; charset=utf-8", text.encode("utf-8")
             if method == "GET" and path.startswith("/jobs/"):
                 job_id = path.split("/")[2]
                 job = self._job_for_id(job_id)
                 if job is None:
-                    return 404, "text/plain; charset=utf-8", b"unknown job"
+                    return (
+                        404,
+                        "text/plain; charset=utf-8",
+                        _ui_text("lifecycle.unknown_job_copy").encode("utf-8"),
+                    )
                 return 200, "text/html; charset=utf-8", self._job_page(job)
             if method == "POST" and path.startswith("/jobs/") and path.endswith("/stop"):
                 if path.startswith("/jobs/campaign/"):
                     return (
                         405,
                         "text/plain; charset=utf-8",
-                        b"external campaigns are read-only and are not owned by this console",
+                        _ui_text(
+                            "lifecycle.external_campaigns_are_read_only_and_are_not_owned_by_this_consol"
+                        ).encode("utf-8"),
                     )
                 job_id = path.split("/")[2]
                 self.stop_job(job_id)
@@ -4641,7 +4681,11 @@ class LifecycleMixin:
             if method == "GET" and path.startswith("/stats/job/"):
                 job_id = path.removeprefix("/stats/job/")
                 if not job_id or "/" in job_id:
-                    return 404, "text/plain; charset=utf-8", b"unknown campaign job"
+                    return (
+                        404,
+                        "text/plain; charset=utf-8",
+                        _ui_text("lifecycle.unknown_campaign_job").encode("utf-8"),
+                    )
                 detail = self._stats_job_detail_page(
                     job_id,
                     fragment=query.get("fragment") == "1",
@@ -4650,7 +4694,11 @@ class LifecycleMixin:
                     detail_page=query.get("detail_page", "0"),
                 )
                 if detail is None:
-                    return 404, "text/plain; charset=utf-8", b"unknown campaign job"
+                    return (
+                        404,
+                        "text/plain; charset=utf-8",
+                        _ui_text("lifecycle.unknown_campaign_job").encode("utf-8"),
+                    )
                 return 200, "text/html; charset=utf-8", detail
             if method == "GET" and path == "/stats":
                 if query.get("view") == "compare":
@@ -5211,7 +5259,7 @@ class LifecycleMixin:
                 return 303, f"/config?file={quote(key)}&saved=1", b""
             if method == "GET" and path == "/artifacts":
                 return self._artifacts(query.get("path", ""))
-            return 404, "text/plain; charset=utf-8", b"not found"
+            return 404, "text/plain; charset=utf-8", _ui_text("lifecycle.not_found").encode("utf-8")
         except (KeyError, ValueError) as exc:
             body = _page(
                 _ui_text("lifecycle.request_rejected"),

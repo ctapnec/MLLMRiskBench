@@ -344,7 +344,11 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
                 or not block.get("unit")
             ):
                 raise ValueError(
-                    ("Level-1 " + f"{name}" + _ui_text("reports.count_block_is_malformed"))
+                    (
+                        _ui_text("reports.level_1")
+                        + f"{name}"
+                        + _ui_text("reports.count_block_is_malformed")
+                    )
                 )
             for key, value in block.items():
                 if key == "unit" or value is None:
@@ -352,7 +356,7 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
                 if not isinstance(value, int) or isinstance(value, bool) or value < 0:
                     raise ValueError(
                         (
-                            "Level-1 "
+                            _ui_text("reports.level_1")
                             + f"{name}"
                             + "."
                             + f"{key}"
@@ -455,7 +459,7 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
                 ):
                     raise ValueError(
                         (
-                            "Level-1 planning-stratum "
+                            _ui_text("reports.level_1_planning_stratum")
                             + f"{row_name}"
                             + _ui_text("reports.is_malformed")
                         )
@@ -624,7 +628,11 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
             item = row.get(name)
             if not isinstance(item, int) or isinstance(item, bool) or item < 0:
                 raise ValueError(
-                    ("Level-2 " + f"{name}" + _ui_text("reports.is_not_a_nonnegative_count"))
+                    (
+                        _ui_text("reports.level_2")
+                        + f"{name}"
+                        + _ui_text("reports.is_not_a_nonnegative_count")
+                    )
                 )
         if row.get("cross_stratum_pooling_permitted") is not False:
             raise ValueError(_ui_text("reports.level_2_row_permits_cross_stratum_pooling"))
@@ -639,7 +647,11 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
             item = row.get(name)
             if not isinstance(item, int) or isinstance(item, bool) or item < 0:
                 raise ValueError(
-                    ("Level-2 " + f"{name}" + _ui_text("reports.is_not_a_nonnegative_count"))
+                    (
+                        _ui_text("reports.level_2")
+                        + f"{name}"
+                        + _ui_text("reports.is_not_a_nonnegative_count")
+                    )
                 )
             decisions[name] = item
         if decisions["judgments_completed"] != (
@@ -809,7 +821,7 @@ def rate_for(
         for rate in rates
     ):
         return None, (
-            "model "
+            _ui_text("reports.model")
             + f"{model!r}"
             + _ui_text("reports.has_a_malformed_rate_or_a_non_iso_8601_yyyy_mm_dd_effective_date")
         )
@@ -831,7 +843,7 @@ def rate_for(
         return None, (
             _ui_text("reports.no_priced_rate_effective_on_or_before")
             + f"{today}"
-            + " for "
+            + _ui_text("reports.for")
             + f"{model!r}"
         )
     # On an equal effective_date, an operator-entered rate outranks an
@@ -938,7 +950,7 @@ def compute_costs(
                         + f"{model}"
                         + _ui_text("reports.invalid_recorded")
                         + f"{category}"
-                        + " count"
+                        + _ui_text("reports.count")
                     )
                 )
                 return 0
@@ -1001,7 +1013,7 @@ def compute_costs(
                 continue
             rate, why = rate_for(pricing, provider, model, on_date=usage_date)
             if rate is None:
-                missing.append(f"{why} (for {usage_date})")
+                missing.append((f"{why}" + _ui_text("reports.for_copy") + f"{usage_date}" + ")"))
                 continue
             per_million = rate.get("per_million_tokens")
             per_million = per_million if isinstance(per_million, Mapping) else {}

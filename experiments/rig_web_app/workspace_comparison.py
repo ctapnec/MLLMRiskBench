@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 
+from .display_labels import label as _ui_label
 from .i18n import template as _ui_template, text as _ui_text
 
 import csv
@@ -82,9 +83,7 @@ def comparison_rows(
                     )
                 )
         filters = "".join(
-            _ui_text("workspace_comparison.and_a") + facet + "=?"
-            for facet, name in zip(FACETS, FILTERS)
-            if query.get(name)
+            " AND a." + facet + "=?" for facet, name in zip(FACETS, FILTERS) if query.get(name)
         )
         sides.append(
             side + "_inputs AS (SELECT a.input_id,a.corpus,a.framework,a.modality,COUNT(*) AS n,"
@@ -215,11 +214,7 @@ def _select(name, label, values, selected, *, optional=False, empty_hint=""):
         + "<select name='"
         + name
         + "'"
-        + (
-            _ui_text("workspace_comparison.disabled_aria_describedby") + name + "-help'"
-            if empty
-            else ""
-        )
+        + (" disabled aria-describedby='" + name + "-help'" if empty else "")
         + ">"
         + options
         + "</select>"
@@ -259,7 +254,10 @@ def _condition_tokens(row, prefix):
         return _ui_text("workspace_comparison.native_maximum") if value == -1 else f"{value:,}"
 
     value = (
-        "unknown" if low is None else tokens(low) + ((" to " + tokens(high)) if high != low else "")
+        "unknown"
+        if low is None
+        else tokens(low)
+        + ((_ui_text("workspace_comparison.to") + tokens(high)) if high != low else "")
     )
     if 0 < row[prefix + "_known"] < row["assigned"]:
         value += _ui_text("workspace_comparison.partly_unknown")
@@ -276,13 +274,13 @@ def _condition_label(row, number):
         + f"{number}"
         + ": "
         + f"{_condition_sources(row, 'modalities')}"
-        + "; context "
+        + _ui_text("workspace_comparison.context")
         + f"{_condition_tokens(row, 'context')}"
         + _ui_text("workspace_comparison.output_allowance")
         + f"{_condition_tokens(row, 'output')}"
         + "; "
         + f"{row['assigned']:,}"
-        + " assignments"
+        + _ui_text("workspace_comparison.assignments")
     )
 
 
@@ -303,7 +301,7 @@ def _comparison_body(db, campaign, query):
     for side, owner in (("left", campaign), ("right", query.get("right_campaign", ""))):
         form += (
             "<fieldset class='comparison-condition'><legend>"
-            + side.title()
+            + _ui_label(side)
             + _ui_template(" [[text:workspace_comparison.condition_2]]</legend>")
         )
         if side == "right":
@@ -529,7 +527,7 @@ def _comparison_body(db, campaign, query):
         values = facets[facet] | ({query[name]} if query.get(name) else set())
         form += _select(
             name,
-            facet.title(),
+            _ui_label(facet),
             [(v, v) for v in sorted(values)],
             query.get(name, ""),
             optional=True,
@@ -596,7 +594,7 @@ def _comparison_body(db, campaign, query):
         (_ui_text("workspace_comparison.previous"), page - 1),
         (_ui_text("workspace_comparison.next"), page + 1),
     ):
-        if number >= 0 and (label == "Previous" or len(groups) > 12):
+        if number >= 0 and (number < page or len(groups) > 12):
             link = base + "?" + urlencode({"section": "compare", **saved, "page": number})
             content += (
                 "<a class='button ghost' href='"
@@ -624,7 +622,7 @@ def render_groups(rows):
         content += (
             _ui_template("<p>[[text:workspace_comparison.input_union]] ")
             + f"{sum(totals.values()):,}"
-            + "; matched: "
+            + _ui_text("workspace_comparison.matched_copy")
             + f"{totals['matched']:,}"
             + _ui_text("workspace_comparison.left_only")
             + f"{totals['left_only']:,}"
@@ -652,7 +650,7 @@ def render_groups(rows):
                 cells.append(
                     (row[side + "_outcome"] or _ui_text("workspace_comparison.not_indexed"))
                     + (
-                        "; truncated"
+                        _ui_text("workspace_comparison.truncated")
                         if trunc == 1
                         else _ui_text("workspace_comparison.truncation_unknown")
                         if trunc is None
@@ -737,11 +735,11 @@ def judgment_matrix(rows):
             desc = (
                 _ui_text("workspace_comparison.left")
                 + f"{label}"
-                + "; right "
+                + _ui_text("workspace_comparison.right")
                 + f"{other}"
                 + ": "
                 + f"{count}"
-                + " of "
+                + _ui_text("workspace_comparison.of")
                 + f"{valid}"
                 + _ui_text("workspace_comparison.jointly_valid_judgments")
             )
@@ -863,7 +861,7 @@ if(!replacement||!replacement.querySelector('[data-comparison-form]')||replaceme
 throw new Error([[js:workspace_comparison.comparison_choices_are_unavailable_use_update_choices_compare_to]]);
 body.replaceChildren(...replacement.childNodes);history.replaceState(null,'',url.pathname+url.search+location.hash);
 feedback.textContent=[[js:workspace_comparison.choices_updated_select_the_next_available_field_or_inspect_the_co]];
-}catch(error){feedback.className=[[js:workspace_comparison.notice_amber]];feedback.textContent=error.name===[[js:workspace_comparison.aborterror]]?
+}catch(error){feedback.className=\"notice amber\";feedback.textContent=error.name===\"AbortError\"?
 [[js:workspace_comparison.comparison_request_timed_out_use_update_choices_compare_to_retry]]:
 error.message+[[js:workspace_comparison.check_the_connection_and_use_update_choices_compare_to_retry]];
 }finally{clearTimeout(timer);loading=false;end();

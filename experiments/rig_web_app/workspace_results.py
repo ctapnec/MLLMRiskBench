@@ -514,7 +514,7 @@ class WorkspaceResultsMixin:
             "FROM campaign_assignments a LEFT JOIN campaign_responses r "
             "ON r.campaign_id=a.campaign_id AND r.response_id=a.response_id AND r.assignment_id=a.assignment_id "
             "WHERE a.campaign_id=? AND a.model=? "
-            + (_ui_text("workspace_results.and_a_evidence_class_measured") if measured_only else "")
+            + ("AND a.evidence_class='measured' " if measured_only else "")
             + "GROUP BY COALESCE(r.condition_id,a.condition_id) ORDER BY condition_id",
             (campaign_id, model),
         )

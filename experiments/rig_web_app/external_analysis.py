@@ -157,14 +157,14 @@ def _regular_bytes(path: Path, *, maximum: int) -> bytes:
 
 def _relative_path(value: object, *, label: str) -> PurePosixPath:
     if not isinstance(value, str) or "\\" in value:
-        raise ValueError(f"invalid {label}")
+        raise ValueError((_ui_text("external_analysis.invalid") + f"{label}"))
     relative = PurePosixPath(value)
     if (
         relative.is_absolute()
         or not relative.parts
         or any(part in {"", ".", ".."} for part in relative.parts)
     ):
-        raise ValueError(f"invalid {label}")
+        raise ValueError((_ui_text("external_analysis.invalid") + f"{label}"))
     return relative
 
 

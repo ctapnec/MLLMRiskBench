@@ -44,7 +44,7 @@ def review_coverage_html(db, campaign, settings, *, model="", condition=""):
             + f"{available:,}"
             + _ui_text("workspace_review_coverage.available_output_records_reviewed")
         )
-        detail = f"{pending:,} unreviewed."
+        detail = f"{pending:,}" + _ui_text("workspace_review_coverage.unreviewed")
         if scoped:
             sample = db._query(
                 "SELECT COUNT(*) planned FROM campaign_review_selection s JOIN campaign_responses r "

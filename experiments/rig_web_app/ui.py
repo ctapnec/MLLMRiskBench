@@ -811,7 +811,7 @@ function(m){if(m.checked){s[m.getAttribute('data-mod')]=1;}});return s;}
 function intersects(list,set){return list.some(function(x){return set[x];});}
 function setFilterCount(kind,count){
 var out=document.getElementById(kind+'-filter-count');
-if(out){out.textContent=count+' shown';}
+if(out){out.textContent=window.uraFormat([[js:ui.shown_items]],{count:count});}
 var empty=document.getElementById(kind+'-filter-empty');
 if(empty){empty.style.display=count?'none':'block';}}
 function applyTargetFilters(sc,role){
@@ -946,7 +946,7 @@ var inventory=document.getElementById('sample-arm-inventory');
 if(inventory&&countKeys.length){inventory.hidden=!exact;}
 var count=document.getElementById('sample-arm-count');
 if(count){count.textContent=drySynthetic?[[js:ui.synthetic_arm_selected_automatically]]:
-arms.length+' arm'+(arms.length===1?'':'s')+' selected';}
+window.uraFormat(arms.length===1?[[js:ui.one_selected_arm]]:[[js:ui.many_selected_arms]],{count:arms.length});}
 if(!sampleRange||!sampleNumber){return;}
 var raw=sampleNumber.value.trim();var valid=/^[0-9]+$/.test(raw);
 if(mode==='diagnostic_canary'&&!raw){sampleNumber.value='1';raw='1';valid=true;}
@@ -1090,10 +1090,10 @@ function checkedName(name){var field=form.querySelector(\"input[name='\"+name+\"
 return !!(field&&field.checked);}
 function selectionLabel(values){if(!values.length){return [[js:ui.none_selected]];}
 var shown=values.slice(0,3).join(', ');return shown+(values.length>3?
-' +'+(values.length-3)+' more':'');}
+window.uraFormat([[js:ui.additional_items]],{count:values.length-3}):'');}
 function pairState(pathName,digestName){var path=namedValue(pathName,'');
-var digest=namedValue(digestName,'');if(path&&digest){return 'set';}
-if(path||digest){return 'incomplete';}return [[js:ui.not_set]];}
+var digest=namedValue(digestName,'');if(path&&digest){return [[js:ui.receipt_set]];}
+if(path||digest){return [[js:ui.receipt_incomplete]];}return [[js:ui.not_set]];}
 function setBuildSummary(id,value){var out=document.getElementById(id);
 if(out){out.textContent=value;}}
 function refresh(){rememberPickerSelection();updateUnknownPrecisionBadges();
@@ -1144,10 +1144,10 @@ selectionLabel(mods)+[[js:ui.targets]]+selectionLabel(drySynthetic?[]:targets)+
 [[js:ui.corpora]]+selectionLabel(drySynthetic?[[[js:ui.synth_automatic]]]:arms)+
 [[js:ui.attacks]]+selectionLabel(fw));
 var judgeModel=namedValue('judge_model',[[js:ui.not_selected]]);
-var approx=checkedName('approximate_common_metrics')?'enabled':'off';
+var approx=checkedName('approximate_common_metrics')?[[js:ui.enabled_state]]:[[js:ui.off_state]];
 var defense=namedValue('defense','none');var defenseGuard=namedValue('defense_guard','rules');
-var scoringGuard=namedValue('guardrail_model','')?'configured':[[js:ui.not_set]];
-var defenseGuardrail=namedValue('defense_guardrail_model','')?'configured':[[js:ui.not_set]];
+var scoringGuard=namedValue('guardrail_model','')?[[js:ui.configured_state]]:[[js:ui.not_set]];
+var defenseGuardrail=namedValue('defense_guardrail_model','')?[[js:ui.configured_state]]:[[js:ui.not_set]];
 var localJudge=jg.indexOf('llm')>=0&&Array.prototype.some.call(
 form.querySelectorAll(\".modelbox[data-kind='local']\"),
 function(b){return (b.getAttribute('data-model')||'')===judgeModelValue;});
@@ -1155,7 +1155,7 @@ var responseConditioned=fw.some(function(name){return name.toLowerCase()==='cres
 var deferredLocalJudge=loc.length&&!drySynthetic&&!responseConditioned&&
 (jg.indexOf('guardrail')>=0||localJudge)&&
 (mode==='measured'||mode==='diagnostic_canary'||mode==='attestation_probe');
-var judgeSchedule=deferredLocalJudge?[[js:ui.post_factum_after_target_gpu_release]]:'inline';
+var judgeSchedule=deferredLocalJudge?[[js:ui.post_factum_after_target_gpu_release]]:[[js:ui.inline_schedule]];
 setBuildSummary('build-summary-evaluation',[[js:ui.judges]]+selectionLabel(jg)+
  [[js:ui.schedule]]+judgeSchedule+[[js:ui.llm_model]]+judgeModel+
  [[js:ui.approximate_metrics]]+approx+[[js:ui.defense]]+
@@ -1178,10 +1178,10 @@ localOnlyMeasured?[[js:ui.0_complete_release]]:[[js:ui.not_set]])+
  namedValue('seeds',[[js:ui.not_set]])+[[js:ui.queries]]+namedValue('max_queries',[[js:ui.not_set]])+
  [[js:ui.turns]]+namedValue('max_turns',[[js:ui.not_set]])+[[js:ui.answer_retries]]+
  namedValue('target_answer_retries','1')+[[js:ui.hosted_http_error_retries]]+
- (api.length?[[js:ui.3_max_4_attempts]]:'N/A')+[[js:ui.group]]+namedValue('group',[[js:ui.cli_default]])+
- [[js:ui.ideator_pair_limit]]+namedValue('ideator_pair_limit','0 (all)')+
-[[js:ui.exclude_tool_conditioned]]+(checkedName('exclude_tool_conditioned')?'on':'off')+
-[[js:ui.reset_open_circuits]]+(checkedName('reset_open_circuits')?'on':'off')+
+ (api.length?[[js:ui.3_max_4_attempts]]:[[js:ui.not_applicable_short]])+[[js:ui.group]]+namedValue('group',[[js:ui.cli_default]])+
+ [[js:ui.ideator_pair_limit]]+namedValue('ideator_pair_limit',[[js:ui.all_pairs]])+
+[[js:ui.exclude_tool_conditioned]]+(checkedName('exclude_tool_conditioned')?[[js:ui.on_state]]:[[js:ui.off_state]])+
+[[js:ui.reset_open_circuits]]+(checkedName('reset_open_circuits')?[[js:ui.on_state]]:[[js:ui.off_state]])+
 [[js:ui.lock_stale_seconds]]+namedValue('lock_stale_seconds',[[js:ui.cli_default]]));
 setBuildSummary('build-summary-budget',[[js:ui.target_judge_http]]+
 (checkedName('automatic_caps')?[[js:ui.calculated_during_review]]:
@@ -1461,6 +1461,8 @@ _STYLE += _CAMPAIGN_GUIDE_STYLE
 
 
 def _page(title: str, body: str, active: str = "") -> bytes:
+    from .display_labels import script as display_script
+
     links = "".join(
         f"<a href='{href}'"
         + (" class='active'" if label == active else "")
@@ -1474,6 +1476,7 @@ def _page(title: str, body: str, active: str = "") -> bytes:
         "<link rel='icon' type='image/svg+xml' href='/static/favicon.svg'>"
         + _THEME_INIT
         + "<link rel='stylesheet' href='/static/style.css'></head><body>"
+        + display_script()
         + _BUSY_OVERLAY
         + (
             "<nav><span class='brand'>"

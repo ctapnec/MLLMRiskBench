@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .display_labels import label as _ui_label
 from .i18n import template as _ui_template, text as _ui_text
 
 import html
@@ -104,7 +105,7 @@ class WorkspacePagesMixin:
                     if low is None
                     else tokens(low)
                     if low == high
-                    else tokens(low) + " to " + tokens(high)
+                    else tokens(low) + _ui_text("workspace_pages.to") + tokens(high)
                 )
                 if 0 < row[prefix + "_known"] < row["assigned"]:
                     value += _ui_text("workspace_pages.partly_unknown")
@@ -117,13 +118,13 @@ class WorkspacePagesMixin:
                 label = (
                     _ui_text("workspace_pages.condition")
                     + f"{index}"
-                    + ": context "
+                    + _ui_text("workspace_pages.context")
                     + f"{allowance(row, 'context')}"
-                    + "; output "
+                    + _ui_text("workspace_pages.output_copy")
                     + f"{allowance(row, 'output')}"
                     + "; "
                     + f"{row['assigned']:,}"
-                    + " assignments"
+                    + _ui_text("workspace_pages.assignments")
                 )
                 options += (
                     "<option value='"
@@ -201,8 +202,13 @@ class WorkspacePagesMixin:
             views.append(("legacy", _ui_text("workspace_pages.earlier_reports")))
         return (
             "<nav class='page-tablist server-tablist' aria-label='"
-            + context.title()
-            + " scope'>"
+            + html.escape(
+                _ui_text("workspace_pages.jobs_scope")
+                if context == "jobs"
+                else _ui_text("workspace_pages.stats_scope"),
+                quote=True,
+            )
+            + "'>"
             + "".join(
                 "<a class='page-tab' href='/"
                 + context
@@ -365,9 +371,17 @@ class WorkspacePagesMixin:
 
             rows = self.db.workspace_cost_totals(campaign_id, all_rows=True)
             if rows is None:
-                return 503, "text/plain; charset=utf-8", b"Campaign cost index unavailable"
+                return (
+                    503,
+                    "text/plain; charset=utf-8",
+                    _ui_text("workspace_pages.campaign_cost_index_unavailable").encode("utf-8"),
+                )
             if not rows:
-                return 404, "text/plain; charset=utf-8", b"No indexed campaign costs"
+                return (
+                    404,
+                    "text/plain; charset=utf-8",
+                    _ui_text("workspace_pages.no_indexed_campaign_costs").encode("utf-8"),
+                )
             return 200, "text/csv; charset=utf-8", cost_totals_csv(rows, campaign_id)
         if name == "comparison.csv":
             from .workspace_comparison import comparison_rows, comparison_groups, comparison_csv
@@ -382,12 +396,20 @@ class WorkspacePagesMixin:
                 if rows is not None:
                     rows = [row for group in comparison_groups(rows)[:12] for row in group]
             if rows is None:
-                return 503, "text/plain; charset=utf-8", b"Campaign comparison index unavailable"
+                return (
+                    503,
+                    "text/plain; charset=utf-8",
+                    _ui_text("workspace_pages.campaign_comparison_index_unavailable").encode(
+                        "utf-8"
+                    ),
+                )
             if not rows:
                 return (
                     404,
                     "text/plain; charset=utf-8",
-                    b"No measured comparison inputs on this page",
+                    _ui_text("workspace_pages.no_measured_comparison_inputs_on_this_page").encode(
+                        "utf-8"
+                    ),
                 )
             return 200, "text/csv; charset=utf-8", comparison_csv(rows, campaign_id, query)
         model, condition = self._workspace_result_scope(query)
@@ -400,10 +422,18 @@ class WorkspacePagesMixin:
                 judge=query.get("judge", ""),
             )
             if rows is None:
-                return 503, "text/plain; charset=utf-8", b"Campaign judgment index unavailable"
+                return (
+                    503,
+                    "text/plain; charset=utf-8",
+                    _ui_text("workspace_pages.campaign_judgment_index_unavailable").encode("utf-8"),
+                )
             rows = [row for group in judgment_groups(rows)[:12] for row in group]
             if not rows:
-                return 404, "text/plain; charset=utf-8", b"No indexed judgments for this page"
+                return (
+                    404,
+                    "text/plain; charset=utf-8",
+                    _ui_text("workspace_pages.no_indexed_judgments_for_this_page").encode("utf-8"),
+                )
             if name == "judgments.csv":
                 return 200, "text/csv; charset=utf-8", judgment_counts_csv(rows)
             figure = judgment_breakdown_svg(
@@ -425,21 +455,33 @@ class WorkspacePagesMixin:
             campaign_id, offset=page * 25, model=model, condition=condition
         )
         if rows is None:
-            return 503, "text/plain; charset=utf-8", b"Campaign result index unavailable"
+            return (
+                503,
+                "text/plain; charset=utf-8",
+                _ui_text("workspace_pages.campaign_result_index_unavailable").encode("utf-8"),
+            )
         rows = rows[:25]
         if not rows:
-            return 404, "text/plain; charset=utf-8", b"No indexed results for this page"
+            return (
+                404,
+                "text/plain; charset=utf-8",
+                _ui_text("workspace_pages.no_indexed_results_for_this_page").encode("utf-8"),
+            )
         if name == "model-counts.csv":
             return 200, "text/csv; charset=utf-8", model_counts_csv(rows, condition=condition)
         if name not in {"coverage.svg", "quality.svg"}:
-            return 404, "text/plain; charset=utf-8", b"Unknown figure"
+            return (
+                404,
+                "text/plain; charset=utf-8",
+                _ui_text("workspace_pages.unknown_figure").encode("utf-8"),
+            )
         scope = (
             _ui_text("workspace_pages.selected_execution_condition")
             if condition
             else _ui_text("workspace_pages.all_retained_conditions_including_history")
         )
         scope += (
-            ", page "
+            _ui_text("workspace_pages.page_copy")
             + f"{page + 1}"
             + _ui_text("workspace_pages.operational_coverage_not_pooled_security_rates")
         )
@@ -490,7 +532,7 @@ class WorkspacePagesMixin:
         if fallback:
             label += _ui_text("workspace_pages.alternate_export_row_position_may_differ")
         elif separator and row.isdigit():
-            label += f" (row {row})"
+            label += _ui_text("workspace_pages.row") + f"{row}" + ")"
         return "<a href='/artifacts?path=" + quote(relative, safe="") + "'>" + label + "</a>"
 
     def _campaign_selector(self, selected: str = "", *, form_id: str = "") -> str:
@@ -582,9 +624,9 @@ class WorkspacePagesMixin:
                 "<p>[[text:workspace_pages.no_campaigns_created_yet_existing_standalone_jobs_are_unchanged]]</p>"
             )
         return _page(
-            context.title(),
+            _ui_label(context),
             "<h1>"
-            + context.title()
+            + _ui_label(context)
             + "</h1>"
             + (self._work_view_tabs(context, "campaigns") if context in {"jobs", "stats"} else "")
             + _ui_template(
@@ -593,7 +635,7 @@ class WorkspacePagesMixin:
             + "<div class='campaign-grid'>"
             + cards
             + "</div>",
-            active=context.title(),
+            active=_ui_label(context),
         )
 
     def _workspace_page(self, campaign_id: str, query: dict[str, str]) -> bytes:
@@ -621,7 +663,7 @@ class WorkspacePagesMixin:
                 + "'"
                 + (" aria-current='page'" if tab == section else "")
                 + ">"
-                + tab.title()
+                + _ui_label(tab)
                 + "</a>"
                 for tab in sections
             )
@@ -654,8 +696,8 @@ class WorkspacePagesMixin:
                         for key, label in (
                             ("local", _ui_text("workspace_pages.local_models")),
                             ("api", _ui_text("workspace_pages.api_models")),
-                            ("corpora", "Arms / corpora"),
-                            ("attackers", "Frameworks / attacks"),
+                            ("corpora", _ui_text("workspace_pages.arms_corpora")),
+                            ("attackers", _ui_text("workspace_pages.frameworks_attacks")),
                             ("seeds", _ui_text("workspace_pages.seeds")),
                             ("sampling_policy", _ui_text("workspace_pages.sampling")),
                             ("limit", _ui_text("workspace_pages.per_arm_limit")),
@@ -763,7 +805,7 @@ class WorkspacePagesMixin:
             + navigation
             + (self._operation_links(campaign_id) if section in {"overview", "activity"} else "")
             + "<section class='card'><h2>"
-            + section.title()
+            + _ui_label(section)
             + "</h2>"
             + content
             + "</section>",
@@ -843,7 +885,9 @@ class WorkspacePagesMixin:
                 total = row[name + "_tokens"]
                 missing = row[name + "_unknown"]
                 return ("unknown" if total is None else f"{total:,}") + (
-                    f"; {missing:,} attempt(s) unknown" if missing else ""
+                    ("; " + f"{missing:,}" + _ui_text("workspace_pages.attempt_s_unknown"))
+                    if missing
+                    else ""
                 )
 
             return (
@@ -859,7 +903,7 @@ class WorkspacePagesMixin:
                 + "<div class='campaign-costs'>"
                 + table(
                     (
-                        "Provider / model",
+                        _ui_text("workspace_pages.provider_model"),
                         _ui_text("workspace_pages.role"),
                         _ui_text("workspace_pages.http_attempts_local_evaluations"),
                         _ui_text("workspace_pages.recorded_cost_usd"),
@@ -879,9 +923,9 @@ class WorkspacePagesMixin:
                             + (
                                 "<br>"
                                 + f"{row['settled_attempts']:,}"
-                                + " settled; "
+                                + _ui_text("workspace_pages.settled")
                                 + f"{row['unknown_attempts']:,}"
-                                + " unknown; "
+                                + _ui_text("workspace_pages.unknown")
                                 + f"{row['unsettled_attempts']:,}"
                                 + _ui_text("workspace_pages.in_flight")
                             ),
@@ -1149,10 +1193,10 @@ class WorkspacePagesMixin:
                 + table(
                     (
                         _ui_text("workspace_pages.model"),
-                        "Corpus / modality",
+                        _ui_text("workspace_pages.corpus_modality"),
                         _ui_text("workspace_pages.original_outcome"),
                         _ui_text("workspace_pages.recovery_outcome"),
-                        "Reason / evidence",
+                        _ui_text("workspace_pages.reason_evidence"),
                     ),
                     recovery_rows,
                 )
@@ -1239,7 +1283,7 @@ class WorkspacePagesMixin:
                     _ui_text("workspace_pages.input"),
                     _ui_text("workspace_pages.evidence"),
                     _ui_text("workspace_pages.modality"),
-                    "Framework / corpus",
+                    _ui_text("workspace_pages.framework_corpus"),
                     _ui_text("workspace_pages.outcome"),
                     _ui_text("workspace_pages.truncated"),
                     _ui_text("workspace_pages.details"),

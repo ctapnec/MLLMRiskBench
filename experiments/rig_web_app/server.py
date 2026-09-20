@@ -77,7 +77,7 @@ def _make_server(app: RigWebApp, host: str, port: int):
         ) -> None:
             self.send_response(status)
             if location is not None:
-                self.send_header(_ui_text("server.location"), location)
+                self.send_header("Location", location)
             if content_type is not None:
                 self.send_header("Content-Type", content_type)
             # The console is a control surface. These headers apply even to
@@ -123,7 +123,9 @@ def _make_server(app: RigWebApp, host: str, port: int):
                     self.close_connection = True
                     if length > _MAX_POST_BYTES:
                         status_code = 413
-                        body = b"request body exceeds the console limit"
+                        body = _ui_text("server.request_body_exceeds_the_console_limit").encode(
+                            "utf-8"
+                        )
                         remaining = min(length, 64 * 1024 * 1024)
                         while remaining > 0:
                             chunk = self.rfile.read(min(remaining, 65536))
@@ -132,14 +134,16 @@ def _make_server(app: RigWebApp, host: str, port: int):
                             remaining -= len(chunk)
                     else:
                         status_code = 400
-                        body = b"invalid Content-Length"
+                        body = _ui_text("server.invalid_content_length").encode("utf-8")
                     self._send(status_code, "text/plain; charset=utf-8", body)
                     return
                 payload = self.rfile.read(length)
                 try:
                     form = _parse_form_payload(payload)
                 except ValueError:
-                    body = b"invalid or duplicate URL-encoded form fields"
+                    body = _ui_text("server.invalid_or_duplicate_url_encoded_form_fields").encode(
+                        "utf-8"
+                    )
                     self._send(400, "text/plain; charset=utf-8", body)
                     return
             status, content_type, body = app.handle(method, self.path, form)
@@ -230,7 +234,7 @@ def main(argv: list[str] | None = None) -> int:
         {"repo_root": args.runner_root.resolve(strict=True)} if args.runner_root else {}
     )
     if args.verify_artifact_sha256 and not args.reindex:
-        parser.error("--verify-artifact-sha256 requires --reindex")
+        parser.error(_ui_text("server.verify_artifact_sha256_requires_reindex"))
     if args.check_database:
         import sqlite3
 

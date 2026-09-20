@@ -39,16 +39,19 @@ def response(app, query):
         "[[text:stats_compare.the_next_screen_offers_models_generation_conditions_and_judging_c]]</p>"
     )
     body += '<form method="get" action="/stats"><input type="hidden" name="view" value="compare"><div class="campaign-grid">'
-    for side in ("left", "right"):
+    for side, label in (
+        ("left", _ui_text("stats_compare.left_campaign")),
+        ("right", _ui_text("stats_compare.right_campaign")),
+    ):
         body += (
             '<label class="campaign-field">'
-            + side.title()
-            + _ui_template(' [[text:stats_compare.campaign]]<select name="')
+            + html.escape(label)
+            + '<select name="'
             + side
             + '" aria-label="'
-            + side.title()
+            + html.escape(label, quote=True)
             + _ui_template(
-                ' campaign" required><option value="">[[text:stats_compare.choose_a_campaign]]</option>'
+                '" required><option value="">[[text:stats_compare.choose_a_campaign]]</option>'
             )
         )
         body += "".join(

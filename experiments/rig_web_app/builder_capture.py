@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .display_labels import label as _ui_label
 from .i18n import template as _ui_template, text as _ui_text
 
 import hashlib
@@ -249,7 +250,7 @@ class BuilderCaptureMixin:
             positive: bool = False,
             nonnegative: bool = False,
         ) -> str:
-            raw = required(field_name, field_name.replace("_", " "))
+            raw = required(field_name, _ui_label(field_name))
             if not raw:
                 return raw
             try:
@@ -391,17 +392,17 @@ class BuilderCaptureMixin:
             "PEZ",
             "GBDA",
             "UAT",
-            _ui_text("builder_capture.autoprompt"),
+            "AutoPrompt",
             "PAP-top5",
             "GCG",
             "GCG-Multi",
             "GCG-Transfer",
-            _ui_text("builder_capture.autodan"),
+            "AutoDAN",
             "PAIR",
             "TAP",
-            _ui_text("builder_capture.directrequest"),
-            _ui_text("builder_capture.humanjailbreaks"),
-            _ui_text("builder_capture.zeroshot"),
+            "DirectRequest",
+            "HumanJailbreaks",
+            "ZeroShot",
         }
         if (
             not methods

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 
+from .display_labels import label as _ui_label
 from .i18n import template as _ui_template, text as _ui_text
 
 import hashlib
@@ -271,7 +272,7 @@ class BuilderPageMixin:
             latest = runtime.latest
             latest_reports_running = latest is not None and latest.status == "running"
             if latest_reports_running and snapshot.campaign_state == "running":
-                state_text = f"{latest.action.capitalize()} running"
+                state_text = f"{_ui_label(latest.action)}" + _ui_text("builder_page.running")
                 tone = "blue"
                 next_action = (
                     runtime.plan_action
@@ -287,7 +288,7 @@ class BuilderPageMixin:
                     or snapshot.campaign_state.strip()
                     or "unknown"
                 )
-                state_text = f"{latest.action.capitalize()} {campaign_label}"
+                state_text = f"{_ui_label(latest.action)} {campaign_label}"
                 tone = {
                     "failed": "red",
                     "orphaned": "amber",
@@ -336,7 +337,7 @@ class BuilderPageMixin:
                 )
 
             if latest is not None and latest.status != "running":
-                when = f" at {latest.at}" if latest.at else ""
+                when = (_ui_text("builder_page.at") + f"{latest.at}") if latest.at else ""
                 if latest.status == "passed" and latest.action == "verify":
                     history = (
                         _ui_text("builder_page.last_full_verification_passed")
@@ -360,7 +361,7 @@ class BuilderPageMixin:
                     history = (
                         _ui_text("builder_page.last")
                         + f"{attempted}"
-                        + " failed"
+                        + _ui_text("builder_page.failed")
                         + f"{when}"
                         + ". "
                     ) + history
@@ -567,7 +568,7 @@ class BuilderPageMixin:
             f"<input type='radio' name='mode' value='{token}'"
             + (" checked" if token == selected_mode else "")
             + ">"
-            f"<span><strong>{html.escape(token.replace('_', ' '))}</strong> "
+            f"<span><strong>{html.escape(_ui_label(token))}</strong> "
             f"<span class='fieldhint'>{html.escape(desc)}</span></span></label>"
             for token, _flag, desc in _BUILD_MODES
         )
@@ -598,6 +599,7 @@ class BuilderPageMixin:
         # runnable only through the explicit, separately labelled approximate
         # response-proxy opt-in rendered with the judge controls below.
         signatures: dict[str, list[tuple[str, tuple[str, ...], str]]] = {}
+        bucket_ranks = {}
         for arm, mods, reason in _ARM_CATALOG:
             if reason and "tool" in mods:
                 bucket = _ui_text(
@@ -614,14 +616,17 @@ class BuilderPageMixin:
             else:
                 bucket = " + ".join(mods)
             signatures.setdefault(bucket, []).append((arm, mods, reason))
+            bucket_ranks[bucket] = (
+                2
+                if reason and "tool" not in mods
+                else 1
+                if not reason and arm in _SOURCE_METRIC_ARMS
+                else 0
+            )
         arm_groups = []
 
         def _bucket_rank(name: str) -> tuple[int, int, str]:
-            if "approximate proxy available" in name:
-                return (2, len(name), name)
-            if name.startswith("source-specific metric"):
-                return (1, len(name), name)
-            return (0, len(name), name)
+            return (bucket_ranks[name], len(name), name)
 
         order = sorted(signatures, key=_bucket_rank)
         for signature in order:
@@ -900,7 +905,7 @@ class BuilderPageMixin:
                 quant_control_disabled = disabled
                 params = profile.get("parameter_count_b")
                 params_text = (
-                    f"{float(params):g}B params"
+                    (f"{float(params):g}" + _ui_text("builder_page.b_params"))
                     if params is not None
                     else _ui_text("builder_page.params_unknown")
                 )
@@ -935,7 +940,9 @@ class BuilderPageMixin:
                         else _ui_text("builder_page.native_maximum_context")
                         if context_limit == "max"
                         else (
-                            _ui_text("builder_page.context_cap") + f"{context_limit:,}" + " tokens"
+                            _ui_text("builder_page.context_cap")
+                            + f"{context_limit:,}"
+                            + _ui_text("builder_page.tokens")
                         )
                     )
                     if generation_limit == -1:
@@ -944,20 +951,22 @@ class BuilderPageMixin:
                         context_text += (
                             _ui_text("builder_page.output_cap")
                             + f"{generation_limit:,}"
-                            + " tokens"
+                            + _ui_text("builder_page.tokens")
                         )
                     if thinking_control is not None:
                         context_text += (
                             _ui_text("builder_page.thinking_disabled_2")
                             if thinking_control is False
-                            else f" / thinking {thinking_control}"
+                            else (_ui_text("builder_page.thinking") + f"{thinking_control}")
                         )
                 elif context_limit is not None:
                     context_text = (
                         _ui_text("builder_page.automatic_maximum_gpu_fit_context")
                         if context_limit == -1
                         else (
-                            _ui_text("builder_page.context_cap") + f"{context_limit:,}" + " tokens"
+                            _ui_text("builder_page.context_cap")
+                            + f"{context_limit:,}"
+                            + _ui_text("builder_page.tokens")
                         )
                     )
                     if generation_limit is None:
@@ -966,13 +975,13 @@ class BuilderPageMixin:
                         context_text += (
                             _ui_text("builder_page.output_cap")
                             + f"{generation_limit:,}"
-                            + " tokens"
+                            + _ui_text("builder_page.tokens")
                         )
                     if thinking_control is not None:
                         context_text += (
                             _ui_text("builder_page.thinking_disabled_2")
                             if thinking_control is False
-                            else f" / thinking {thinking_control}"
+                            else (_ui_text("builder_page.thinking") + f"{thinking_control}")
                         )
                 else:
                     context_text = _ui_text(
@@ -1114,25 +1123,25 @@ class BuilderPageMixin:
                                 f"{params_text}"
                                 + " ("
                                 + f"{parameter_basis}"
-                                + ") · "
+                                + ") - "
                                 + f"{profile.get('estimated_vram_gib', '?')}"
                                 + _ui_text("builder_page.gib_estimated")
                                 + f"{profile.get('available_vram_gib', 0)}"
                                 + _ui_text("builder_page.gib_available")
                                 + f"{fit_text}"
-                                + " · "
+                                + " - "
                                 + f"{quant_label}"
-                                + " · TP"
+                                + " - TP"
                                 + f"{displayed_tp}"
-                                + " · multi-GPU "
+                                + _ui_text("builder_page.multi_gpu")
                                 + f"{basis}"
-                                + " · "
+                                + " - "
                                 + f"{context_text}"
-                                + " · "
+                                + " - "
                                 + f"{('pinned' if pinned else _ui_text('builder_page.revision_required'))}"
                             )
                             + (
-                                f" · {profile['compatibility_note']}"
+                                f" - {profile['compatibility_note']}"
                                 if profile.get("compatibility_note")
                                 else ""
                             )
@@ -1332,14 +1341,22 @@ class BuilderPageMixin:
                 if context_limit == "fit"
                 else _ui_text("builder_page.native_maximum_context_2")
                 if context_limit == "max"
-                else (_ui_text("builder_page.context_cap_2") + f"{context_limit:,}" + " tokens")
+                else (
+                    _ui_text("builder_page.context_cap_2")
+                    + f"{context_limit:,}"
+                    + _ui_text("builder_page.tokens")
+                )
                 if isinstance(context_limit, int)
                 else _ui_text("builder_page.invalid_context_policy")
             )
             context_detail += (
                 _ui_text("builder_page.maximum_available_output")
                 if generation_limit == -1
-                else (_ui_text("builder_page.output_cap") + f"{generation_limit:,}" + " tokens")
+                else (
+                    _ui_text("builder_page.output_cap")
+                    + f"{generation_limit:,}"
+                    + _ui_text("builder_page.tokens")
+                )
                 if isinstance(generation_limit, int)
                 else _ui_text("builder_page.invalid_output_policy")
             )
@@ -1357,7 +1374,10 @@ class BuilderPageMixin:
                 + (
                     _ui_text("builder_page.thinking_disabled")
                     if thinking_control is False
-                    else f"; thinking {html.escape(str(thinking_control))}"
+                    else (
+                        _ui_text("builder_page.thinking_copy")
+                        + f"{html.escape(str(thinking_control))}"
+                    )
                     if thinking_control is not None
                     else ""
                 )
@@ -1429,7 +1449,7 @@ class BuilderPageMixin:
                             "builder_page.highest_configured_current_input_output_judging_rate_among_compar"
                         )
                         + f"{currency}"
-                        + " models: "
+                        + _ui_text("builder_page.models")
                         + f"{score:g}"
                         + " "
                         + f"{currency}"
@@ -1540,15 +1560,15 @@ class BuilderPageMixin:
             + html.escape(str(gpu.get("index", "?")))
             + "</code> "
             + html.escape(str(gpu.get("name", "unknown")))
-            + " · "
+            + " - "
             + html.escape(str(gpu.get("vram_gib", "?")))
             + _ui_text("builder_page.gib_vram")
             + (
-                " · SM " + html.escape(str(gpu["compute_capability"]))
+                " - SM " + html.escape(str(gpu["compute_capability"]))
                 if gpu.get("compute_capability")
                 else ""
             )
-            + (" · PCI " + html.escape(str(gpu["pci_bus_id"])) if gpu.get("pci_bus_id") else "")
+            + (" - PCI " + html.escape(str(gpu["pci_bus_id"])) if gpu.get("pci_bus_id") else "")
             + "</li>"
             for gpu in self.gpu_hardware.get("gpus", [])
             if isinstance(gpu, Mapping)
@@ -1565,7 +1585,7 @@ class BuilderPageMixin:
             + html.escape(cpu_name)
             + _ui_template("</strong> [[text:builder_page.message]] ")
             + html.escape(ram_text)
-            + " &middot; "
+            + " - "
             + html.escape(str(self.system_hardware.get("platform") or "unknown"))
             + "</p>"
         )
@@ -1666,12 +1686,12 @@ class BuilderPageMixin:
                     detail = _ui_text(
                         "builder_page.capture_a_validated_planning_bundle_first_measured_replay_checks"
                     )
-                    badge = "capture + replay"
+                    badge = _ui_text("builder_page.capture_replay_copy")
                 elif fw == "harmbench":
                     detail = _ui_text(
                         "builder_page.prepare_generated_cases_first_measured_replay_checks_the_capture"
                     )
-                    badge = "prepare + replay"
+                    badge = _ui_text("builder_page.prepare_replay_copy")
                 elif fw == "nanogcg":
                     detail = _ui_text(
                         "builder_page.provide_an_exact_precomputed_suffix_for_replay_live_nanogcg_gener"
@@ -1764,7 +1784,7 @@ class BuilderPageMixin:
         dtype_opts = "".join(
             f"<option value='{d}'"
             + (" selected" if d == dtype_selected else "")
-            + f">{d or '(default: auto)'}</option>"
+            + f">{d or _ui_text('builder_page.default_auto')}</option>"
             for d in ("", "auto", "bfloat16", "float16")
         )
 
@@ -1819,13 +1839,11 @@ class BuilderPageMixin:
             return (
                 " aria-hidden='false'"
                 if name in selected_prepared
-                else _ui_text("builder_page.hidden_aria_hidden_true")
+                else " hidden aria-hidden='true'"
             )
 
         workflows_visibility = (
-            " aria-hidden='false'"
-            if selected_prepared
-            else _ui_text("builder_page.hidden_aria_hidden_true")
+            " aria-hidden='false'" if selected_prepared else " hidden aria-hidden='true'"
         )
         ideator_available_pairs: int | None = None
         if "ideator" in selected_prepared:
@@ -1943,7 +1961,7 @@ class BuilderPageMixin:
             + text_field(
                 "t3_artifact",
                 _ui_text("builder_page.plan_bundle"),
-                "ura-t3mp3st-plan-bundle/1 path",
+                _ui_text("builder_page.ura_t3mp3st_plan_bundle_1_path"),
             )
             + text_field(
                 "t3_artifact_sha",
@@ -2103,7 +2121,7 @@ class BuilderPageMixin:
             + text_field(
                 "ideator_pair_limit",
                 _ui_text("builder_page.replay_pair_limit"),
-                "0 = all verified pairs; positive N = ordered manifest prefix",
+                _ui_text("builder_page.0_all_verified_pairs_positive_n_ordered_manifest_prefix"),
                 default="0",
                 kind="number",
             )
@@ -2207,7 +2225,12 @@ class BuilderPageMixin:
         sampling_arm_label = (
             _ui_text("builder_page.synthetic_arm_selected_automatically")
             if synthetic_canary
-            else f"{selected_arm_count} arm{'s' if selected_arm_count != 1 else ''} selected"
+            else (
+                f"{selected_arm_count}"
+                + _ui_text("builder_page.arm_copy")
+                + f"{('s' if selected_arm_count != 1 else '')}"
+                + " selected"
+            )
         )
         if exact_arm_cardinality:
             inventory_rows = "".join(

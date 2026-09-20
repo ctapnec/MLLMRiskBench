@@ -313,7 +313,7 @@ class FrameworkRuntimeService:
                 (
                     _ui_text("framework_runtimes.the_current_plan_requires")
                     + f"{row.plan_action}"
-                    + ", not "
+                    + _ui_text("framework_runtimes.not")
                     + f"{action}"
                 )
             )

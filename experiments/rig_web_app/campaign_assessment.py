@@ -1,5 +1,6 @@
 """Campaign-level assessment independent of how its answers were collected."""
 
+from .display_labels import label as _ui_label
 from .i18n import template as _ui_template, text as _ui_text
 from decimal import Decimal, InvalidOperation
 import html
@@ -227,7 +228,7 @@ def review(app, owner, job_id):
     body += (
         "<ul>"
         + "".join(
-            "<li>" + html.escape(key.replace("_", " ")) + ": " + str(value) + "</li>"
+            "<li>" + html.escape(_ui_label(key)) + ": " + str(value) + "</li>"
             for key, value in result["dispositions"].items()
         )
         + "</ul>"

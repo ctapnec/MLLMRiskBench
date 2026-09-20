@@ -94,8 +94,8 @@ def budget_panel(app, params, *, automatic=False):
         "<td><input type='number' form='builder' min='1' step='1' required class='matched-call-cap' "
         "data-target='"
         + escape(route["spec"])
-        + "' aria-label='Input request cap for "
-        + escape(route["spec"])
+        + "' aria-label='"
+        + escape(_ui_text("builder_budget.input_cap_for_model", model=route["spec"]))
         + "' value='"
         + escape(caps.get(route["spec"], 10))
         + "'></td></tr>"

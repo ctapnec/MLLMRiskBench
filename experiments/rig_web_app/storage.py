@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 from .i18n import text as _ui_text
 
 import json
@@ -212,7 +211,7 @@ class ConsoleDB(WorkspaceStoreMixin, WorkspaceResultsMixin, WorkspaceCostsMixin)
 
     def _job_row(
         self,
-        job: _ui_text("storage.job"),
+        job: "Job",
         state: str | None = None,
         exit_code: int | None = None,
     ) -> tuple:
@@ -255,7 +254,7 @@ class ConsoleDB(WorkspaceStoreMixin, WorkspaceResultsMixin, WorkspaceCostsMixin)
 
     def upsert_job(
         self,
-        job: _ui_text("storage.job"),
+        job: "Job",
         *,
         state: str | None = None,
         exit_code: int | None = None,
@@ -273,7 +272,7 @@ class ConsoleDB(WorkspaceStoreMixin, WorkspaceResultsMixin, WorkspaceCostsMixin)
 
     def record_terminal(
         self,
-        job: _ui_text("storage.job"),
+        job: "Job",
         pin: str,
         usage_rows: list[dict[str, Any]],
         *,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .display_labels import label as _ui_label
 from .i18n import template as _ui_template, text as _ui_text
 
 import csv
@@ -91,7 +92,7 @@ class PagesMixin:
 
         if label := work_label(job.command, job.argv):
             return label
-        return "tool / validation"
+        return _ui_text("pages.tool_validation")
 
     @staticmethod
     def _job_execution_label(job: Job) -> str:
@@ -562,11 +563,11 @@ class PagesMixin:
                             "</a></td><td><span class='badge amber'>[[text:pages.partial]]</span> "
                         )
                         + f"{campaign.succeeded_tasks}"
-                        + " succeeded; "
+                        + _ui_text("pages.succeeded")
                         + f"{campaign.failed_tasks}"
-                        + " failed; "
+                        + _ui_text("pages.failed_copy")
                         + f"{campaign.skipped_tasks}"
-                        + " skipped; "
+                        + _ui_text("pages.skipped")
                         + f"{pending}"
                         + _ui_template(" [[text:pages.pending]]</td><td>")
                         + f"{_human_duration(campaign.runtime_seconds())}"
@@ -602,13 +603,15 @@ class PagesMixin:
                 items += (
                     _ui_template("<li class='note'>[[text:pages.first]] ")
                     + f"{len(stage.paths)}"
-                    + " of "
+                    + _ui_text("pages.of")
                     + f"{total}"
                     + _ui_template(" [[text:pages.shown]]</li>")
                 )
-            summary = f"{html.escape(label)}: {stage.count} non-archived"
+            summary = (
+                f"{html.escape(label)}" + ": " + f"{stage.count}" + _ui_text("pages.non_archived")
+            )
             if stage.superseded:
-                summary += f", {stage.superseded} archived"
+                summary += ", " + f"{stage.superseded}" + _ui_text("pages.archived")
             stage_sections.append(
                 f"<details class='stagefiles'><summary>{summary}</summary>"
                 f"<ul>{items}</ul></details>"
@@ -1179,7 +1182,7 @@ class PagesMixin:
             live_window_note = (
                 f"{pinned_live_count}"
                 + _ui_text("pages.currently_live_row")
-                + f"{(' remains' if pinned_live_count == 1 else 's remain')}"
+                + f"{(_ui_text('pages.remains') if pinned_live_count == 1 else _ui_text('pages.s_remain'))}"
                 + _ui_text(
                     "pages.visible_although_its_start_time_is_outside_from_to_terminal_histo"
                 )
@@ -1333,11 +1336,15 @@ class PagesMixin:
                 if campaign.model_execution_scope == "target_only_mixed_controller":
                     work = _ui_text("pages.target_capable_mixed_controller")
                 elif campaign.model_tasks:
-                    work = "model + support" if "support" in roles else _ui_text("pages.model_only")
+                    work = (
+                        _ui_text("pages.model_support")
+                        if "support" in roles
+                        else _ui_text("pages.model_only")
+                    )
                 else:
                     work = _ui_text("pages.support_only")
                 if "unplanned" in roles:
-                    work += " + unplanned"
+                    work += _ui_text("pages.unplanned")
             if campaign.model_execution_error:
                 execution = _ui_text("pages.report_invalid")
             elif campaign.model_tasks == ():
@@ -1431,7 +1438,7 @@ class PagesMixin:
             )
             + "".join(
                 f"<button type='button' class='chip' data-state='{state}'>"
-                f"{state.capitalize()} (<span class='chip-count'>{count}</span>)</button>"
+                f"{_ui_label(state)} (<span class='chip-count'>{count}</span>)</button>"
                 for state, count in sorted(tallies.items())
             )
             + "</div>"
@@ -1673,7 +1680,9 @@ class PagesMixin:
         started = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(campaign.started_at))
         call_cap = "-" if campaign.target_call_cap is None else str(campaign.target_call_cap)
         hard_stop = (
-            "-" if campaign.hard_stop_hours is None else f"{campaign.hard_stop_hours:g} hours"
+            "-"
+            if campaign.hard_stop_hours is None
+            else (f"{campaign.hard_stop_hours:g}" + _ui_text("pages.hours"))
         )
         declaration_label = (
             _ui_text("pages.target_capable_mixed_controller_2")
@@ -1703,7 +1712,7 @@ class PagesMixin:
                 + "</td><td>"
             )
             + (
-                "invalid: " + html.escape(campaign.model_declaration_error)
+                _ui_text("pages.invalid") + html.escape(campaign.model_declaration_error)
                 if campaign.model_declaration_error
                 else _ui_text("pages.not_declared")
                 if campaign.model_tasks is None
@@ -1738,7 +1747,7 @@ class PagesMixin:
                         f"{campaign.model_successful_generations}"
                         + _ui_text("pages.successful_generation_s")
                         + f"{campaign.model_attempted_calls}"
-                        + " attempt(s); "
+                        + _ui_text("pages.attempt_s")
                         + f"{campaign.model_execution_covered_tasks}"
                         + "/"
                         + f"{len(campaign.model_tasks or ())}"
@@ -2182,7 +2191,7 @@ class PagesMixin:
             )
         retained = (
             _ui_template("<p class='note'>[[text:pages.retained_output]] ")
-            + " &middot; ".join(retained_links)
+            + " - ".join(retained_links)
             + "</p>"
             if retained_links
             else ""
@@ -2270,7 +2279,11 @@ class PagesMixin:
         if target.is_dir():
             return 200, "text/html; charset=utf-8", self._directory_page(target, relative)
         if not target.is_file():
-            return 404, "text/plain; charset=utf-8", b"no such artifact"
+            return (
+                404,
+                "text/plain; charset=utf-8",
+                _ui_text("pages.no_such_artifact").encode("utf-8"),
+            )
         return self._file_page(target, relative)
 
     def _directory_page(self, directory: Path, relative: str) -> bytes:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .i18n import text as _ui_text
+from .display_labels import label as _ui_label
 
 import html
 import sys
@@ -1812,7 +1813,7 @@ def build_argv(
         raws = _param_values(param, values)
         if not raws:
             if param.required:
-                raise ValueError(f"{command!r} requires {param.flag}")
+                raise ValueError((f"{command!r}" + _ui_text("catalog.requires") + f"{param.flag}"))
             continue
         if param.kind == "flag":
             if len(raws) != 1 or raws[0] not in {"on", "true", "1", "yes"}:
@@ -2021,8 +2022,8 @@ def _mod_icon(modality: str) -> str:
     name = _MOD_ICON_NAME.get(modality, "file")
     return (
         f"<span class='modicon m-{html.escape(modality)}' "
-        f"title='{html.escape(modality)}' "
-        f"aria-label='{html.escape(modality)}'>{_icon(name, size=12)}</span>"
+        f"title='{html.escape(_ui_label(modality), quote=True)}' "
+        f"aria-label='{html.escape(_ui_label(modality), quote=True)}'>{_icon(name, size=12)}</span>"
     )
 
 

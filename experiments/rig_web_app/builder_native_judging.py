@@ -100,13 +100,13 @@ def scoring_description(source):
     guard = stages[1]
     device = guard.get("device") or _ui_text("builder_native_judging.automatic_gpu_placement")
     return (
-        "Rules, then "
+        _ui_text("builder_native_judging.rules_then")
         + f"{guard['model_id']}"
-        + " on "
+        + _ui_text("builder_native_judging.on")
         + f"{device}"
         + _ui_text("builder_native_judging.classifier_output_allowance")
         + f"{guard['max_new_tokens']:,}"
-        + " tokens"
+        + _ui_text("builder_native_judging.tokens")
     )
 
 

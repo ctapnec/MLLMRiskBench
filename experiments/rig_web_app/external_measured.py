@@ -942,7 +942,7 @@ def scan_external_measured_jobs(
             (
                 _ui_text("external_measured.external_measured_registry_scan_stopped_after")
                 + f"{_MAX_REGISTRATIONS}"
-                + " entries."
+                + _ui_text("external_measured.entries")
             )
         )
     if probe_session:
@@ -960,7 +960,7 @@ def scan_external_measured_jobs(
                     + _ui_text("external_measured.newest_running_registrations")
                     + f"{unprobed}"
                     + _ui_text("external_measured.additional_running_registration")
-                    + f"{('s were' if unprobed != 1 else ' was')}"
+                    + f"{(_ui_text('external_measured.s_were') if unprobed != 1 else _ui_text('external_measured.was'))}"
                     + _ui_text("external_measured.not_probed_and_are_shown_as_unknown")
                 )
             )

@@ -11,11 +11,23 @@ from collections.abc import Mapping, Sequence
 
 
 OUTCOMES = (
-    ("usable", _ui_text("workspace_charts.usable"), "U"),
-    ("policy", _ui_text("workspace_charts.policy_outcome"), "P"),
-    ("missing", _ui_text("workspace_charts.missing"), "M"),
-    ("retry_pending", _ui_text("workspace_charts.retry_pending"), "R"),
-    ("pending", _ui_text("workspace_charts.no_retained_outcome"), "N"),
+    ("usable", _ui_text("workspace_charts.usable"), _ui_text("workspace_charts.usable_symbol")),
+    (
+        "policy",
+        _ui_text("workspace_charts.policy_outcome"),
+        _ui_text("workspace_charts.policy_symbol"),
+    ),
+    ("missing", _ui_text("workspace_charts.missing"), _ui_text("workspace_charts.missing_symbol")),
+    (
+        "retry_pending",
+        _ui_text("workspace_charts.retry_pending"),
+        _ui_text("workspace_charts.retry_symbol"),
+    ),
+    (
+        "pending",
+        _ui_text("workspace_charts.no_retained_outcome"),
+        _ui_text("workspace_charts.pending_symbol"),
+    ),
 )
 SERIES = tuple(
     f"var(--viz-series-{i},var(--{token}))"
@@ -44,7 +56,7 @@ const blob=await response.blob();const url=URL.createObjectURL(blob);
 const save=document.createElement('a');save.href=url;save.download=link.download;
 end();save.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 status.textContent=[[js:workspace_charts.export_prepared]];
-}catch(error){status.textContent=error.name===[[js:workspace_charts.aborterror]]?[[js:workspace_charts.export_timed_out_please_retry]]:error.message;}
+}catch(error){status.textContent=error.name===\"AbortError\"?[[js:workspace_charts.export_timed_out_please_retry]]:error.message;}
 finally{clearTimeout(timer);end();}
 });})();</script>""")
 
@@ -85,7 +97,18 @@ def coverage_svg(rows: Sequence[Mapping], *, title: str, scope: str) -> str:
         for value, (key, label, code), color in zip(counts, OUTCOMES, SERIES, strict=True):
             part = span * value / n if n else 0
             if value:
-                description = f"{model}: {label}, {value} of {n} ({100 * value / n:.1f}%)"
+                description = (
+                    f"{model}"
+                    + ": "
+                    + f"{label}"
+                    + ", "
+                    + f"{value}"
+                    + _ui_text("workspace_charts.of")
+                    + f"{n}"
+                    + " ("
+                    + f"{100 * value / n:.1f}"
+                    + "%)"
+                )
                 marks.append(
                     f"<rect data-category='{key}' data-count='{value}' x='{left + start:.3f}' y='{y + 12}' "
                     f"width='{part:.3f}' height='20' style='fill:{color}'><title>{html.escape(description)}</title></rect>"
@@ -170,7 +193,7 @@ def quality_svg(rows: Sequence[Mapping], *, scope: str) -> str:
             value = (
                 f"{label}: {count}/{denominator} ({fraction:.1%})"
                 if denominator
-                else label + ": unknown"
+                else label + _ui_text("workspace_charts.unknown")
             )
             marks.append(
                 f"<rect class='chart-track' x='{x}' y='{y + 12}' width='400' height='12'/>"
@@ -182,7 +205,7 @@ def quality_svg(rows: Sequence[Mapping], *, scope: str) -> str:
             "<svg xmlns='http://www.w3.org/2000/svg' class='campaign-figure' role='img' viewBox='0 0 920 "
             + f"{height}"
             + _ui_template(
-                "' aria-label='Missing responses and observed truncation'><title>[[text:workspace_charts.missing_responses_and_observed_truncation]]</title><desc>[[text:workspace_charts.independent_0_100_percent_scales_missing_response_uses_terminal_r]]</desc><style>"
+                "' aria-label='[[attr:workspace_charts.missing_responses_and_observed_truncation]]'><title>[[text:workspace_charts.missing_responses_and_observed_truncation]]</title><desc>[[text:workspace_charts.independent_0_100_percent_scales_missing_response_uses_terminal_r]]</desc><style>"
             )
         )
         + CHART_STYLE
@@ -271,7 +294,7 @@ def coverage_html(rows: Sequence[Mapping]) -> str:
             )
         quality = (
             (
-                "Missing: "
+                _ui_text("workspace_charts.missing_copy")
                 + f"{missing}"
                 + "/"
                 + f"{observed}"
@@ -282,7 +305,7 @@ def coverage_html(rows: Sequence[Mapping]) -> str:
         )
         quality += (
             (
-                "Truncated: "
+                _ui_text("workspace_charts.truncated_copy")
                 + f"{truncated}"
                 + "/"
                 + f"{known}"
@@ -303,13 +326,14 @@ def coverage_html(rows: Sequence[Mapping]) -> str:
             + " / "
             + html.escape(str(row["evidence_class"]))
             + (
-                " - n="
+                _ui_text("workspace_charts.n")
                 + f"{n:,}"
-                + "</figcaption><svg xmlns='http://www.w3.org/2000/svg' role='img' preserveAspectRatio='none' viewBox='0 0 100 8' style='width:100%;height:1.5rem' aria-label='Outcome composition across "
-                + f"{n}"
-                + _ui_template(
-                    " assignments'><title>[[text:workspace_charts.outcome_composition]]</title>"
+                + "</figcaption><svg xmlns='http://www.w3.org/2000/svg' role='img' preserveAspectRatio='none' viewBox='0 0 100 8' style='width:100%;height:1.5rem' aria-label='"
+                + html.escape(
+                    _ui_text("workspace_charts.outcome_composition_assignments", count=n),
+                    quote=True,
                 )
+                + _ui_template("'><title>[[text:workspace_charts.outcome_composition]]</title>")
             )
             + "".join(segments)
             + "</svg>"

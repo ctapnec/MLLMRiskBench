@@ -1502,7 +1502,7 @@ class BuilderModelsMixin:
                 if hashlib.sha256(artifact_payload).hexdigest() != expected:
                     raise ValueError(
                         (
-                            "reviewed "
+                            _ui_text("builder_models.reviewed")
                             + f"{attacker}"
                             + _ui_text("builder_models.artifact_snapshot_no_longer_matches")
                         )

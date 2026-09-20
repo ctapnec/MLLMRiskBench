@@ -722,7 +722,11 @@ class BuilderValidationMixin:
                 raw, _actual = self._bounded_content_snapshot(
                     str(entry[path_field]),
                     str(entry.get(digest_field, "")),
-                    label=f"prepared {attacker} artifact",
+                    label=(
+                        _ui_text("builder_validation.prepared")
+                        + f"{attacker}"
+                        + _ui_text("builder_validation.artifact")
+                    ),
                     max_bytes=max_bytes,
                 )
                 components[f"attacker_artifact_{attacker}"] = raw
@@ -1014,7 +1018,7 @@ class BuilderValidationMixin:
                 if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
                     raise ValueError(
                         (
-                            "prepared "
+                            _ui_text("builder_validation.prepared")
                             + f"{name}"
                             + _ui_text("builder_validation.artifact_lacks_an_exact_content_digest")
                         )
@@ -1123,7 +1127,7 @@ class BuilderValidationMixin:
         if directory.is_symlink():
             raise ValueError(
                 (
-                    "private "
+                    _ui_text("builder_validation.private")
                     + f"{filename_prefix}"
                     + _ui_text("builder_validation.directory_must_not_be_a_symlink")
                 )
@@ -1132,7 +1136,7 @@ class BuilderValidationMixin:
         if directory.is_symlink() or not directory.is_dir():
             raise ValueError(
                 (
-                    "private "
+                    _ui_text("builder_validation.private")
                     + f"{filename_prefix}"
                     + _ui_text("builder_validation.directory_must_be_a_directory")
                 )
@@ -1806,9 +1810,9 @@ class BuilderValidationMixin:
         if unknown_api or unknown_local:
             details = []
             if unknown_api:
-                details.append("hosted: " + ", ".join(unknown_api))
+                details.append(_ui_text("builder_validation.hosted") + ", ".join(unknown_api))
             if unknown_local:
-                details.append("local: " + ", ".join(unknown_local))
+                details.append(_ui_text("builder_validation.local") + ", ".join(unknown_local))
             errors["models"] = _ui_text(
                 "builder_validation.unknown_target_selection_s"
             ) + "; ".join(details)
@@ -2075,7 +2079,7 @@ class BuilderValidationMixin:
                 errors["group"] = (
                     _ui_text("builder_validation.unsupported_group_key_s")
                     + ", ".join(unknown_group_keys)
-                    + "; allowed: "
+                    + _ui_text("builder_validation.allowed")
                     + ", ".join(sorted(_ALLOWED_GROUP_KEYS))
                 )
         if params.get("exclude_tool_conditioned", "") not in {"", "on"}:
@@ -2125,7 +2129,7 @@ class BuilderValidationMixin:
                 errors["max_queries"] = (
                     _ui_text("builder_validation.ideator_selects")
                     + f"{selected_pairs}"
-                    + " of "
+                    + _ui_text("builder_validation.of")
                     + f"{available_pairs}"
                     + _ui_text(
                         "builder_validation.verified_pairs_max_queries_must_cover_every_selected_pair"
@@ -2135,7 +2139,7 @@ class BuilderValidationMixin:
                 errors["max_turns"] = (
                     _ui_text("builder_validation.ideator_selects")
                     + f"{selected_pairs}"
-                    + " of "
+                    + _ui_text("builder_validation.of")
                     + f"{available_pairs}"
                     + _ui_text(
                         "builder_validation.verified_pairs_max_turns_must_cover_every_selected_pair"
@@ -2321,7 +2325,7 @@ class BuilderValidationMixin:
             disposition = source_dispositions.get(arm)
             if disposition is not None and disposition[0] == "blocked":
                 errors["corpora"] = (
-                    "arm "
+                    _ui_text("builder_validation.arm")
                     + f"{arm}"
                     + _ui_text("builder_validation.is_blocked_by_the_bound_source_receipt")
                     + f"{disposition[1]}"
@@ -2343,7 +2347,7 @@ class BuilderValidationMixin:
                 unsupported = [a for a in attackers if a not in allowed]
                 if unsupported:
                     errors["attackers"] = (
-                        "arm "
+                        _ui_text("builder_validation.arm")
                         + f"{arm}"
                         + _ui_text("builder_validation.is_scored_only_by_the_implemented")
                         + f"{metric}"
@@ -2351,7 +2355,7 @@ class BuilderValidationMixin:
                             "builder_validation.source_metric_which_run_matrix_admits_solely_for_the"
                         )
                         + f"{'/'.join(allowed)}"
-                        + " attacker; remove "
+                        + _ui_text("builder_validation.attacker_remove")
                         + f"{', '.join(unsupported)}"
                         + _ui_text("builder_validation.or_the_grid_contains_unscored_cells")
                     )
@@ -2360,7 +2364,7 @@ class BuilderValidationMixin:
                 continue  # unknown arm id: left to the CLI's own registry check
             if "tool" in needed:
                 errors["corpora"] = (
-                    "arm "
+                    _ui_text("builder_validation.arm")
                     + f"{arm}"
                     + _ui_text(
                         "builder_validation.converts_to_a_text_tool_source_construct_but_the_maintained_runne"
@@ -2373,9 +2377,9 @@ class BuilderValidationMixin:
                 have = target_mods.get((kind, target))
                 if have is not None and not needed <= have:
                     errors["models"] = (
-                        "target "
+                        _ui_text("builder_validation.target")
                         + f"{target}"
-                        + " serves "
+                        + _ui_text("builder_validation.serves")
                         + f"{sorted(have) or ['text']}"
                         + _ui_text("builder_validation.but_arm")
                         + f"{arm}"
@@ -2386,9 +2390,9 @@ class BuilderValidationMixin:
                 can = fw_mods.get(attacker)
                 if can is not None and not needed <= can:
                     errors["attackers"] = (
-                        "attacker "
+                        _ui_text("builder_validation.attacker")
                         + f"{attacker}"
-                        + " drives "
+                        + _ui_text("builder_validation.drives")
                         + f"{sorted(can)}"
                         + _ui_text("builder_validation.but_arm")
                         + f"{arm}"
@@ -2732,13 +2736,13 @@ class BuilderValidationMixin:
         grid_cells = max(1, len(api) + len(local)) * max(1, len(corpora)) * max(1, len(attackers))
         shape = (
             f"{len(api) + len(local)}"
-            + " target(s) x "
+            + _ui_text("builder_validation.target_s_x")
             + f"{len(corpora)}"
             + _ui_text("builder_validation.corpus_arm_s_x")
             + f"{len(attackers)}"
-            + " attacker(s) x "
+            + _ui_text("builder_validation.attacker_s_x")
             + f"{len(seeds)}"
-            + " seed(s) = "
+            + _ui_text("builder_validation.seed_s")
             + f"{grid_cells * max(1, len(seeds))}"
             + _ui_text("builder_validation.planned_cell_seed_lanes")
         )
@@ -3068,8 +3072,8 @@ class BuilderValidationMixin:
                 for key, label in (
                     ("local", _ui_text("builder_validation.local_models")),
                     ("api", _ui_text("builder_validation.api_models")),
-                    ("corpora", "Arms / corpora"),
-                    ("attackers", "Frameworks / attacks"),
+                    ("corpora", _ui_text("builder_validation.arms_corpora")),
+                    ("attackers", _ui_text("builder_validation.frameworks_attacks")),
                     ("seeds", _ui_text("builder_validation.seeds")),
                     ("sampling_policy", _ui_text("builder_validation.sampling")),
                     ("limit", _ui_text("builder_validation.per_arm_limit")),

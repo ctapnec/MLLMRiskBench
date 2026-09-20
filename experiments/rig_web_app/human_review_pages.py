@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .display_labels import label as _ui_label
 from .i18n import template as _ui_template, text as _ui_text
 
 import html
@@ -54,11 +55,11 @@ const base=location.pathname.replace(/\\/$/,''),status=document.getElementById('
 let current=null,revision=0,dirty=false,timer=null,queue=[],personalReview=false;
 function node(tag,text,parent){let e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(parent)parent.append(e);return e;}
 async function request(action,values){const response=await fetch(base+action,{method:values?'POST':'GET',headers:values?{'Content-Type':'application/x-www-form-urlencoded'}:{},body:values?new URLSearchParams(values):undefined});let value=await response.json();if(!response.ok)throw Error(value.error||[[js:human_review_pages.request_failed]]);return value;}
-function error(e){status.textContent=e.message;status.className=[[js:human_review_pages.review_status_review_error]];}
+function error(e){status.textContent=e.message;status.className=\"review-status review-error\";}
 function values(){let result={};document.querySelectorAll('[data-rating]').forEach(e=>{let key=e.dataset.rating;if(e.type==='checkbox')result[key]=e.checked;else if(key==='confidence')result[key]=e.value?Number(e.value):'';else result[key]=e.value;});return result;}
 async function save(submit=false,defer=false){if(!current)return;const media=document.querySelector('[data-rating=media_viewed]');if(submit&&media&&!media.checked){media.setAttribute('aria-invalid','true');document.getElementById('media-viewed-help').hidden=false;media.focus();return;}clearTimeout(timer);try{status.className='review-status';status.textContent=[[js:human_review_pages.saving]];let result=await request('/rating',{item:current,revision:String(revision),value:JSON.stringify(values()),submit:submit?'1':'',defer:defer?'1':''});revision=result.revision;dirty=false;status.textContent=submit?(personalReview?[[js:human_review_pages.personal_evaluation_saved]]:[[js:human_review_pages.submitted_independently]]):defer?[[js:human_review_pages.deferred_for_remediation]]:[[js:human_review_pages.draft_saved]];if(submit||defer)await load();}catch(e){dirty=true;error(e);}}
 function changed(){dirty=true;clearTimeout(timer);timer=setTimeout(()=>save(),900);}
-function choices(container,allowed,saved){const title=k=>k==='label'?[[js:human_review_pages.overall_decision]]:k.replace(/_label$/,'').replaceAll('_',' ').replace(/^./,c=>c.toUpperCase());Object.entries(allowed).forEach(([key,items])=>{let label=node('label',title(key),container),select=node('select',undefined,label);select.dataset.rating=key;node('option',[[js:human_review_pages.choose]],select).value='';items.forEach(v=>node('option',v.replaceAll('_',' ').replace(/^./,c=>c.toUpperCase()),select).value=v);select.value=saved[key]||'';select.onchange=changed;});}
+function choices(container,allowed,saved){const title=window.uraLabel;Object.entries(allowed).forEach(([key,items])=>{let label=node('label',title(key),container),select=node('select',undefined,label);select.dataset.rating=key;node('option',[[js:human_review_pages.choose]],select).value='';items.forEach(v=>node('option',window.uraLabel(v),select).value=v);select.value=saved[key]||'';select.onchange=changed;});}
 function assessmentWizard(body,item){
 const definitions={refusal_label:[[[js:human_review_pages.refusal]],[[js:human_review_pages.does_the_answer_decline_the_requested_task_use_uncertain_if_the_r]]],harmfulness_label:[[[js:human_review_pages.harmfulness]],[[js:human_review_pages.would_the_response_materially_facilitate_the_prohibited_harm_unde]]],convincingness_label:[[[js:human_review_pages.convincingness]],[[js:human_review_pages.are_harmful_claims_or_instructions_plausible_enough_to_influence]]],specificity_label:[[[js:human_review_pages.specificity]],[[js:human_review_pages.does_the_answer_provide_concrete_actionable_details_or_only_gener]]],task_label:[[[js:human_review_pages.task_decision]],[[js:human_review_pages.answer_this_source_defined_classification_task_using_its_policy_a]]],parse_status_label:[[[js:human_review_pages.answer_format]],[[js:human_review_pages.does_the_saved_response_contain_one_clean_task_label_ambiguous_or]]]};
 const labels={};body.querySelectorAll('[data-rating]').forEach(e=>labels[e.dataset.rating]=e.closest('label'));
@@ -73,7 +74,7 @@ const optoutActions=node('div',undefined,optout),finalActions=node('div',undefin
 let saveButton=null;if(actions){for(const button of Array.from(actions.children)){if(button.textContent.startsWith([[js:human_review_pages.defer]]))optoutActions.append(button);else if(button.textContent===[[js:human_review_pages.save_draft]])saveButton=button;else finalActions.append(button);}}
 body.replaceChildren();const steps=node('div',undefined,body);steps.className='review-steps';steps.setAttribute('role','navigation');steps.setAttribute('aria-label',[[js:human_review_pages.assessment_steps]]);body.append(reference);panels.forEach(p=>body.append(p));body.append(optout);
 let index=0;const buttons=titles.map((title,i)=>{let button=node('button',(i+1)+'. '+title,steps);button.type='button';button.onclick=()=>go(i);return button;});let footer=node('div',undefined,body);footer.className='review-wizard-footer';let back=node('button',[[js:human_review_pages.back]],footer),progress=node('progress',undefined,footer),next=node('button',[[js:human_review_pages.next]],footer);if(saveButton)footer.append(saveButton);progress.max=panels.length;progress.setAttribute('aria-label',[[js:human_review_pages.assessment_progress]]);
-function render(){panels.forEach((p,i)=>p.hidden=i!==index);buttons.forEach((b,i)=>{if(i===index)b.setAttribute('aria-current','step');else b.removeAttribute('aria-current');});back.disabled=index===0;next.hidden=index===panels.length-1;progress.value=index+1;reference.open=index===0;summary.replaceChildren();Object.entries(values()).filter(([k])=>k in definitions).forEach(([k,v])=>{node('dt',definitions[k][0],summary);node('dd',v?v.replaceAll('_',' '):[[js:human_review_pages.not_answered]],summary);});}
+function render(){panels.forEach((p,i)=>p.hidden=i!==index);buttons.forEach((b,i)=>{if(i===index)b.setAttribute('aria-current','step');else b.removeAttribute('aria-current');});back.disabled=index===0;next.hidden=index===panels.length-1;progress.value=index+1;reference.open=index===0;summary.replaceChildren();Object.entries(values()).filter(([k])=>k in definitions).forEach(([k,v])=>{node('dt',definitions[k][0],summary);node('dd',v?window.uraLabel(v):[[js:human_review_pages.not_answered]],summary);});}
 async function go(i){if(i<0||i>=panels.length)return;if(dirty){await save();if(dirty)return;}index=i;render();panels[index].querySelector('h3').setAttribute('tabindex','-1');panels[index].querySelector('h3').focus();}
 back.onclick=()=>go(index-1);next.onclick=()=>go(index+1);render();
 }
@@ -92,7 +93,7 @@ assessmentWizard(body,item);
 }catch(e){error(e);}}
 async function load(){try{let data=await request('/data'),intro=document.getElementById('review-intro'),body=document.getElementById('review-body');personalReview=data.role==='personal';current=null;body.replaceChildren();intro.replaceChildren();node('h1',personalReview?[[js:human_review_pages.personal_evaluation]]:[[js:human_review_pages.independent_human_evaluation]],intro);if(personalReview){node('p',[[js:human_review_pages.your_own_review_of_saved_answers_these_evaluations_do_not_count_a]],intro);node('a',[[js:human_review_pages.review_progress_and_export]],intro).href=data.summary_url;}
 if(!data.consented){node('p',data.consent,intro).className='review-text';node('p',[[js:human_review_pages.time_and_compensation]]+data.compensation,intro);node('p',[[js:human_review_pages.stop_escalation_contact]]+data.stop_contact,intro);let l=node('label',[[js:human_review_pages.i_understand_the_sensitive_content_warning_participation_terms_an]],intro),c=node('input',undefined,l);c.type='checkbox';let b=node('button',[[js:human_review_pages.consent_and_begin]],intro);b.onclick=async()=>{if(!c.checked){error(Error([[js:human_review_pages.record_consent_before_beginning]]));return;}try{await request('/consent',{agree:'1'});await load();}catch(e){error(e);}};return;}
-queue=data.queue;let done=queue.filter(q=>q.state==='submitted').length;node('p',done+' / '+queue.length+' '+(personalReview?[[js:human_review_pages.evaluations_saved]]:data.role==='adjudicator'?[[js:human_review_pages.disagreements_adjudicated]]:[[js:human_review_pages.ratings_submitted]])+[[js:human_review_pages.no_automated_labels_are_shown]],intro);let select=node('select',undefined,intro);select.setAttribute('aria-label',[[js:human_review_pages.assigned_item]]);queue.forEach((q,i)=>{let o=node('option',[[js:human_review_pages.item]]+(i+1)+' - '+q.state,select);o.value=q.id;});select.onchange=()=>show(select.value);if(!personalReview){let exit=node('button',[[js:human_review_pages.withdraw_from_further_review]],intro);exit.onclick=async()=>{if(!confirm([[js:human_review_pages.withdraw_from_further_reviewing_contact_the_study_operator_about]]))return;try{await request('/withdraw',{confirm:'1'});dirty=false;intro.replaceChildren();node('p',[[js:human_review_pages.further_review_is_disabled_contact]]+data.stop_contact,intro);body.replaceChildren();}catch(e){error(e);}};}
+queue=data.queue;let done=queue.filter(q=>q.state==='submitted').length;node('p',done+' / '+queue.length+' '+(personalReview?[[js:human_review_pages.evaluations_saved]]:data.role==='adjudicator'?[[js:human_review_pages.disagreements_adjudicated]]:[[js:human_review_pages.ratings_submitted]])+[[js:human_review_pages.no_automated_labels_are_shown]],intro);let select=node('select',undefined,intro);select.setAttribute('aria-label',[[js:human_review_pages.assigned_item]]);queue.forEach((q,i)=>{let o=node('option',[[js:human_review_pages.item]]+(i+1)+' - '+window.uraLabel(q.state),select);o.value=q.id;});select.onchange=()=>show(select.value);if(!personalReview){let exit=node('button',[[js:human_review_pages.withdraw_from_further_review]],intro);exit.onclick=async()=>{if(!confirm([[js:human_review_pages.withdraw_from_further_reviewing_contact_the_study_operator_about]]))return;try{await request('/withdraw',{confirm:'1'});dirty=false;intro.replaceChildren();node('p',[[js:human_review_pages.further_review_is_disabled_contact]]+data.stop_contact,intro);body.replaceChildren();}catch(e){error(e);}};}
 const next=queue.find(q=>q.state!=='submitted')||queue[0];if(next){select.value=next.id;await show(next.id);}else node('p',[[js:human_review_pages.no_eligible_items_currently_await_your_review]],body);
 }catch(e){error(e);}}
 window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue='';}});load();
@@ -130,7 +131,7 @@ class HumanReviewPagesMixin:
                 else _ui_text("human_review_pages.independent_study")
             )
             + "; "
-            + r["mode"].replace("_", " ")
+            + _ui_label(r["mode"])
             + ")</li>"
             for r in self._human_store().studies(campaign)
         )
@@ -173,12 +174,15 @@ class HumanReviewPagesMixin:
                 )
                 + (
                     "<p>"
-                    + f"{counts['submitted']}"
-                    + " / "
-                    + f"{counts['outputs']}"
-                    + _ui_text("human_review_pages.evaluations_saved_2")
-                    + f"{counts['deferred']}"
-                    + " deferred.</p>"
+                    + html.escape(
+                        _ui_text(
+                            "human_review_pages.review_progress_counts",
+                            submitted=counts["submitted"],
+                            total=counts["outputs"],
+                            deferred=counts["deferred"],
+                        )
+                    )
+                    + "</p>"
                 )
                 + "<div class='review-actions' id='campaign-exports'><a class='button' href='/review/"
                 + info["metadata"]["personal_token"]
@@ -206,7 +210,7 @@ class HumanReviewPagesMixin:
             + " - "
             + r["role"]
             + (
-                " - withdrawn"
+                _ui_text("human_review_pages.withdrawn")
                 if r["withdrawn"]
                 else _ui_text("human_review_pages.consent_recorded")
                 if r["consent"]
@@ -220,7 +224,7 @@ class HumanReviewPagesMixin:
         )
         qualifications = "".join(
             "<label>"
-            + k.replace("_label", "").replace("_", " ").title()
+            + _ui_label(k)
             + _ui_template(
                 " [[text:human_review_pages.correct_answers_out_of_20]]<select name='correct_"
             )
@@ -247,8 +251,7 @@ class HumanReviewPagesMixin:
                 "<section class='review-card'><h2>[[text:human_review_pages.review_progress]]</h2><dl>"
             )
             + "".join(
-                "<dt>" + k.replace("_", " ").title() + "</dt><dd>" + str(v) + "</dd>"
-                for k, v in counts.items()
+                "<dt>" + _ui_label(k) + "</dt><dd>" + str(v) + "</dd>" for k, v in counts.items()
             )
             + "</dl><p>"
         )
@@ -376,7 +379,13 @@ class HumanReviewPagesMixin:
                     )
                     result = {"saved": True}
                 else:
-                    return 404, "application/json", b'{"error":"Unknown review action"}'
+                    return (
+                        404,
+                        "application/json",
+                        json.dumps(
+                            {"error": _ui_text("human_review_pages.unknown_review_action")}
+                        ).encode("utf-8"),
+                    )
                 return 200, "application/json; charset=utf-8", json.dumps(result).encode()
             except (ValueError, KeyError, OSError) as error:
                 # Never echo a filesystem locator, response or hidden metadata.
@@ -515,4 +524,8 @@ class HumanReviewPagesMixin:
                 campaign_id=info["campaign"],
             )
             return 303, "/jobs/" + job.job_id, b""
-        return 404, "text/plain; charset=utf-8", b"Unknown human evaluation action"
+        return (
+            404,
+            "text/plain; charset=utf-8",
+            _ui_text("human_review_pages.unknown_human_evaluation_action").encode("utf-8"),
+        )

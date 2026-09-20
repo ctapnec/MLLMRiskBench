@@ -363,7 +363,7 @@ def haiku_judging_panel(app, params):
         + "</select></label>"
     )
     for field, label, default in (
-        ("limit", "Input limit (0 = all selected hosted inputs)", "0"),
+        ("limit", _ui_text("builder_haiku_judging.input_limit_0_all_selected_hosted_inputs"), "0"),
         ("seed", _ui_text("builder_haiku_judging.input_selection_seed"), "0"),
     ):
         body += (

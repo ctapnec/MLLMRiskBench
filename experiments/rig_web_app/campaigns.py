@@ -1133,16 +1133,16 @@ def _load_campaign(
             (
                 _ui_text("campaigns.task_processes")
                 + f"{succeeded_tasks}"
-                + " succeeded; "
+                + _ui_text("campaigns.succeeded")
                 + f"{failed_tasks}"
-                + " failed; "
+                + _ui_text("campaigns.failed")
                 + f"{skipped_tasks}"
-                + " skipped; "
+                + _ui_text("campaigns.skipped")
                 + f"{len(active_tasks)}"
-                + " active"
+                + _ui_text("campaigns.active")
             ),
             (
-                f"pending: {pending_tasks}"
+                (_ui_text("campaigns.pending") + f"{pending_tasks}")
                 if pending_tasks is not None
                 else _ui_text("campaigns.pending_not_declared")
             ),
@@ -1176,13 +1176,13 @@ def _load_campaign(
             (
                 _ui_text("campaigns.target_capable_mixed_controller")
                 + f"{model_succeeded_tasks}"
-                + " succeeded; "
+                + _ui_text("campaigns.succeeded")
                 + f"{model_failed_tasks}"
-                + " failed; "
+                + _ui_text("campaigns.failed")
                 + f"{model_skipped_tasks}"
-                + " skipped; "
+                + _ui_text("campaigns.skipped")
                 + f"{model_active_tasks}"
-                + " active; pending: "
+                + _ui_text("campaigns.active_pending")
                 + f"{model_pending_tasks}"
             )
         )
@@ -1193,13 +1193,13 @@ def _load_campaign(
             (
                 _ui_text("campaigns.model_tasks")
                 + f"{model_succeeded_tasks}"
-                + " succeeded; "
+                + _ui_text("campaigns.succeeded")
                 + f"{model_failed_tasks}"
-                + " failed; "
+                + _ui_text("campaigns.failed")
                 + f"{model_skipped_tasks}"
-                + " skipped; "
+                + _ui_text("campaigns.skipped")
                 + f"{model_active_tasks}"
-                + " active; pending: "
+                + _ui_text("campaigns.active_pending")
                 + f"{model_pending_tasks}"
             )
         )
@@ -1240,7 +1240,7 @@ def _load_campaign(
                     + f"{model_successful_generations}"
                     + _ui_text("campaigns.successful_generation_s_from")
                     + f"{model_attempted_calls}"
-                    + " attempt(s); coverage "
+                    + _ui_text("campaigns.attempt_s_coverage")
                     + f"{model_execution_covered_tasks}"
                     + "/"
                     + f"{len(model_tasks or ())}"
@@ -1268,8 +1268,12 @@ def _load_campaign(
         (key, label, path)
         for key, label, path in (
             ("bootstrap", _ui_text("campaigns.bootstrap_activity"), bootstrap_path),
-            ("stage2", "Stage 2 activity", stage2_path),
-            ("failures", "Stage 2 failures", directory / "stage2-failures.jsonl"),
+            ("stage2", _ui_text("campaigns.stage_2_activity"), stage2_path),
+            (
+                "failures",
+                _ui_text("campaigns.stage_2_failures"),
+                directory / "stage2-failures.jsonl",
+            ),
             (
                 "calls",
                 _ui_text("campaigns.local_call_ledger"),
@@ -1583,8 +1587,8 @@ def scan_engineering_campaigns(
                 + "; "
                 + f"{omitted}"
                 + _ui_text("campaigns.additional_retained_engineering_campaign")
-                + f"{(' was' if omitted == 1 else 's were')}"
-                + " omitted."
+                + f"{(_ui_text('campaigns.was') if omitted == 1 else _ui_text('campaigns.s_were'))}"
+                + _ui_text("campaigns.omitted")
             )
             + (
                 _ui_text(

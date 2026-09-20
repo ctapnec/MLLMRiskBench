@@ -35,6 +35,7 @@ def forecast(app, params, projection):
             rate, why = rate_for(pricing, route["provider"], route["model"])
             allowance = config.get("max_tokens")
             money = _ui_text("direct_costs.not_estimated") + why if rate is None else ""
+            estimated = False
             if rate and isinstance(allowance, int) and allowance > 0:
                 rates = rate.get("per_million_tokens", {})
                 try:
@@ -49,13 +50,14 @@ def forecast(app, params, projection):
                     first += expected
                     full += maximum
                     money = f"${expected:.4f} / ${maximum:.4f}"
+                    estimated = True
                 except (KeyError, TypeError, ValueError):
                     money = _ui_text(
                         "direct_costs.not_estimated_complete_usd_token_prices_required"
                     )
             elif rate:
                 money = _ui_text("direct_costs.not_estimated_explicit_output_allowance_required")
-            incomplete |= money.startswith("Not estimated")
+            incomplete |= not estimated
             cells = (
                 spec,
                 str(calls),

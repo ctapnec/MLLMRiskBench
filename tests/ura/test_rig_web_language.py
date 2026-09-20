@@ -81,6 +81,10 @@ def test_keyboard_protocol_is_not_a_translated_message():
         ("workspace_comparison", "workspace_comparison.only", "text"),
         ("workspace_pages", "workspace_pages.condition_copy", "text"),
         ("ui", "ui.modalities", "js"),
+        ("ui", "ui.shown_items", "js"),
+        ("ui", "ui.one_selected_arm", "js"),
+        ("ui", "ui.many_selected_arms", "js"),
+        ("ui", "ui.additional_items", "js"),
     ],
 )
 def test_fragmented_and_client_copy_uses_the_catalog(monkeypatch, module, key, kind):

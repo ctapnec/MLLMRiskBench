@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .display_labels import label as _ui_label
 from .i18n import template as _ui_template, text as _ui_text
 
 import html
@@ -72,7 +73,7 @@ def judge_name(identity, settings=None):
             if name == "rules"
             else model.split("/")[-1]
             if model
-            else name.title()
+            else _ui_label(name)
         )
     label = (
         _ui_text("workspace_judge_settings.rules_only")
@@ -114,12 +115,12 @@ def settings_html(identity, settings, *, side):
         for stage in stages:
             details = []
             if stage.get("model_id"):
-                details.append("Model: " + stage["model_id"])
+                details.append(_ui_text("workspace_judge_settings.model") + stage["model_id"])
             if stage.get("max_new_tokens") is not None:
                 details.append(
                     _ui_text("workspace_judge_settings.output_allowance")
                     + str(stage["max_new_tokens"])
-                    + " tokens"
+                    + _ui_text("workspace_judge_settings.tokens")
                 )
             if stage.get("escalate_below") is not None:
                 details.append(

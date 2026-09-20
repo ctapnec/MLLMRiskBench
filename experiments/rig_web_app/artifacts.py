@@ -30,7 +30,7 @@ _PIPELINE_STAGES: tuple[tuple[str, tuple[str, ...]], ...] = (
     (_ui_text("artifacts.attestations"), (".live-attestation.json",)),
     (_ui_text("artifacts.canaries"), (".lane-canary.json", ".canary.json")),
     (_ui_text("artifacts.grids"), (".grid.json",)),
-    ("Level-1/2", ()),  # filled from level1/level2/suite counts below
+    (_ui_text("artifacts.analysis_levels"), ()),  # filled from level1/level2/suite counts below
 )
 _ANALYSIS_MARKERS = ("level1", "level2", "suite-evidence")
 
@@ -94,7 +94,7 @@ def artifact_inventory(root: Path) -> tuple[dict[str, StageInventory], bool]:
                 if name.endswith((".json", ".csv")) and any(
                     marker in name for marker in _ANALYSIS_MARKERS
                 ):
-                    record("Level-1/2", entry)
+                    record(_ui_text("artifacts.analysis_levels"), entry)
         except OSError:
             continue
     return stages, False
@@ -118,9 +118,13 @@ def _pipeline_svg(stages: Mapping[str, StageInventory]) -> str:
     for index, (label, _suffixes) in enumerate(_PIPELINE_STAGES):
         x = index * (node_w + gap)
         stage = stages.get(label, StageInventory())
-        cls = _ui_text("artifacts.node_present") if stage.count else "node"
+        cls = "node present" if stage.count else "node"
         if stage.count:
-            count_text = f"{stage.count} file{'s' if stage.count != 1 else ''}"
+            count_text = (
+                f"{stage.count}"
+                + _ui_text("artifacts.file")
+                + f"{('s' if stage.count != 1 else '')}"
+            )
         else:
             count_text = _ui_text("artifacts.none_yet")
         extra = (
@@ -154,7 +158,9 @@ def _pipeline_svg(stages: Mapping[str, StageInventory]) -> str:
             directory = first.rsplit("/", 1)[0] if "/" in first else ""
             node = (
                 f"<a href='/artifacts?path={quote(directory)}' "
-                f"aria-label='browse {html.escape(label)} artifacts'>" + node + "</a>"
+                f"aria-label='{html.escape(_ui_text('artifacts.browse_stage_artifacts', stage=label), quote=True)}'>"
+                + node
+                + "</a>"
             )
         parts.append(node)
         if index < len(_PIPELINE_STAGES) - 1:
@@ -621,12 +627,20 @@ def _marker_artifact_path(
     path = marker_path.parent / name
     if path.is_symlink() or not path.is_file():
         raise ValueError(
-            ("artifact " + f"{name!r}" + _ui_text("artifacts.is_missing_or_not_a_regular_file"))
+            (
+                _ui_text("artifacts.artifact")
+                + f"{name!r}"
+                + _ui_text("artifacts.is_missing_or_not_a_regular_file")
+            )
         )
     size = path.stat().st_size
     if size != descriptor.get("bytes"):
         raise ValueError(
-            ("artifact " + f"{name!r}" + _ui_text("artifacts.byte_size_changed_since_completion"))
+            (
+                _ui_text("artifacts.artifact")
+                + f"{name!r}"
+                + _ui_text("artifacts.byte_size_changed_since_completion")
+            )
         )
     if verify_sha:
         digest = hashlib.sha256()
@@ -635,7 +649,11 @@ def _marker_artifact_path(
                 digest.update(block)
         if digest.hexdigest() != descriptor.get("sha256"):
             raise ValueError(
-                ("artifact " + f"{name!r}" + _ui_text("artifacts.digest_changed_since_completion"))
+                (
+                    _ui_text("artifacts.artifact")
+                    + f"{name!r}"
+                    + _ui_text("artifacts.digest_changed_since_completion")
+                )
             )
     return path
 

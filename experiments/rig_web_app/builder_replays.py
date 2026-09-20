@@ -38,7 +38,7 @@ def argument(argv, name):
         raise ValueError(
             _ui_text("builder_replays.the_saved_preparation_job_lacks_an_unambiguous")
             + name
-            + " argument"
+            + _ui_text("builder_replays.argument")
         )
     return argv[argv.index(name) + 1]
 

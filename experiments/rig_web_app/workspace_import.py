@@ -457,7 +457,7 @@ def _local_artifact_paths(source: dict) -> tuple[dict, dict | None]:
                 (
                     _ui_text("workspace_import.separate_scoring_needs_one_retained")
                     + f"{role}"
-                    + " source"
+                    + _ui_text("workspace_import.source")
                 )
             )
         artifacts[role] = matches[0]
