@@ -1,43 +1,62 @@
 # Documentation map
 
-## Running and examining experiments
+## Operator guides
 
-- [First small campaign](SMALL_CAMPAIGNS.md): one click-by-click local/API guide,
-  with fresh corpora or saved local inputs.
-- [Campaign walkthrough](UI_CAMPAIGN_WALKTHROUGH.md): navigation, continuation,
-  historical results and the optional Guide.
-- [Results and optional analysis](SMALL_CAMPAIGNS.md#8-optional-examine-and-compare-your-results): comparisons,
-  charts, exports, personal/independent review and SVM.
-- [Human review](HUMAN_REVIEW_UI.md) and [response SVM](RESPONSE_SVM.md): protocols,
-  limitations and advanced use, not extra campaign preparation stages.
+- [First small campaign](SMALL_CAMPAIGNS.md): the detailed local/API workflow,
+  including fresh or saved inputs, recovery, comparison charts, human review
+  and SVM analysis.
+- [Campaign walkthrough](UI_CAMPAIGN_WALKTHROUGH.md): navigation, campaign/run
+  ownership, continuation and the optional Guide. This overview complements
+  the detailed steps rather than maintaining another campaign recipe.
+- [Human review](HUMAN_REVIEW_UI.md): personal and independent assessment
+  protocols, qualifications, exports and advanced CLI use.
+- [Response SVM](RESPONSE_SVM.md): classifier study design, execution,
+  limitations and reuse of fitted models.
+- [Conversational AI review](CONVERSATIONAL_AI_REVIEW.md): recording and
+  publishing output-specific AI assessments separately from human ratings.
 
-## Administration and development
+## Installation and administration
 
 - [Installation](../distro/README.md): environments, managed runtimes and services.
-- [Workstation archive](WORKSTATION_ARCHIVE_PLAN.md): copying retained results,
-  preserving paths and browsing without restarting rig work.
-- [Run and return](../experiments/RUN_AND_RETURN.md): CLI equivalents; dated
-  campaign recipes are not extra tasks in the current UI.
-- [Campaign workspaces](CAMPAIGN_WORKSPACES.md): ownership, orchestration,
-  publication, recovery, costs and comparison contracts.
-- [Operator workflows](UI_WORKFLOW_SIMPLIFICATION.md) and
-  [current flow acceptance](UI_FLOW_ACCEPTANCE.md): automation and verification.
-  The [earlier regression audit](OPERATOR_REGRESSION_AUDIT.md) retains dated
-  results, not a blanket acceptance of every current configuration.
-- [Architecture](ARCHITECTURE.md), [schema](SCHEMA.md), [metrics](METRICS.md) and
-  [source conformance](SOURCE_CONFORMANCE.md): scientific and technical boundaries.
+- [Workstation archive](WORKSTATION_ARCHIVE.md): the local read-only console,
+  retained-data locations, start/stop and recovery.
+- [Run and return](../experiments/RUN_AND_RETURN.md): CLI procedures and campaign
+  recipes. Dated recipes are not additional preparation tasks in the current UI.
+- [Source conformance](SOURCE_CONFORMANCE.md): source admission, semantic review
+  and receipt maintenance.
+- [Native engine imports](NATIVE_ENGINE_IMPORTS.md): framework-specific import
+  requirements and examples.
 
-Current operator instructions belong in the first group. Historical observations
-must be dated, not presented as prerequisites for new campaigns. Development
-findings belong in the development ledger. Thesis chapters describe research
-methods and results, not software repair chronology.
+## Developer and analysis references
 
-## Preserved historical material
+| Reference | Authoritative scope |
+| --- | --- |
+| [Architecture](ARCHITECTURE.md) | Components, dependencies and execution boundaries |
+| [Schema](SCHEMA.md) | Records, configuration fields and compatibility contracts |
+| [Metrics](METRICS.md) | Measures, denominators, eligibility and statistical analysis |
+| [Campaign workspaces](CAMPAIGN_WORKSPACES.md) | Ownership, automated workflows, publication, recovery, budgets and comparison behavior |
+| [UI flow acceptance](UI_FLOW_ACCEPTANCE.md) | Reusable scenario matrix, fault testing and documentation regression |
+| [UI language](UI_LANGUAGE.md) | Catalogs, templates, escaping and localization checks |
+| [Attack tags](ATTACK_TAGS.md) | Attack-mechanism vocabulary, distinct from risk taxonomy |
+| [Synthetic compatibility](SYNTHETIC_COMPAT.md) | Experimental compatibility-rule tooling, distinct from response SVMs |
 
-- [Earlier workspace design and integration record](HISTORICAL_CAMPAIGN_WORKSPACES.md)
-- [Earlier walkthrough and dated demonstrations](HISTORICAL_UI_CAMPAIGN_WALKTHROUGH.md)
+## Maintaining documentation
 
-These preserve the prior documents, including numeric results and command
-examples. They are explicitly historical, not alternative instructions for the
-current interface. The [consolidation map](DOCUMENTATION_MAINTENANCE.md) records
-where the original small-guide actions and qualifications now appear.
+Keep each technical rule in its authoritative reference and link to it from
+overviews. Operator steps belong in the small-campaign guide; internal record
+fields and troubleshooting commands remain in developer/admin references.
+Update the Guide, links and relevant tests when a visible action changes.
+
+Before consolidating a document, preserve unique instructions, examples,
+observed results and their qualifications. Dated acceptance records are not
+current guarantees or renewed spending allowances. Move completed plans and
+historical records to the archive instead of mixing them with current steps.
+The [documentation regression requirements](UI_FLOW_ACCEPTANCE.md#documentation-maintenance-and-regression)
+cover links, section numbering, content preservation and actual workflow checks.
+
+## Historical records
+
+The [archive index](archive/README.md) contains earlier manuals, completed
+consolidation plans, acceptance records and study-specific observations. These
+are retained for traceability, not alternative current instructions. The old
+small-guide entry filenames remain short redirects for existing links.

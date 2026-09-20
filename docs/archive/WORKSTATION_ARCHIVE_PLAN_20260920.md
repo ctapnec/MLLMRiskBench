@@ -1,3 +1,13 @@
+# Historical documentation snapshot - 20 September 2026
+
+This preserves the complete earlier WORKSTATION_ARCHIVE_PLAN.md document, including its dated
+plans, observations and instructions. It is a historical record, not the
+current operating procedure. Use [the maintained reference](../WORKSTATION_ARCHIVE.md)
+for current guidance. Relative documentation links below are adjusted for
+this archive directory; the original content is otherwise retained.
+
+---
+
 # Campaign demonstration and subsequent workstation archive
 
 Agreed sequence, 14 September 2026. This is a migration plan, not a claim that
@@ -68,7 +78,7 @@ of statistical synthesis, academic revision or independent human assessment.
 
 ## Small UI demonstrations
 
-The existing [UI walkthrough](UI_CAMPAIGN_WALKTHROUGH.md) describes the controls.
+The existing [UI walkthrough](../UI_CAMPAIGN_WALKTHROUGH.md) describes the controls.
 The remaining acceptance must provide concrete installed-model and corpus
 choices, a small input count, sampling seed, effective generation settings,
 local answer retries, zero hosted answer retries and bounded transport retries.
@@ -122,7 +132,7 @@ comparison. The separate small local-run demonstration is also complete as
 described below. This was the state before the operator's final walkthrough;
 the 20 September migration status above supersedes that remaining step.
 
-The [combined campaign guide](SMALL_CAMPAIGNS.md) records concrete fields and
+The [combined campaign guide](../SMALL_CAMPAIGNS.md) records concrete fields and
 buttons accepted on the rig. Text/image probes, saved-answer continuation and
 transport-receipt forms passed, followed by two measured text and two measured
 image answers. All four were usable, untruncated and locally evaluated, with
@@ -158,3 +168,4 @@ Human ratings, if later collected on Windows, must remain real independent
 records with the applicable study arrangements. Automated tests must continue
 to use separate storage. Only after these checks should the rig be retired from
 the workflow; no rig data is scheduled for deletion by this plan.
+

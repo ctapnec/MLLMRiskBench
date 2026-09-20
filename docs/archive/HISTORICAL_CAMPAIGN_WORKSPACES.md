@@ -2,8 +2,8 @@
 
 This is the preserved document before the 19 September consolidation. Its dated
 findings, numeric examples and technical notes remain available here. UI actions
-and status claims can be obsolete; use [the current guide](SMALL_CAMPAIGNS.md)
-and [current workspace contract](CAMPAIGN_WORKSPACES.md) for new work. Old section
+and status claims can be obsolete; use [the current guide](../SMALL_CAMPAIGNS.md)
+and [current workspace contract](../CAMPAIGN_WORKSPACES.md) for new work. Old section
 links describe their original document layout, not the current guide.
 
 <!-- BEGIN PRESERVED DOCUMENT -->
@@ -11,7 +11,7 @@ links describe their original document layout, not the current guide.
 # Campaign workspaces and the reproducible UI workflow
 
 For the compact operator sequence, start with the
-[UI campaign walkthrough](UI_CAMPAIGN_WALKTHROUGH.md).
+[UI campaign walkthrough](../UI_CAMPAIGN_WALKTHROUGH.md).
 
 ## Current deployed scope
 
@@ -1404,7 +1404,7 @@ change that denominator. The three alignment transport recoveries are published
 this way; no target or judge request was repeated to connect their records.
 
 For a first-time manual campaign, use the
-[small API campaign instructions](SMALL_API_CAMPAIGN.md), including the return
+[small API campaign instructions](../SMALL_API_CAMPAIGN.md), including the return
 from Save campaign's Definition page to Configure in Build.
 
 ### Saved analysis reports

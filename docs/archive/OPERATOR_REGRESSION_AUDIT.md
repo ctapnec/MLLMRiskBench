@@ -1,7 +1,14 @@
+# Historical record: operator regression audit
+
+Preserved acceptance history, not current instructions or a new spending
+allowance. Use the [current checklist](../UI_FLOW_ACCEPTANCE.md) for new checks.
+
+<!-- BEGIN PRESERVED DOCUMENT -->
+
 # Operator regression audit
 
 Historical acceptance record. These results describe their dated revisions,
-settings and exercised scenarios. The [current flow audit](UI_FLOW_ACCEPTANCE.md)
+settings and exercised scenarios. The [current flow audit](../UI_FLOW_ACCEPTANCE.md)
 was reopened on 20 September after a real campaign exposed an invalid-setting
 validation gap. Earlier statements that no findings remained open apply only
 to their recorded pass, not to all present flows or later findings.
@@ -65,7 +72,7 @@ chapters describe methods and findings academically, not audit chronology.
 
 ## Documentation preservation
 
-The maintained [small-campaign guide](SMALL_CAMPAIGNS.md) contains both input
+The maintained [small-campaign guide](../SMALL_CAMPAIGNS.md) contains both input
 routes and the full optional analysis steps. The
 [preservation map](DOCUMENTATION_MAINTENANCE.md) records where the earlier
 sections moved. Historical workspace and walkthrough records are retained in

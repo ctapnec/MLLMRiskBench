@@ -2,8 +2,8 @@
 
 This is the preserved document before the 19 September consolidation. Its dated
 findings, numeric examples and technical notes remain available here. UI actions
-and status claims can be obsolete; use [the current guide](SMALL_CAMPAIGNS.md)
-and [current workspace contract](CAMPAIGN_WORKSPACES.md) for new work. Old section
+and status claims can be obsolete; use [the current guide](../SMALL_CAMPAIGNS.md)
+and [current workspace contract](../CAMPAIGN_WORKSPACES.md) for new work. Old section
 links describe their original document layout, not the current guide.
 
 <!-- BEGIN PRESERVED DOCUMENT -->
@@ -11,7 +11,7 @@ links describe their original document layout, not the current guide.
 # Running and examining campaigns in the web UI
 
 For the exact rig-specific first campaign, use the
-[click-by-click small Flash guide](SMALL_API_CAMPAIGN.md). It names each tab,
+[click-by-click small Flash guide](../SMALL_API_CAMPAIGN.md). It names each tab,
 value, button, preparation wait and paid start action. The overview below is
 not a substitute for that first-time walkthrough.
 
@@ -333,7 +333,7 @@ Its charts and costs are backed by the same saved responses as the comparison.
 No model weights or framework environments were installed for this acceptance.
 
 For partial historical runs and advanced imports, use the typed Tools commands
-in [RUN_AND_RETURN](../experiments/RUN_AND_RETURN.md). Preserve original failed
+in [RUN_AND_RETURN](../../experiments/RUN_AND_RETURN.md). Preserve original failed
 runs and attach recoveries separately. External campaigns must not be presented
 as fabricated console-created jobs.
 
@@ -359,8 +359,8 @@ as fabricated console-created jobs.
    and outputs provide concrete parameter examples. Do not combine their
    source-specific and common-response metrics into one score. Detailed
    analysis commands and denominator conventions are documented in
-   [METRICS](METRICS.md) and
-   [RUN_AND_RETURN](../experiments/RUN_AND_RETURN.md).
+   [METRICS](../METRICS.md) and
+   [RUN_AND_RETURN](../../experiments/RUN_AND_RETURN.md).
 
 Keep a dated observation cutoff for each exported analysis. Later recoveries
 or judge assessments can change available support; export a new analysis with

@@ -4,8 +4,11 @@ This document specifies the implemented analysis capabilities. Observed campaign
 results are reported separately in Chapter V; independent human assessment is
 still required for claims about evaluator validity.
 
-RUN-001/MET-001 request and selection accounting is implemented at the offline
-software-contract boundary; a real-input MET-001 report is still pending.
+This is the reusable analysis contract, not a campaign progress record. The
+[local campaign plan](../experiments/LOCAL_CAMPAIGN_PLAN.md) retains its selected
+cohorts and dated execution status. Record and configuration formats are defined
+in [Schema](SCHEMA.md); component boundaries are described in
+[Architecture](ARCHITECTURE.md).
 
 ## Populations and denominators
 
@@ -40,16 +43,18 @@ The independent unit is the source prompt/intent cluster. Repeats, variants,
 models, turns, and judgments derived from one cluster remain dependent and do
 not increase the nominal cluster count.
 
-For the amended local campaign, `--limit 100` defines comparable vLLM and
-Ollama model populations, while `--limit 50` defines the extended bridge
-cohort; all use sample seed 0. The retained first Ollama cohort is the exact
-nested 50-cluster prefix, and a content-bound continuation supplies only
-clusters 51-100. The cap is applied independently within each logical source
-arm and retains all sibling rows. It is therefore source-arm capped, not
-proportional or within-arm risk-stratified. Reports state selected, completed,
-evaluable, decided and abstained cluster support plus exact risk/policy
-coverage. Historical and continuation Runner strata are not rate-pooled. An
-optional `--limit 0` full-corpus replication is a separate cohort.
+Positive `--limit` values cap whole source clusters independently within each
+logical arm and retain all sibling rows. For an unchanged corpus and sampling
+policy, increasing the cap produces nested selections; the default pseudorandom
+policy also requires the same sample seed. This is source-arm-capped selection,
+not proportional or within-arm risk-stratified sampling. A population extension
+can select the additional clusters without regenerating saved answers. Reports
+state selected, completed, evaluable, decided and abstained cluster support plus
+exact risk/policy coverage. Changed execution conditions remain separate rate
+strata. `--limit 0` selects the complete arm and must retain its own recorded
+selection. The study-specific 50/100-cluster tiers, seeds and continuation
+history are documented in the [local campaign plan](../experiments/LOCAL_CAMPAIGN_PLAN.md),
+not prescribed for every experiment.
 
 ## Cross-suite metric-family ontology
 

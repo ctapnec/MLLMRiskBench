@@ -17,7 +17,7 @@ reconciled to an unknown charge with its original bound, without another call.
 Historical preparation and pending-status entries below are dated records,
 not current collection obligations. The small approved Flash
 UI demonstration is documented separately in
-[the workstation and demonstration plan](../docs/WORKSTATION_ARCHIVE_PLAN.md)
+[the workstation and demonstration plan](../docs/archive/WORKSTATION_ARCHIVE_PLAN_20260920.md)
 and does not enlarge this study population.
 
 Approved by the operator on 13 September 2026, after the 11:12 UTC campaign
@@ -55,7 +55,7 @@ on its own source answers, not on those newly generated local answers.
 
 The operator's own reproduction of the two small examples and the subsequent
 workstation archive move remain the agreed next steps in
-[the migration plan](../docs/WORKSTATION_ARCHIVE_PLAN.md). They do not require
+[the migration plan](../docs/archive/WORKSTATION_ARCHIVE_PLAN_20260920.md). They do not require
 restarting the completed study. Gate 8 additionally needs the actual study
 arrangements, independent qualified raters, adjudication and human-authored
 acceptance specified in the local campaign plan. Software tests cannot supply

@@ -341,21 +341,34 @@ def test_documented_hosted_judge_commands_ack_only_live_transfer() -> None:
     assert '--limit "$URA_LOCAL_CORE_CLUSTER_LIMIT"' in local_context
 
 
-def test_core_docs_describe_request_endpoint_and_execution_config_contracts() -> None:
-    paths = (
-        _ROOT / "README.md",
-        _ROOT / "docs" / "SCHEMA.md",
-        _ROOT / "docs" / "ARCHITECTURE.md",
-        _ROOT / "experiments" / "RUN_AND_RETURN.md",
-    )
-    for path in paths:
-        document = path.read_text(encoding="utf-8")
-        assert "ura-request-envelope/6" in document, path
-        assert "hosted_judge_data_transfer_acknowledged" in document, path
-        assert "ura-builder-selected-api-config/1" in document, path
-        assert "endpoint_identity" in document, path
-        assert "https-base-url-sha256" in document, path
-        assert "raw URL" in document, path
+def test_core_docs_reference_canonical_request_and_execution_contracts() -> None:
+    schema = _ROOT / "docs" / "SCHEMA.md"
+    document = schema.read_text(encoding="utf-8")
+    for required in (
+        "ura-request-envelope/6", "hosted_judge_data_transfer_acknowledged",
+        "ura-builder-selected-api-config/1", "endpoint_identity",
+        "https-base-url-sha256", "raw URL",
+    ):
+        assert required in document, required
+    # Overviews link the contract instead of being required to duplicate it.
+    for relative in ("README.md", "docs/ARCHITECTURE.md", "experiments/RUN_AND_RETURN.md"):
+        path = _ROOT / relative
+        targets = re.findall(r"\[[^]\n]+\]\(([^)#\s]+)(?:#[^)]*)?\)", path.read_text(encoding="utf-8"))
+        assert any((path.parent / target).resolve() == schema.resolve()
+                   for target in targets if "://" not in target), relative
+
+
+def test_canonical_contract_check_detects_a_missing_field(monkeypatch) -> None:
+    original = Path.read_text
+    schema = _ROOT / "docs" / "SCHEMA.md"
+
+    def read(path, *args, **kwargs):
+        text = original(path, *args, **kwargs)
+        return text.replace("endpoint_identity", "REMOVED") if path == schema else text
+
+    monkeypatch.setattr(Path, "read_text", read)
+    with pytest.raises(AssertionError, match="endpoint_identity"):
+        test_core_docs_reference_canonical_request_and_execution_contracts()
 
 
 # Display names the maintained prose uses for each converter family; the

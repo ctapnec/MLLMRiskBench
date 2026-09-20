@@ -1,7 +1,15 @@
+# Historical record: workflow consolidation and acceptance
+
+Preserved implementation and acceptance record. Current workflow requirements
+are maintained in [Campaign workspaces](../CAMPAIGN_WORKSPACES.md); new testing
+uses the [UI flow checklist](../UI_FLOW_ACCEPTANCE.md).
+
+<!-- BEGIN PRESERVED DOCUMENT -->
+
 # Operator workflows
 
 Shared campaign execution is deployed on the rig. Acceptance applies to the
-recorded scenarios below; the [current flow audit](UI_FLOW_ACCEPTANCE.md) tracks
+recorded scenarios below; the [current flow audit](../UI_FLOW_ACCEPTANCE.md) tracks
 the broader re-audit after the 20 September invalid-setting failure.
 Ordinary preparation flows were deployed on 19 September 2026. Direct runs,
 matched hosted collection, local/Haiku judging and personal review now advance
@@ -12,7 +20,7 @@ settings and output locations, then attaches completed material automatically.
 
 Display preferences are grouped in the shared header: Theme and Language, with
 English as the initial language. UI-authored copy is maintained in the
-[English catalog](UI_LANGUAGE.md); campaign values and retained research text
+[English catalog](../UI_LANGUAGE.md); campaign values and retained research text
 are not translated. This adds no operator preparation or backend request.
 
 Operators choose experimental inputs, models, sampling, evaluation and resource

@@ -1,3 +1,11 @@
+# Historical record: campaign documentation consolidation
+
+This map preserves the earlier guide consolidation. Current maintenance rules
+are in the [documentation index](../README.md#maintaining-documentation) and
+[UI flow checklist](../UI_FLOW_ACCEPTANCE.md).
+
+<!-- BEGIN PRESERVED DOCUMENT -->
+
 # Campaign documentation consolidation and regression
 
 SMALL_CAMPAIGNS.md is the maintained operator guide for both local and hosted
@@ -66,7 +74,7 @@ and preservation semantically as well; automated string/link checks are not a
 proof that all documentation is complete or correct.
 
 Keep acceptance claims scoped and dated. The active checklist belongs in
-[UI flow acceptance](UI_FLOW_ACCEPTANCE.md), while older regression results
+[UI flow acceptance](../UI_FLOW_ACCEPTANCE.md), while older regression results
 remain a historical record. Provider balances must name their observation date;
 an old balance is not a current allowance. General manuals must not declare a
 campaign pending or complete without consulting its retained records.

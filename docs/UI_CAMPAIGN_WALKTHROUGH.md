@@ -5,7 +5,7 @@ For exact models, field values and clicks, use
 For comparison, exports, human evaluation and SVM, use
 [Results and optional analysis](SMALL_CAMPAIGNS.md#8-optional-examine-and-compare-your-results).
 This page explains navigation and interpretation, without a second setup recipe.
-The [previous detailed record](HISTORICAL_UI_CAMPAIGN_WALKTHROUGH.md) preserves
+The [previous detailed record](archive/HISTORICAL_UI_CAMPAIGN_WALKTHROUGH.md) preserves
 its dated examples, technical notes and original sequences for historical use.
 
 ## Create a campaign or a single run
@@ -147,9 +147,9 @@ the browser. Shared navigation remains present on operator and review pages;
 review links do not grant authority to mutate campaign controls. Wide tables
 scroll within their cards. Action rows and checkbox labels wrap with consistent
 spacing. UI maintenance and regression scope are recorded in
-[Operator workflows](UI_WORKFLOW_SIMPLIFICATION.md) and
+[Campaign workflow contract](CAMPAIGN_WORKSPACES.md) and
 [current UI flow acceptance](UI_FLOW_ACCEPTANCE.md). Dated earlier results remain
-in the [regression record](OPERATOR_REGRESSION_AUDIT.md).
+in the [regression record](archive/OPERATOR_REGRESSION_AUDIT.md).
 
 ## Historical demonstration is evidence, not a new recipe
 

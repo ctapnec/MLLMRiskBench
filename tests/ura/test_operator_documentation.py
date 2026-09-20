@@ -9,11 +9,10 @@ ROOT = Path(__file__).resolve().parents[2]
 FILES = ['README.md', 'docs/README.md', 'docs/SMALL_CAMPAIGNS.md',
     'docs/SMALL_API_CAMPAIGN.md', 'docs/SMALL_LOCAL_CAMPAIGN.md',
     'docs/CAMPAIGN_RESULTS_AND_ANALYSIS.md', 'docs/UI_CAMPAIGN_WALKTHROUGH.md',
-    'docs/CAMPAIGN_WORKSPACES.md', 'docs/UI_WORKFLOW_SIMPLIFICATION.md',
-    'docs/OPERATOR_REGRESSION_AUDIT.md', 'docs/RESPONSE_SVM.md',
-    'docs/HUMAN_REVIEW_UI.md', 'docs/ARCHITECTURE.md', 'docs/WORKSTATION_ARCHIVE_PLAN.md',
-    'docs/DOCUMENTATION_MAINTENANCE.md', 'docs/UI_FLOW_ACCEPTANCE.md',
-    'experiments/RUN_AND_RETURN.md']
+    'docs/CAMPAIGN_WORKSPACES.md', 'docs/RESPONSE_SVM.md',
+    'docs/HUMAN_REVIEW_UI.md', 'docs/ARCHITECTURE.md', 'docs/WORKSTATION_ARCHIVE.md',
+    'docs/UI_FLOW_ACCEPTANCE.md', 'docs/archive/README.md',
+    'experiments/RUN_AND_RETURN.md', 'experiments/HOSTED_MATCHED_CLOSEOUT_PLAN.md']
 FILES = sorted(set(FILES) | {
     str(path.relative_to(ROOT)).replace("\\", "/")
     for directory in (ROOT / "docs", ROOT / "distro")
@@ -99,12 +98,12 @@ def test_old_guides_are_short_redirects_not_diverging_recipes():
 
 
 def test_current_docs_do_not_reintroduce_removed_operator_restrictions():
-    review = prose(ROOT / 'docs/HUMAN_REVIEW_UI.md')
+    review = re.sub(r'\s+', ' ', prose(ROOT / 'docs/HUMAN_REVIEW_UI.md'))
     architecture = prose(ROOT / 'docs/ARCHITECTURE.md')
     assert 'All indexed measured campaign outputs' in review
-    assert 'manual source\n   registration is not required' in review
+    assert 'manual source registration is not required' in review
     assert 'answers and control-surface navigation' not in review
-    assert 'Shared console navigation remains present' in review
+    assert "Every review screen retains the console's main navigation" in review
     assert 'overlaps are unavailable for Ollama' not in architecture
     assert 'Legacy overlap metadata does not exclude a live candidate' in architecture
 
@@ -179,3 +178,79 @@ def test_link_check_detects_a_missing_section(monkeypatch):
     monkeypatch.setattr(Path, 'read_text', read)
     with pytest.raises(AssertionError, match='absent section'):
         test_operator_markdown_links_and_section_anchors_resolve()
+
+
+ARCHIVED = (
+    'HISTORICAL_CAMPAIGN_WORKSPACES.md', 'HISTORICAL_UI_CAMPAIGN_WALKTHROUGH.md',
+    'OPERATOR_REGRESSION_AUDIT.md', 'UI_WORKFLOW_SIMPLIFICATION.md',
+    'DOCUMENTATION_MAINTENANCE.md', 'UI_FLOW_ACCEPTANCE_20260920.md',
+    'HUMAN_REVIEW_UI_20260920.md', 'CONVERSATIONAL_AI_REVIEW_20260920.md',
+    'WORKSTATION_ARCHIVE_PLAN_20260920.md',
+)
+
+
+def test_archived_originals_remain_indexed_with_relocated_file_links():
+    index = prose(ROOT / 'docs/archive/README.md')
+    for name in ARCHIVED:
+        path = ROOT / 'docs/archive' / name
+        assert f']({name})' in index, name
+        text = path.read_text(encoding='utf-8')
+        assert '<!-- BEGIN PRESERVED DOCUMENT -->' in text, name
+        # Archived headings describe historical controls. Their local file
+        # destinations must still exist, even if the current headings changed.
+        for target in re.findall(r'\[[^]\n]+\]\(([^)\s]+)\)', prose(path)):
+            url = urlsplit(target)
+            if url.scheme or url.netloc or url.path.startswith('/') or not url.path:
+                continue
+            linked = path.parent / unquote(url.path)
+            if linked.suffix.lower() == '.md':
+                assert linked.is_file(), f'{name}: missing {target}'
+
+
+def test_schema_documents_current_database_and_accounting_boundaries():
+    text = re.sub(r'\s+', ' ', prose(ROOT / 'docs/SCHEMA.md'))
+    storage = (ROOT / 'experiments/rig_web_app/storage.py').read_text(encoding='utf-8')
+    version = re.search(r'^    SCHEMA_VERSION = (\d+)$', storage, re.MULTILINE).group(1)
+    assert f'in `experiments/rig_web_app/storage.py` is **{version}**' in text
+    for required in (
+        'Ratings and adjudications are primary observations',
+        'it does not recreate campaign definitions or human ratings',
+        'off by default (`reindex_all(verify_sha=False)`)',
+        'on or before the recorded usage date, not the date the page is opened',
+        'Backups must be transaction-consistent',
+    ):
+        assert required in text, required
+
+
+def test_ai_review_retains_sampling_and_assessment_limits():
+    text = re.sub(r'\s+', ' ', prose(ROOT / 'docs/CONVERSATIONAL_AI_REVIEW.md'))
+    for required in (
+        'rather than unweighted population safety estimates',
+        'does not itself establish identical rendered conversations',
+        'Only after saving initial judgments, reveal existing local and Haiku labels',
+        'not experimental independence or full blinding',
+    ):
+        assert required in text, required
+
+
+@pytest.mark.parametrize('old,new', [
+    ('is **9**', 'is **4**'),
+    ('primary observations', 'reconstructible indexes'),
+    ('verify_sha=False', 'verify_sha=True'),
+    ('recorded usage date, not the date', 'date'),
+    ('Backups must be transaction-consistent', 'Copy the live database alone'),
+])
+def test_database_documentation_check_detects_reintroduced_errors(monkeypatch, old, new):
+    test_schema_documents_current_database_and_accounting_boundaries()
+    original = Path.read_text
+    schema = ROOT / 'docs/SCHEMA.md'
+    pattern = re.compile(r'\s+'.join(re.escape(word) for word in old.split()))
+    assert pattern.search(original(schema, encoding='utf-8'))
+
+    def read(path, *args, **kwargs):
+        text = original(path, *args, **kwargs)
+        return pattern.sub(new, text) if path == schema else text
+
+    monkeypatch.setattr(Path, 'read_text', read)
+    with pytest.raises(AssertionError):
+        test_schema_documents_current_database_and_accounting_boundaries()

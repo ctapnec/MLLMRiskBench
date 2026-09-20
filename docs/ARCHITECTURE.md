@@ -23,6 +23,12 @@ This architecture describes implemented control flow, not model performance or
 judge validity. Campaign-specific completion and findings belong in their
 dated study records and the thesis experiments chapter.
 
+Use this document for component responsibilities, dependencies and execution
+boundaries. [Schema](SCHEMA.md) is the canonical reference for record fields,
+configuration formats and compatibility rules; [Metrics](METRICS.md) defines
+analysis semantics. [Campaign workspaces](CAMPAIGN_WORKSPACES.md) owns the
+current UI/backend workflow and publication contract.
+
 ## Boundaries
 
 | Layer | Location | Responsibility |
@@ -890,8 +896,9 @@ and times. Its state, text, From, and To filters combine, defaulting to the
 previous seven days through the current browser time with inclusive selected
 precision. Browser-derived epoch bounds drive a date-aware SQLite query, so the
 view is not restricted to the 500-row restart cache. Campaign markers are also
-date-filtered before their 20-row display cap; both bounded paths disclose
-truncation. The date interval constrains terminal history, while currently
+date-filtered before their 20-row display cap. The 5,000-job and 20-campaign
+display limits disclose truncation. The date interval constrains terminal
+history, while currently
 running console-owned processes and exact-session external rows remain visible
 through a bounded, disclosed live exception even when their start time is older.
 Compact tags use blue `running` for both console-owned work and an
@@ -944,22 +951,14 @@ contracts. The registration is published from a private fsynced temporary file
 with atomic no-replace semantics, and failed publication removes only its own
 empty staging directory. No workflow phase or gate schema is part of Rig Web.
 
-Console state persists in a stdlib-sqlite database (`console.db` under the
-state directory): jobs with their durable argv identities and builder
-parameters, the
-campaign-run registry, per-artifact recorded token usage, and a report
-index; it carries a schema version, normal SQLite error reporting, transactional
-terminal-state commits, and a Reindex action that rebuilds derived usage and
-report rows from retained artifacts. Full artifact digest verification is an
-explicit optional action, off by default. This database is
-operational state, never scientific evidence: usage rows are read only from
-completion-marker-bound artifacts, cost is calculated only from the
-operator-edited effective-dated pricing registry (missing data renders N/A,
-never zero), and the validated filesystem artifacts remain the sole
-measurement authority. Startup does not scan every database page. The explicit
-maintenance command `python -m experiments.rig_web --check-database` runs a
-read-only SQLite integrity scan and exits; it neither launches jobs nor rebuilds
-indexes.
+Console state persists in `<state-dir>/console.db`. Generation and automated
+assessment indexes are derived from retained files, whereas campaign definitions,
+human ratings and adjudications include primary database records. Reindexing
+derived usage and report rows is not a backup of those primary records. Full
+artifact digest verification is optional and off by default. The canonical
+[database and pricing reference](SCHEMA.md#console-database-and-pricing-registry)
+describes persistence, maintenance and verification; [campaign publication](CAMPAIGN_WORKSPACES.md#sqlite-publication-and-retained-artifacts)
+describes the UI/backend ownership and incremental-publication rules.
 
 Retained source-copy receipts record the device number observed when copied.
 That number is not persistent across boots: Linux can rename the same mounted
@@ -967,19 +966,12 @@ volume from `sdb3` to `sda3`. Admission therefore compares retained paths,
 inodes, sizes, copy independence and permissions without requiring the old
 device number. Optional full-content verification remains separately controlled.
 
-The [campaign workspace extension](CAMPAIGN_WORKSPACES.md) adds durable parent
-campaigns without duplicating Build. A reviewed launch records its parent
-before process creation. Compact SQLite indexes retain assignment identities,
-explicitly selected response references and judgments keyed to distinct outputs.
-Stats provides paginated model coverage, quality flags and vector/table exports;
-diagnostic and measured evidence remain separate. Rendering these pages does not
-scan corpora or reconstruct historical results. Original outputs, generation
-conditions and verdicts remain filesystem artifacts. The deployed workspaces
-include the retained local and hosted campaigns, output-specific judging,
-operational costs and matched-input comparisons. Historical execution counts
-remain distinct from explicitly selected scientific analysis populations.
-Recovery links annotate saved predecessor and successor outputs without
-rewriting either answer, changing costs or inheriting a predecessor's verdict.
+[Campaign workspaces](CAMPAIGN_WORKSPACES.md) associate existing executors and
+analyses with durable parent campaigns; Build remains their editor. Campaign
+ownership is captured before launch. Publication and page rendering do not
+change the observations or transfer a verdict to a different answer. Recovery,
+output-specific judging, cost attribution and paginated comparisons follow that
+document's shared contract rather than a second architecture-specific workflow.
 
 Precalculated hosted execution uses one campaign-wide spending ceiling, not
 successive batch allowances. Existing execution ledgers contribute reported
@@ -1013,21 +1005,14 @@ short-lived process memory, the selected config is a private one-shot file
 removed after the child reads it, and all rendered/persisted job surfaces use
 `vllm:local-checkpoint@sha256:<digest>`.
 
-The pricing registry can be populated by hand or by the pricing fetcher
-(`experiments/pricing_fetch.py`), which does read-only HTTPS GETs of each
-provider's published pricing page (URLs in `experiments/pricing-sources.json`),
-matches model ids exactly, and merges the rates it can read with
-`auto_fetched`/`source_url`/`fetched_at` provenance. It never fabricates a
-price (client-side-rendered pages stay manual) and never overwrites an
-operator-entered rate; the merge is atomic with a prior-file backup and refuses
-a corrupt table rather than resetting it. Provider API keys are managed
-write-only from the console's Config section (`/config/secrets`): presence and
-a masked last-four hint only, written to the operator secrets file (mode 600),
-never displayed, logged, or stored in the database. `HF_TOKEN` is the stricter
-exception: it exposes presence only without a suffix, remains process-memory
-only (legacy file entries are scrubbed), and is forwarded only to the
-acquisition children (`model_acquire` and the `export_aggregators` corpus
-export).
+Pricing and credentials are separate configuration boundaries. Recorded usage
+is priced under effective-dated rates; missing usage or rates remain unknown.
+`experiments/pricing_fetch.py` may fill supported rates without overriding manual
+entries. `/config/secrets` exposes key presence and permitted masked hints, not
+key values. [Schema](SCHEMA.md#console-database-and-pricing-registry) documents
+the registries, merge rules and secret persistence. `HF_TOKEN` is forwarded
+only to the acquisition children (`model_acquire` and the `export_aggregators`
+corpus export), never to model execution or judging.
 
 ## Defense and judge separation
 

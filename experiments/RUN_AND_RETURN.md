@@ -3,6 +3,8 @@
 For the normal graphical workflow, use the
 [UI campaign walkthrough](../docs/UI_CAMPAIGN_WALKTHROUGH.md). This runbook keeps
 the detailed CLI equivalents and historical execution distinctions.
+The [schema reference](../docs/SCHEMA.md) defines record fields, endpoint
+identities and execution-configuration compatibility.
 
 For new measured campaigns, Build General offers one Campaign workflow: choose
 installed corpora/frameworks or saved local inputs, select saved-answer
@@ -7490,7 +7492,7 @@ Concurrent edits to a saved campaign are not overwritten. Completed compatible
 preparation and installed models are reused. No extra full-checksum validation,
 runtime installation or target/judge generation is implied by opening a page.
 
-See [Operator workflows](../docs/UI_WORKFLOW_SIMPLIFICATION.md) for coverage and
+See [Campaign workspaces](../docs/CAMPAIGN_WORKSPACES.md) for coverage and
 the combined [small-campaign guide](../docs/SMALL_CAMPAIGNS.md) for exact controls.
 
 **Campaigns -> campaign -> SVM analysis** replaces the ordinary export/evaluate/

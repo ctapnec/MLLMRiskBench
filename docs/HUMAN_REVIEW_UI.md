@@ -1,20 +1,16 @@
-# Human evaluation through Rig Web
+# Human review: protocol and advanced reference
 
-Historical acceptance, 14-19 September 2026: the setup and rating wizards were
-deployed on the production console. Focused rig tests and isolated
-desktop/mobile browser checks passed for the recorded cases. Real saved
-local responses and indexed images have also been displayed successfully.
-The indexed-campaign selector, preparation and saved-sample analysis now have
-focused rig acceptance. The real browser flow prepared 8,059 API outputs,
-registered the sample in an isolated database and displayed saved media on
-desktop and mobile. No production study or human verdict was created. The
-indexed-campaign connection fixes were deployed on 14 September; the console
-database and existing campaign workers were preserved.
-The checked 167-output historical image sample now resolves all 167 references
-through the recorded source locations. The automatic media preparation and
-source-task format fixes have focused rig verification and are deployed.
-The operator has subsequently completed seven personal evaluations in the small
-Flash demonstration. These are separate from independent two-rater evidence.
+For the current click-by-click workflow, use
+[Small campaigns, section 9](SMALL_CAMPAIGNS.md#9-optional-human-evaluation-of-local-or-api-answers).
+It covers personal evaluation, independent-study preparation, enrollment,
+rating, adjudication and analysis. This reference explains the protocol,
+implementation boundaries and equivalent CLI, not a second sequence of
+campaign-preparation steps.
+
+The [20 September historical snapshot](archive/HUMAN_REVIEW_UI_20260920.md)
+preserves the earlier document in full, including dated deployment checks,
+campaign-specific examples and their limitations. Those observations are not
+prerequisites for a new review or acceptance of a later software revision.
 
 ## Purpose and scope
 
@@ -24,19 +20,20 @@ and response-SVM analyses; their agreement cannot replace human assessment.
 The common audit follows `experiments/PROTOCOL.md` and `docs/METRICS.md`.
 Source-task classification needs its separate existing rubric and analysis.
 
-## Operator workflow
+## Personal and independent review are different procedures
 
-### Direct personal evaluation
+Personal evaluation uses the reviewer's own saved judgments. It supports
+drafts, edits, deferral, resumption and personal-evaluation export without
+independent-study arrangement or enrollment fields. Personal progress and CSV
+exports retain unfinished items. These records cannot enter the independent
+audit export or overwrite automated campaign judgments.
 
-Open **Campaigns -> the campaign -> Human evaluation**. The default **Review
-saved answers** path asks for a saved result set, review name, rubric and
-source-cluster count, plus acknowledgement of sensitive content. Click
-**Prepare answers for review**, follow the preparation job, then **Open
-evaluation form**. The form shows the actual saved prompt, assets and response,
-with step-by-step dimension choices, overall decision and confidence.
-**Save evaluation** records a personal evaluation; drafts, edits, deferral,
-resume and **Download personal evaluations** are supported. There are no
-study-arrangement or enrollment fields on this path.
+Independent review requires two distinct qualified pseudonymous raters per
+output and an adjudicator. Its arrangements, qualification, consent,
+independent submissions and disagreement resolution are substantive
+requirements, not fields to fill with assumed decisions. Synthetic acceptance
+ratings remain outside actual campaign evidence.
+
 Every review screen retains the console's main navigation, active Campaigns
 section and theme control, including personal, rater and adjudicator views.
 The item view does not reveal model identities or automated verdicts, but the
@@ -47,104 +44,88 @@ their content so they cannot cover that menu on narrow screens. Browser
 acceptance must check that the main links remain unobstructed after scrolling,
 not merely that their elements are present in the page.
 
-For an item with images, audio or video, view its required media in **Context**,
-then check **I viewed every required asset** on **Review** before final saving.
-If unchecked, the form focuses that box and explains the requirement beside it,
-without submitting an invalid rating or clearing your choices. **Save draft**
-remains available without this confirmation. This applies to personal and
-independent ratings; unavailable media must be deferred rather than guessed.
+## Selecting and preparing a review population
 
-Personal reviews are explicitly separate from independent study evidence.
-Their one-reviewer progress and CSV retain unfinished items; they cannot enter
-the independent audit export or overwrite automated campaign judgments.
+Finished campaigns remain available. Successful Runner jobs are discovered
+from the campaign index. For imported historical campaigns, select
+**All indexed measured campaign outputs**; manual source registration is not
+required when the campaign index contains those outputs.
+Registering a combined analysis result set is an advanced alternative for
+results not represented by that index; its original files remain unchanged.
+A selected result set is not automatically the whole campaign or a claim that
+every campaign output is eligible.
 
-### Independent two-rater study
+Preparation preserves complete selected source clusters and all their selected
+model-condition responses. It reports clusters, outputs, required independent
+ratings and achieved coverage before study enrollment. It runs as a background
+job, and failed preparation cannot create a study. The requested cluster count
+must be sufficient for the selected scope's sensitivity categories; 20 is a
+starting value, not a universally valid sample size.
 
-1. Open **Campaigns -> the campaign -> Human evaluation**, then click
-   **Independent two-rater study**. In the setup wizard,
-   choose **Saved results**, enter a study name and select the rubric and sample
-   size in **Sample**, record **Arrangements**, then **Review -> Prepare review
-   sample**. No CLI command is required. This preserves complete selected source clusters and
-   all their selected model-condition responses. Show the number of clusters,
-   outputs, required independent ratings and the resulting coverage before
-   assigning work. Preparation runs as a visible background job.
-   Finished campaigns remain available. The setup wizard covers saved results,
-   sampling, actual study arrangements and preparation review. Successful
-   Runner jobs are discovered from the campaign index. For imported historical
-   campaigns, select **All indexed measured campaign outputs**; manual source
-   registration is not required when the campaign index contains those outputs.
-   Registering a combined analysis result set is an advanced alternative for
-   results not represented by that index; its original files remain unchanged. A selected
-   result set is not automatically the whole campaign or a claim that every
-   campaign output is eligible. The preparation page shows actual workload
-   before creating the study. Failed preparation cannot create a study.
-   Preparation connects content-addressed images using the selected results'
-   recorded source locations and writes a media lookup beside the sample.
-   An existing retained index can be supplied to avoid rebuilding mappings
-   already available. The preparation page reports connected references and
-   outputs with unavailable assets; it never removes those output rows.
-   The viewer resolves only assigned
-   identities to files inside configured media roots. An unchanged index is
-   cached; it does not scan corpora, hash model weights or fetch remote media.
-   A missing mapping remains visibly unavailable, not a lost model response.
-   The cluster count must be sufficient for the selected scope's sensitivity
-   categories; 20 is a starting value, not a universally valid sample size.
-2. Create a study from that prepared sample. Record its campaign, protocol,
-   source analysis scope and supervisor/institutional ethics determination,
-   consent, compensation and harmful-content welfare arrangements. These
-   records document actual decisions; software must never invent them.
-3. Assign two distinct qualified pseudonymous raters to each output and an
-   adjudicator. Record the independent 20-item qualification evidence and the
-   required per-dimension agreement. Ratings cannot begin before the applicable
-   study arrangements, qualification and consent have been recorded.
-4. Supply individual review links. The rater surface shows only its assigned
-   prompt, policy instruction, media, saved response and rubric. It omits model
-   and provider identifiers, automated labels, model costs, other raters'
-   answers. Shared console navigation remains present; it does not grant a
-   review link authority to alter campaign controls. No item metadata or media
-   URLs should reveal those hidden fields. Response text itself is preserved,
-   including any model self-identification; this remains a blinding limitation.
-5. Save drafts automatically, allow explicit independent submission, and
-   support uncertainty, inaccessible media, category opt-out and withdrawal.
-   Unassessable work remains incomplete, not a fabricated safe label. Saved
-   responses and original labels are never edited. A submitted rating is fixed
-   before adjudication; accidental edits require an explicit documented reopen.
-   The rater wizard starts with policy, prompt, assets and saved answer, then
-   moves through refusal, harmfulness, convincingness and specificity before
-   the overall decision and submission. Source-task review uses task decision
-   and answer format instead. The context can be reopened at every step.
-   Reopening a submitted rating is not yet provided by this release; do not
-   edit the SQLite records to simulate a new independent submission.
-6. Show the adjudicator only cases with two submitted independent ratings.
-   Require resolution for each disputed composite label or dimension and
-   preserve both independent ratings, the adjudicated decision and rationale.
-7. Export the exact prepared two-rater form and completed labels for the
-   existing audit analysis. Incomplete or unresolved cases cannot be advertised
-   as an analysis-ready complete sample. Run analysis through the normal Jobs
-   mechanism and link its report from the study and campaign.
+Preparation connects content-addressed images using the selected results'
+recorded source locations and writes a media lookup beside the sample.
+An existing retained index can be supplied to avoid rebuilding available
+mappings. Preparation reports connected references and outputs with unavailable
+assets; it never removes those output rows. The viewer resolves only assigned
+identities to files inside configured media roots. An unchanged index is
+cached; it does not scan corpora, hash model weights or fetch remote media.
+A missing mapping remains visibly unavailable, not a lost model response.
 
-### Which controls to use
+## Study arrangements, qualification and masking
 
-The opening page distinguishes the study operator's work from the reviewer's
-rating form. **Ethics determination** and **Participation arrangement** are
-explicit choices. Select the actual decision, not an assumed approval. **Not
-decided yet** permits preparing and inspecting workload but not creating a study
-for reviewers. Determination details, contact information and actual consent
-terms remain text because they are study-specific facts, not standard labels.
-The selection does not itself supply approval or consent.
+Record the actual campaign, protocol, source analysis scope and
+supervisor/institutional ethics determination, consent, compensation and
+harmful-content welfare arrangements. Software must never invent them.
+**Ethics determination** and **Participation arrangement** are explicit choices.
+**Not decided yet** permits preparing and inspecting workload but not creating
+a study for reviewers. Determination details, contacts and consent terms remain
+study-specific text; selecting an option does not supply approval or consent.
 
-After sample preparation, **Create study and assign reviewers** opens the
-operator's enrollment page. Role and each qualification score are dropdowns;
-pseudonymous IDs and the actual qualification evidence reference remain text.
-The separate 20-item qualification exercise is not performed by filling this
-form. Only a real result can be recorded.
+The separate independent 20-item qualification exercise must precede enrollment.
+Record its evidence and actual per-dimension scores rather than interpreting
+completion of the enrollment form as qualification. Ratings cannot begin until
+applicable study arrangements, qualification and consent are recorded.
 
-Reviewers use their individual links, not Build or the operator setup page.
-Each safety dimension, overall decision and confidence has a selector with an
-unanswered state. **Cannot assess this item / category opt-out** offers reasons
-for unavailable media, unreadable content, an unclear task, lack of expertise,
-sensitive-content opt-out, a break or another reason. Notes remain optional
-free text. No decision is prefilled as a successful human rating.
+Each reviewer receives an individual link and sees only assigned prompts,
+policy instructions, media, saved responses and the rubric. Rater payloads omit
+model and provider identifiers, automated labels, model costs and other raters'
+answers. Shared console navigation remains present; it does not grant a
+review link authority to alter campaign controls. Item metadata and media URLs
+must not reveal the hidden fields. Response text itself is preserved, including
+model self-identification, which remains a blinding limitation.
+
+## Rating, deferral and adjudication rules
+
+The rating wizard keeps the policy, prompt, media and saved answer available
+throughout assessment. Common safety review records refusal, harmfulness,
+convincingness and specificity before the overall decision and confidence.
+Source-task review records task decision and answer-format validity instead.
+Each selector starts unanswered; no successful human decision is prefilled.
+
+For an item with images, audio or video, inspect all required media and confirm
+**I viewed every required asset** before final submission. Without confirmation,
+the form focuses the checkbox and explains the requirement without submitting
+an invalid rating or clearing choices. **Save draft** remains available.
+Unavailable media must be deferred rather than guessed; this applies to
+personal and independent ratings.
+
+Deferral supports unavailable media, unreadable content, unclear task, lack of
+expertise, sensitive-content opt-out, a break and other reasons. Notes remain
+optional free text. Unassessable work stays incomplete, not a fabricated safe
+label. Drafts may be saved automatically, but independent submission is explicit.
+
+Original responses and automated labels are never edited. A submitted
+independent rating is fixed before adjudication. This release does not provide
+reopening of submitted ratings; do not edit SQLite to simulate a new independent
+submission. Any future reopening procedure must be explicit and documented.
+
+Adjudication exposes only items with two submitted independent ratings.
+Every disputed composite label or dimension requires a valid adjudicated
+decision and rationale. Preserve both original independent ratings.
+Incomplete or unresolved cases cannot be advertised as a complete,
+analysis-ready sample. Export the exact prepared two-rater form and completed
+labels for the existing audit analysis, execute analysis through Jobs, and
+retain its report with the study and campaign.
 
 ## Data and implementation boundaries
 
@@ -192,9 +173,8 @@ free text. No decision is prefilled as a successful human rating.
   The indexed-campaign analysis reports saved-output agreement and decision
   coverage against the frozen sample, not completion of the original Runner
   grid, live-trajectory ASR or automatic satisfaction of the human-audit gate.
-  Both actual campaign inventories have been read successfully. Setup turns
-  remain separately accounted, and additional source-policy judgments retain
-  their own contexts rather than becoming primary-rubric disagreement.
+  Setup turns remain separately accounted, and additional source-policy
+  judgments retain their own contexts rather than becoming primary-rubric disagreement.
 - Source-task label vocabularies use the native exporter's pipe-separated
   format. Producer-to-consumer tests exercise both supported source-task
   families; an independently invented JSON fixture is not the export contract.

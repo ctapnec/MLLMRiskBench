@@ -5,6 +5,12 @@ attackers, targets, judges, persistence, and analysis. `SCHEMA_VERSION = "1.5"`
 is stamped on datapoints, checkpoints, and manifests. Runner 2.32 rejects mixed
 schema versions and duplicate datapoint IDs before a target call.
 
+This is the canonical reference for persisted records, configuration formats
+and compatibility rules. [Architecture](ARCHITECTURE.md) describes component
+responsibilities and execution boundaries. [Campaign workspaces](CAMPAIGN_WORKSPACES.md)
+defines the current operator-facing orchestration and publication contract;
+[Metrics](METRICS.md) defines analysis populations and denominators.
+
 The 1.5 transition introduces isolated-engine identities and verified closing
 seals. Readers retain a narrow compatibility path for exact Runner 2.19/schema
 1.4 non-runtime evidence, `ura-eligibility-plan/2`, and
@@ -925,51 +931,17 @@ requested and realized judge identities, source and policy digests, code/schema
 identity, and analysis inputs remain independently bound in runtime and
 postprocessing provenance.
 
-## Console operational database and pricing registry (not evidence)
+<a id="console-operational-database-and-pricing-registry-not-evidence"></a>
 
-The console's startup platform/CPU/core/RAM and NVIDIA inventory is an
-operator-visible runtime snapshot, not a scientific artifact schema. Likewise,
-the Build page separates hosted API, Local vLLM, and Local Ollama choices. Its
-hosted-provider and vLLM name/maximum-parameter/profile-fit controls, plus the
-separate unchecked unknown-fit control, only filter rendered choices. Known
-16/8/4-bit recommendations use green/blue/amber; unknown fit is gray. Compatible
-vLLM rows are single-choice
-selectors even when the roster pin is unfinished, but non-dry submission still
-requires an exact revision/digest. An unknown-fit row remains blocked under auto;
-selecting `Include unknown fit` exposes an unknown-size row at every parameter
-maximum, while known sizes still obey the cap. An explicit per-model precision
-binds `allow_unknown_fit: true`, while known non-fit remains blocked. A vLLM row
-labels an explicit `max_model_len` context cap or automatic maximum GPU-fit
-context. Source-ineligible rows may also remain visible and
-selectable with one custom hover/focus tooltip. Server validation rejects them
-before a subprocess by default. Eligible non-tool rows show `⚠ approximate
-opt-in`; the explicit opt-in admits only supplementary `approximate_*` response
-proxies. Tool-conditioned rows show `tool runtime required` and remain
-fail-closed. Neither UI state replaces the local-config, source-evaluator, or
-hardware checks described above.
-Dry builder state carries no real API/local target/config into the command
-because dry execution uses `MockTarget`. Local roster modality metadata is
-restricted to the Runner's text/image vLLM path, keeping audio mismatch rejection
-consistent between UI and CLI.
-Ollama rows follow only selected modality. They expose no fit, parameter,
-quantization, topology, or context controls and remain disabled until their
-narrow digest/modality config is valid and the tag is present in the live
-loopback daemon. Rig Web may Start, Stop, and Pull only through its proven
-current-console-owned child; an external daemon is available for bounded
-discovery and inference but not UI Stop or Pull.
+## Console database and pricing registry
 
-The Jobs page presents a full start date and time converted from the stored epoch
-to browser-local time. State, text, From, and To filters compose. Absent URL
-bounds, From defaults to seven days before the current browser time and To to
-the current time; both are inclusive at the selected datetime precision. The
-browser persists epoch bounds and reloads a date-aware SQLite query rather than
-filtering only the 500-row restart cache. Campaign marker start times are
-filtered before their 20-row display cap. A 5,000-job or 20-campaign truncation
-is disclosed and can be narrowed with From/To. Short
-status tags include blue `running`, `passed`, `failed`, `orphaned`, `partial`,
-`blocked`, `stopped`, and `unknown`. Detail text distinguishes a console-owned
-process from an external task-log `running` marker; the latter never implies
-operating-system process liveness.
+This section defines stored state and configuration, not a second UI workflow.
+Model-picker, service-ownership and job-liveness behavior is described in
+[Architecture](ARCHITECTURE.md#console-and-operational-state). Campaign ownership,
+publication, recovery and comparison behavior is defined in
+[Campaign workspaces](CAMPAIGN_WORKSPACES.md). Displayed hardware inventory and
+process status are operational observations, not substitutes for model-delivery
+or completed-response records.
 
 An external engineering campaign is discovered only through a bounded regular,
 non-symlink `ENGINEERING_ONLY.json` object with schema
@@ -991,19 +963,39 @@ successes. This is an operational self-report, not confirmed execution or an
 evidence schema. Call reservations are also not execution observations.
 Completion-validated response artifacts remain authoritative.
 
-The rig console persists its operational state in a stdlib-sqlite database
-(`console.db` under the console state directory, schema version 4): `jobs`
-(durable argv identity, builder parameters, state, exit code, failure context, pinned
-revision), `runs` (the campaign-run registry: kind, output directory, pin),
-`usage` (per-completion-marker recorded token amounts keyed by role,
-provider, model, and billing category - input, output, cache_read,
-cache_write, reasoning, plus `calls` and `missing_tokens` counters), and
-`reports` (an index of retained artifacts by their declared
-`schema_version`). Rows in `usage` are derived exclusively from artifacts
-reachable through a valid `*.complete.json` completion marker and can be
-rebuilt at any time from the retained artifacts (dashboard Reindex, with
-digest verification). None of these tables is an evidence schema: they index
-and mirror the validated artifacts, which remain authoritative.
+The console uses `<state-dir>/console.db` with WAL journaling. The current
+`RigWebDB.SCHEMA_VERSION` in `experiments/rig_web_app/storage.py` is **9**; this
+operational database version is separate from the experimental record version
+at the start of this document. Stored roles include:
+
+- `jobs`: durable argv identity, builder parameters, activity, state, exit code,
+  failure context and pinned revision;
+- `runs`: the run registry, including output location, kind, pin and lifecycle;
+- `usage`: completion-marker-derived token amounts by role, provider, model,
+  billing category and recorded usage date, including call/missing-token counters;
+- `reports`: retained artifact references and their declared schema;
+- campaign definitions, memberships, assignments, response/judgment references
+  and physical-attempt costs, as described in [Campaign workspaces](CAMPAIGN_WORKSPACES.md#sqlite-publication-and-retained-artifacts).
+
+The human-review store additionally maintains `human_studies`, `human_items`,
+`human_reviewers`, `human_ratings`, `human_adjudications`, `human_review_events`,
+`human_review_sources` and `human_review_preparations` in this database.
+Ratings and adjudications are primary observations, not indexes that can be
+reconstructed from target-response files. Their exports support analysis but do
+not replace preservation of the complete database and review state. A recorded
+rating is not, by storage alone, a validated independent assessment.
+
+Reindex rebuilds derived `usage` and `reports` rows from retained artifacts;
+it does not recreate campaign definitions or human ratings. Ordinary reindexing
+does not rehash all artifact contents. Full artifact digest verification is an
+explicit optional action, off by default (`reindex_all(verify_sha=False)`).
+Startup does not scan every database page. The separate maintenance command
+`python -m experiments.rig_web --check-database` performs a read-only SQLite
+integrity scan and exits without launching jobs or rebuilding indexes. Backups
+must be transaction-consistent; use SQLite's backup mechanism or an equivalent
+procedure that includes outstanding WAL state rather than copying only a live
+database file. Original generation and automated-assessment files remain
+authoritative for their derived indexes.
 
 Explicit local vLLM filesystem locators are never members of this schema. The
 console projects them to `vllm:local-checkpoint@sha256:<digest>` before writing
@@ -1014,9 +1006,10 @@ the Job row; storage also rejects an unprojected explicit locator fail-closed.
 is an operator-maintained registry, not an artifact:
 `providers -> models -> rates[]`, each rate carrying `effective_date` (a
 zero-padded ISO `YYYY-MM-DD`), `currency`, and `per_million_tokens` for the
-billing categories. The console selects the rate whose `effective_date` is the
-newest on or before today and multiplies recorded tokens by its per-category
-rates. Priced categories are `input`, `output`, `cache_read`, and
+billing categories. Recorded-usage reports select the newest applicable rate
+whose `effective_date` is on or before the recorded usage date, not the date the
+page is opened. A missing or invalid usage date remains unpriced. Priced
+categories are `input`, `output`, `cache_read`, and
 `cache_write`; `reasoning` is displayed but not priced separately (providers
 bill it as output), and the input count has any reported cache reads netted
 out first so no token is billed twice. If the applicable rate leaves a

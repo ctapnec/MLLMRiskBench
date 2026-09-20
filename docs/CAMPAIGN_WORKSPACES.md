@@ -3,9 +3,12 @@
 This is the developer reference for the current UI/backend boundary.
 Use [Small campaigns](SMALL_CAMPAIGNS.md) for operator instructions and
 [Results and analysis](SMALL_CAMPAIGNS.md#8-optional-examine-and-compare-your-results) for optional analyses.
-The [complete previous document](HISTORICAL_CAMPAIGN_WORKSPACES.md) preserves
+The [complete previous document](archive/HISTORICAL_CAMPAIGN_WORKSPACES.md) preserves
 earlier design proposals, numeric observations and technical notes. It is not
 prescribed as current UI actions. Development findings remain in the ledger.
+Detailed record definitions and scientific metrics remain in
+[Schema](SCHEMA.md) and [Metrics](METRICS.md); this document owns workflow and
+publication behavior, not a second version of those contracts.
 
 ## Ownership and navigation
 
@@ -18,6 +21,10 @@ Build is the experiment editor. Campaigns presents named studies. Jobs defaults
 to Substantive work, with Technical - all jobs retaining preparation, diagnostics
 and maintenance. Stats exposes campaign/job comparison and SVM results. Tools
 contains advanced CLI equivalents, not required operator handoffs.
+Work classification follows command mode: a no-call run is preparation, not
+collection, and assessment preparation is not completed judging. Substantive
+work links to its active or failed technical stages; filtering never deletes
+those records.
 
 Campaign identity is captured at launch, not read later from the browser's current
 selection. Changing a draft or opening another campaign cannot reassign a running
@@ -29,17 +36,57 @@ The retained thesis work is presented as Local campaign and API campaign.
 Their phases, dated batch names and controller scripts are not system concepts
 or new campaign types. New UI demonstrations have separate owners.
 
+## Operator decisions and automatic stages
+
+Operators choose scientific inputs, models, sampling, evaluation and resource
+limits. Ordinary flows use named saved objects and system-derived paths, not
+database filenames, receipt hashes, campaign IDs or intermediate directories.
+Planning, acquisition, conversion, record creation and publication remain
+inspectable technical work rather than separate operator tasks. Advanced CLI
+forms stay available under Tools for debugging and exceptional imports.
+
+| Flow | Operator decisions | Automatic work |
+| --- | --- | --- |
+| Direct campaign or single run | Models, arms, attacks, sample, judges, limits | Plan, reuse/acquire selected models, no-call checks and execution preparation |
+| Hosted comparison on retained inputs | Source runs, target models, request/token/cost limits | Input extraction, forecast, replay materialization, counting and preparation |
+| Local saved-output assessment | Saved outputs and original scoring condition | Select pending outputs, prepare scorer, resume and publish verdicts |
+| Hosted saved-output assessment | Input selection, judge and spending limit | Inventory, exact-output matching, counting, preparation and publication |
+| Personal review | Saved outputs, rubric and optional sample | Sample preparation and opening the evaluation form |
+| Independent study | Actual participant and study arrangements | Artifact creation and assignment bookkeeping, not invented ethics or scientific decisions |
+| SVM analysis | Cohort, task, features and analysis settings | Dataset export and the evaluation, packaging or prediction stages appropriate to the task |
+| Prepared attacks | Corpus, attack method, source model or saved attack material | Resolve installed runtime and output location; attach completed capture or selected material |
+| Recovery | Interrupted operation and any changed limit | Restore successful checkpoints and continue unfinished work |
+
+Attack capture that generates model output remains an explicitly reviewed
+execution, not a no-call preparation step. Existing installed runtimes and
+compatible material are reused. Personal-review, independent-study and SVM
+protocol details remain in [Human review](HUMAN_REVIEW_UI.md) and
+[Response SVM](RESPONSE_SVM.md).
+
 ## Definitions and reviewed execution
 
 Definitions preserve validated non-secret settings and required file locators.
 The path-redacted job representation is not substituted for an editable draft.
 Credentials are not stored in these definitions or exposed in HTML.
 
+Saving a campaign keeps Build open. General owns input-source and assessment
+choices; fresh and retained inputs use the same Review campaign and Start
+campaign actions. Review begins preparation without a second Prepare action.
+It validates operator fields first and preserves submitted choices for correction.
+Numeric controls match backend ranges; an invalid hidden-tab control is revealed
+without starting a request or loading overlay. Background errors name the
+affected field. Optional local wall time is blank or a positive whole number
+of hours; zero and -1 do not mean unlimited.
+
 For named measured campaigns, Review campaign creates/reuses a durable parent
 operation over the existing direct or matched preparation. Required model/source
 setup, input extraction, forecasting and token counting are internal stages.
 Preparation does not generate answers or verdicts. Token counting may use the
 selected provider's counting endpoint.
+Target, judge and HTTP call ceilings are calculated from the projection by
+default; manual technical overrides stay collapsed. Missing connection checks
+are derived without changing the scientific draft. Review separates diagnostic
+and measured workloads and presents both before any model call.
 
 Start campaign authorizes the reviewed diagnostics, collection and selected
 local/Haiku assessment. Diagnostic cases remain separate from measured evidence.
@@ -56,6 +103,31 @@ reconciliation, not an assumed-safe duplicate.
 Single runs and old saved preparations retain their own explicit review/start
 and continuation actions. This compatibility does not reintroduce those internal
 handoffs into the new campaign flow.
+
+### Equivalent completed work and interrupted diagnostics
+
+Completed-work reuse applies to a new Build review submission as well as to the
+existing progress link. Automatically assigned output suffixes and discovered
+connection records are preparation details, not new scientific choices. The
+original execution settings remain unchanged. Changed models, inputs, sampling,
+configured output allowances, explicit manual paths or manual admission records
+require a new review. Intentionally repeating identical conditions requires a
+new campaign.
+
+Equivalence checks read retained configuration, not model weights, and need no
+local serving-daemon request merely to reopen results. An older unstarted review
+cannot supersede equivalent completed work: Guide, review and Start from a stale
+browser tab return the completed results. Distinct campaigns, changed settings
+and missing configuration evidence remain separate; old preparations are retained.
+
+The parent owns nested diagnostic execution from the child's durable launch,
+including the interval before the parent receives its progress handoff. Resume
+checks all owned launches before changing stages; active or unreconciled processes
+cannot leave a partially resumed workflow. A stopped diagnostic continues from
+its saved execution reference without a separate internal recovery task.
+Standalone preparation uses the same checks: Continue preparation recovers
+failed, stopped or interrupted diagnostics, including after console restoration.
+Original failed probe and connection-check jobs keep their recorded status.
 
 ## Existing executors, not a second experiment engine
 
@@ -84,6 +156,9 @@ invented from reasoning text.
 
 New hosted campaigns supply a collection ceiling and, if selected, an independent
 Haiku ceiling. These are not provider account balances.
+Direct hosted projections label quarter/full-output scenarios as estimates,
+not exact future request sizes or charges. Diagnostics and eligible retries
+share the reviewed collection allowance.
 
 Direct Runner attempts use the campaign spending controller with frozen route
 settings and prices. Admission counts the actual request and output allowance
@@ -135,6 +210,10 @@ A publication error is separate from a generation failure. Saved work remains
 recoverable without new target calls. Repeated publication is idempotent; a
 billing-only change does not reread all answers. Ordinary page requests use
 paginated SQLite queries, not corpus reconstruction or full-file hashing.
+Direct hosted jobs publish answers and judgments through the same index as
+local jobs. Older direct-hosted results can be reconciled from their own saved
+artifacts at completion or console startup without generation. A failed
+publication remains visible on its job; completed publication is cached.
 
 Startup does not scan every database page. An explicit maintenance check is
 available with `experiments.rig_web --check-database`. An unreadable index is
@@ -188,6 +267,11 @@ Preparation and execution use the same frozen configuration. An intervening
 completed assessment is reused rather than purchased again. Source changes,
 ambiguous manifests or unavailable context must be reported, not papered over
 with a different model or answer. Original files and judgments stay retained.
+Execution rechecks the exact answer and judging condition, not just the earlier
+preparation snapshot. Per-answer checkpoints prevent a later assessment from
+duplicating completed paid work. Reuse is a reference to the existing verdict,
+not a fictitious call or new zero-cost charge. Copying a configuration into an
+assessment directory preserves its original bytes.
 
 ## Results, comparison and analysis
 
@@ -233,10 +317,21 @@ and input groups. It does not start training or judging. Human review preserves
 personal versus independent ratings; neither SVM nor automated agreement replaces
 actual independent raters.
 
+## Shared interface behavior
+
+Theme and Language remain in the shared header. UI-authored copy comes from the
+[language catalog](UI_LANGUAGE.md); campaign values and retained research text
+are not translated. Display preferences add no preparation stage or backend
+request. Normal navigation and backend requests use the common busy guard;
+success, error and timeout release it. Guide links reveal and scroll to the
+relevant controls without changing scientific choices or starting work.
+
 ## Acceptance and maintenance
 
-Use [Operator regression audit](OPERATOR_REGRESSION_AUDIT.md) for the scenario
-matrix and current verification state. Test fresh local, fresh API and retained
+Use [UI flow acceptance](UI_FLOW_ACCEPTANCE.md) for the reusable scenario matrix
+and documentation checks. [Earlier audit results](archive/OPERATOR_REGRESSION_AUDIT.md)
+and the [previous workflow record](archive/UI_WORKFLOW_SIMPLIFICATION.md) retain
+dated observations, not current blanket acceptance claims. Test fresh local, fresh API and retained
 API work, single runs, restart, duplicate submission, stop/resume, changed drafts,
 missing/invalid output, budget stops, publication, comparison, exports, Guide,
 human review, SVM and narrow-screen behavior.
