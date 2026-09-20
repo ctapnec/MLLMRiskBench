@@ -53,6 +53,11 @@ def test_charts_switch_export_and_survive_comparison_refresh(browser, study, wid
         expect(page.locator("[data-insight-overview]")).to_be_visible()
         page.locator("[data-model-comparison] > summary").first.click()
         overview = page.locator("[data-insight-overview]")
+        colours = overview.locator(".insight-dot").evaluate_all(
+            "nodes=>nodes.map(n=>getComputedStyle(n).backgroundColor)"
+        )
+        assert len(colours) == 2 and colours[0] != colours[1]
+        assert colours == ["rgb(8, 126, 139)", "rgb(173, 76, 22)"]
         before = len(requests)
         overview.locator("[data-insight-metric]").select_option("missing")
         expect(overview.locator("[data-insight-panel]:visible")).to_have_attribute(

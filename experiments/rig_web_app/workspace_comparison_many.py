@@ -391,6 +391,13 @@ def render(data, campaign, query):
         [
             dict(
                 rows=p["rows"],
+                short_title=_ui_text(
+                    "comparison_insights.pair_title",
+                    left=p["left"]["model"].partition("@")[0].partition(";")[0],
+                    left_condition=p["left"]["number"],
+                    right=p["right"]["model"].partition("@")[0].partition(";")[0],
+                    right_condition=p["right"]["number"],
+                ),
                 title=_ui_text(
                     "comparison_insights.pair_title",
                     left=model_label(p["left"]["model"]),

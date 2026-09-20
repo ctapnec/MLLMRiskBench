@@ -83,7 +83,7 @@ def _name(source):
 
 
 STYLE = """<style>
-.comparison-insights{margin:1.5rem 0;min-width:0;overflow-wrap:anywhere}
+.comparison-insights{--insight-left:#087e8b;--insight-right:#ad4c16;margin:1.5rem 0;min-width:0;overflow-wrap:anywhere}
 .insight-heading{display:flex;align-items:baseline;justify-content:space-between;gap:1rem;flex-wrap:wrap}
 .insight-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,170px),1fr));gap:.8rem;margin:1rem 0}
 .insight-kpi{padding:1rem;border:1px solid var(--line);border-radius:12px;background:var(--soft)}
@@ -91,15 +91,15 @@ STYLE = """<style>
 .insight-kpi span{display:block;margin-top:.4rem;color:var(--muted)}
 .insight-scroll{overflow:auto;border:1px solid var(--line);border-radius:12px;margin:1rem 0;max-height:660px}
 .insight-heatmap{border-collapse:separate;border-spacing:4px;width:100%;font-variant-numeric:tabular-nums}
-.insight-heatmap th{background:var(--card,var(--bg));text-align:left;vertical-align:bottom;min-width:190px;max-width:250px;font-weight:500}
+.insight-heatmap th{background:var(--card,var(--bg));text-align:left;vertical-align:bottom;min-width:190px;max-width:250px;font-weight:500;text-transform:none;letter-spacing:normal;font-size:.85rem;line-height:1.4}
 .insight-heatmap thead th{position:sticky;top:0;z-index:2}
 .insight-heatmap tbody th{position:sticky;left:0;z-index:1}
 .insight-heatmap thead th:first-child{left:0;z-index:3}
 .insight-heatmap td{min-width:120px;text-align:center;padding:.8rem;border-radius:7px;color:var(--ink)}
 .insight-heatmap td strong,.insight-heatmap td small{display:block}
 .insight-heatmap td small{margin-top:.3rem}
-.insight-heatmap td[data-direction='left']{background:color-mix(in srgb,var(--viz-series-1,var(--accent)) var(--shade),var(--bg))}
-.insight-heatmap td[data-direction='right']{background:color-mix(in srgb,var(--viz-series-2,var(--accent)) var(--shade),var(--bg))}
+.insight-heatmap td[data-direction='left']{background:color-mix(in srgb,var(--insight-left) var(--shade),var(--bg))}
+.insight-heatmap td[data-direction='right']{background:color-mix(in srgb,var(--insight-right) var(--shade),var(--bg))}
 .insight-heatmap td[data-direction='equal']{background:var(--soft)}
 .insight-heatmap td[data-direction='unknown']{background:repeating-linear-gradient(135deg,var(--soft),var(--soft) 5px,var(--bg) 5px,var(--bg) 10px)}
 .insight-controls{display:flex;align-items:end;gap:1rem;flex-wrap:wrap;margin:1rem 0}
@@ -109,10 +109,8 @@ STYLE = """<style>
 .insight-plot{display:block;width:100%;min-width:1120px;height:auto}
 .insight-legend{display:flex;gap:1rem;flex-wrap:wrap;margin:.6rem 0}
 .insight-legend span{display:inline-flex;gap:.5rem;align-items:center}
-.insight-dot{display:inline-block;width:.8rem;height:.8rem;background:var(--viz-series-1,var(--accent));border-radius:50%}
-.insight-dot.right{background:var(--viz-series-2,var(--accent));border-radius:0}
-[data-insight-detail] .insight-dot{background:#087e8b}
-[data-insight-detail] .insight-dot.right{background:#ad4c16}
+.insight-dot{display:inline-block;width:.8rem;height:.8rem;background:var(--insight-left);border-radius:50%}
+.insight-dot.right{background:var(--insight-right);border-radius:0}
 </style>"""
 
 
@@ -172,7 +170,13 @@ def overview(pairs):
             + "</th>"
         )
         for pair in pairs:
-            result += '<th scope="col">' + html.escape(pair["title"]) + "</th>"
+            result += (
+                '<th scope="col" title="'
+                + html.escape(pair["title"], quote=True)
+                + '">'
+                + html.escape(pair.get("short_title", pair["title"]))
+                + "</th>"
+            )
         result += "</tr></thead><tbody>"
         for source in sources:
             result += '<tr><th scope="row">' + html.escape(_name(source)) + "</th>"
