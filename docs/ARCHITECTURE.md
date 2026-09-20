@@ -760,11 +760,11 @@ capabilities, exact lowercase digests, and matching before/after tag snapshots.
 No row is invented when discovery is absent, malformed, slow, or races a tag
 change. Bounded tags/show family fields and
 `model_info.general.architecture` are cross-checked; missing or conflicting
-identity evidence fails closed, and architecture feeds the overlap index.
-Normalized upstream/name/family overlaps are unavailable for Ollama
-execution; a stale/manual overlap is visibly disabled with the exact reason and
-cannot bypass the distinct-model requirement. These are presentation controls
-only. Source arms lacking an integrated evaluator remain visible with a concise
+identity evidence fails closed. Installed Ollama models remain selectable
+regardless of vLLM catalog or downloaded-model overlap. Provider-specific
+identities are retained, including when both runtimes serve related models in
+the same execution. Legacy overlap metadata does not exclude a live candidate.
+Source arms lacking an integrated evaluator remain visible with a concise
 badge and hover/focus explanation. They fail closed by default. The explicit
 approximate-common-metrics opt-in admits only a separately named, supplementary,
 non-authoritative proxy with warning, strict provenance, separate coverage, and
@@ -882,7 +882,8 @@ rechecks that reserve plus each API-reported remaining byte count. Inference and
 discovery take the corresponding shared lock, preventing pull/stop/model-mutation
 races. Ollama inference also verifies one exact tag/digest before chat, again
 after chat, and as exactly one matching loaded `/api/ps` row; Runner admission
-independently repeats live show-backed overlap and digest/modality validation.
+independently repeats live show-backed identity and digest/modality validation,
+without excluding vLLM overlaps.
 
 The Jobs view converts stored epoch timestamps to full browser-local start dates
 and times. Its state, text, From, and To filters combine, defaulting to the

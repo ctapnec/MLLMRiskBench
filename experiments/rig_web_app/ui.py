@@ -385,7 +385,7 @@ footer.note { color:var(--muted); font-size:.8rem; margin-top:2rem;
   margin-right:.45rem; }
 .notice { border-left:4px solid var(--line); border-radius:8px;
   background:var(--soft); padding:.6rem .8rem; margin:.45rem 0;
-  font-size:.9rem; }
+  font-size:.9rem; overflow-wrap:anywhere; }
 .notice.amber { border-left-color:#c9922a; }
 .notice.red { border-left-color:#c4515c; }
 .notice.blue { border-left-color:#3f8edb; }

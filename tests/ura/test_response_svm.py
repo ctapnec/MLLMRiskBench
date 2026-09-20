@@ -175,6 +175,30 @@ def test_export_reads_actual_runner_checkpoint_response_shape(tmp_path):
         export_dataset(**args)
 
 
+@pytest.mark.parametrize("contents", ["reordered", "missing", "duplicate"])
+def test_export_follows_finalized_checkpoint_by_identity_not_old_line(tmp_path, contents):
+    args = dataset_fixture(tmp_path)
+    original = json.loads((tmp_path / "responses.jsonl").read_text())
+    reference = tmp_path / "run.responses.checkpoint.jsonl"
+    final = tmp_path / "run.responses.jsonl"
+    unrelated = dict(original, attempt_id="unselected", output_turns=[dict(role="assistant", content="Wrong answer")])
+    rows = [unrelated, original] if contents == "reordered" else [unrelated] if contents == "missing" else [original, original]
+    final.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    with sqlite3.connect(args["database"]) as connection:
+        connection.execute("UPDATE campaign_responses SET details=?", (json.dumps(dict(source_ref=str(reference) + ":1")),))
+    before = args["database"].read_bytes()
+    if contents != "reordered":
+        with pytest.raises(ValueError, match="missing" if contents == "missing" else "duplicated"):
+            export_dataset(**args)
+    else:
+        exported, report = export_dataset(**args)
+        assert len(exported) == 1 and exported[0]["response"] == "Visible retained text"
+        assert exported[0]["source_ref"] == str(final) + ":2"
+        assert exported[0]["indexed_source_ref"] == str(reference) + ":1"
+        assert report["artifact_files_read"] == 1
+    assert args["database"].read_bytes() == before
+
+
 def test_real_fitting_three_tasks_with_locked_group_split():
     pytest.importorskip("sklearn")
     rows = []

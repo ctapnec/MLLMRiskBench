@@ -88,15 +88,38 @@ def export_dataset(*, database: Path, candidates: Path, campaigns: list[str], ju
             if native not in previous["native"]:
                 previous["native"].append(native)
     files = defaultdict(dict)
+    identities = defaultdict(dict)
+    resolved_refs = {}
     for key, row in selected.items():
         details = json.loads(row["details"])
         path, separator, line = details["source_ref"].rpartition(":")
         if not separator or not line.isdigit() or int(line) < 1:
             raise ValueError("Invalid selected response source location")
         files[Path(path)][int(line)] = None
+        identities[Path(path)][int(line)] = key
     for path, wanted in files.items():
         if not path.is_absolute():
             raise ValueError("Response export needs resolved absolute source locations")
+        if not path.exists() and path.name.endswith(".responses.checkpoint.jsonl"):
+            final = path.with_name(path.name.removesuffix(".checkpoint.jsonl") + ".jsonl")
+            by_identity = {identity: number for number, identity in identities[path].items()}
+            # Finalization can reorder rows and removes the checkpoint. Resolve
+            # the same saved output, never its old line number or a new answer.
+            with final.open(encoding="utf-8") as stream:
+                for number, text in enumerate(stream, 1):
+                    if not text.strip():
+                        continue
+                    raw = json.loads(text)
+                    identity = str(raw.get("run_id")) + ":" + str(raw.get("attempt_id"))
+                    original_number = by_identity.get(identity)
+                    if original_number is not None:
+                        if wanted[original_number] is not None:
+                            raise ValueError("Finalized retained response identity is duplicated")
+                        wanted[original_number] = raw
+                        resolved_refs[path, original_number] = f"{final}:{number}"
+            if any(row is None for row in wanted.values()):
+                raise ValueError("A selected finalized retained response is missing")
+            continue
         last_line = max(wanted)
         with path.open(encoding="utf-8") as stream:
             for number, text in enumerate(stream, 1):
@@ -138,7 +161,9 @@ def export_dataset(*, database: Path, candidates: Path, campaigns: list[str], ju
             generation_condition=row["condition_id"], judge_condition=judge,
             prompt=m["prompt"], response=text, label=row["teacher_label"],
             local_condition=native[0], local_label=native[1], truncated=bool(row["truncated"]),
-            source_ref=details["source_ref"], teacher_source=row["teacher_source"], local_source=native[2],
+            source_ref=resolved_refs.get((Path(path), int(line)), details["source_ref"]),
+            indexed_source_ref=details["source_ref"],
+            teacher_source=row["teacher_source"], local_source=native[2],
             output_allowance=details.get("output_allowance"), context_tokens=details.get("context_tokens")))
     rows.sort(key=lambda row: row["id"])
     return rows, dict(status="exported_labelled_static_text", campaigns=campaigns,

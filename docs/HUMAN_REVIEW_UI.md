@@ -1,7 +1,8 @@
 # Human evaluation through Rig Web
 
-Status: the setup and rating wizards are deployed on the production console.
-Focused rig tests and isolated desktop/mobile browser checks pass. Real saved
+Historical acceptance, 14-19 September 2026: the setup and rating wizards were
+deployed on the production console. Focused rig tests and isolated
+desktop/mobile browser checks passed for the recorded cases. Real saved
 local responses and indexed images have also been displayed successfully.
 The indexed-campaign selector, preparation and saved-sample analysis now have
 focused rig acceptance. The real browser flow prepared 8,059 API outputs,
@@ -70,8 +71,10 @@ the independent audit export or overwrite automated campaign judgments.
    Finished campaigns remain available. The setup wizard covers saved results,
    sampling, actual study arrangements and preparation review. Successful
    Runner jobs are discovered from the campaign index. For imported historical
-   campaigns, register the existing combined analysis result set once with a
-   meaningful scope name; its original files remain unchanged. A selected
+   campaigns, select **All indexed measured campaign outputs**; manual source
+   registration is not required when the campaign index contains those outputs.
+   Registering a combined analysis result set is an advanced alternative for
+   results not represented by that index; its original files remain unchanged. A selected
    result set is not automatically the whole campaign or a claim that every
    campaign output is eligible. The preparation page shows actual workload
    before creating the study. Failed preparation cannot create a study.
@@ -97,7 +100,8 @@ the independent audit export or overwrite automated campaign judgments.
 4. Supply individual review links. The rater surface shows only its assigned
    prompt, policy instruction, media, saved response and rubric. It omits model
    and provider identifiers, automated labels, model costs, other raters'
-   answers and control-surface navigation. No metadata in its payload or media
+   answers. Shared console navigation remains present; it does not grant a
+   review link authority to alter campaign controls. No item metadata or media
    URLs should reveal those hidden fields. Response text itself is preserved,
    including any model self-identification; this remains a blinding limitation.
 5. Save drafts automatically, allow explicit independent submission, and

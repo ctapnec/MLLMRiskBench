@@ -69,6 +69,13 @@ completed stages and retains failed attempts. It also handles an interruption
 between stage completion and controller publication. Changed scientific
 settings require a new study. The interface does not silently fill missing
 labels, refit completed work or treat insufficient class support as success.
+If Runner finalized a response checkpoint after indexing it, dataset export
+resolves the same saved output in its final file by response identity, not by
+the old line number. Both indexed and resolved source locations are retained;
+missing or duplicate identities remain errors. This reads only the selected
+response files and makes no generation or judging calls.
+Stats keeps unfinished studies selectable but offers report/figure downloads
+only when their saved report is available.
 
 The CLI equivalent is `python -m experiments.response_svm --study`, with
 `--database`, one or more `--campaign`, `--matched-campaign`,

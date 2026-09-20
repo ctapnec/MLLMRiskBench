@@ -370,6 +370,7 @@ def response(app, query):
         )
     try:
         root, saved, report = load(app, item["key"])
+        available = True
     except (OSError, ValueError, TypeError) as exc:
         body += (
             _ui_template(
@@ -388,7 +389,8 @@ def response(app, query):
         report = {}
         saved = {}
         root = app.results_root / item["key"]
-    rows, protocols, protocol = selected_rows(report, query)
+        available = False
+    rows, protocols, protocol = selected_rows(report, query) if available else ([], [], "")
     metadata = dict(
         study=item["key"],
         teacher=report.get("teacher"),
@@ -406,6 +408,8 @@ def response(app, query):
     )
     export = query.get("export")
     if export:
+        if not available:
+            raise ValueError(_ui_text("svm_stats.saved_results_are_not_available_yet"))
         if export == "csv":
             return 200, "text/csv; charset=utf-8", metrics_csv(rows, metadata)
         if export == "svg":
@@ -469,6 +473,11 @@ def response(app, query):
     )
     # A changed population must not retain an incompatible downstream choice.
     body += "<script>(()=>{const f=document.querySelector('select[name=study]').form;f.elements.campaign_id.addEventListener('change',()=>{f.elements.study.value='';f.elements.protocol.value='';});f.elements.study.addEventListener('change',()=>{f.elements.protocol.value='';});})();</script>"
+    if not available:
+        return (
+            200, "text/html; charset=utf-8",
+            _page(_ui_text("svm_stats.svm_results"), body + "</section>", active=_ui_text("svm_stats.stats")),
+        )
     body += (
         "<p>"
         + html.escape(str(report.get("selected_responses", "unknown")))

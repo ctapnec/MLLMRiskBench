@@ -58,13 +58,13 @@ Notes on the conservative defaults:
   Child Sexual Exploitation) is attached per DataPoint.
 
 AILuminate's official test has its own controlled prompts, grading, scoring,
-and validation process. URA-Bench does not call its outputs “AILuminate scores”;
+and validation process. URA-Bench does not call its outputs "AILuminate scores";
 the labels above are crosswalk annotations only.
 
 ## Attack mechanism
 
-Risk category answers “what harm?” `attack_family` separately records “how was
-the probe delivered?” Relevant families include:
+Risk category answers "what harm?" `attack_family` separately records "how was
+the probe delivered?" Relevant families include:
 
 - single-turn text jailbreak or adversarial suffix;
 - stateful multi-turn escalation;

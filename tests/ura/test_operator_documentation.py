@@ -98,6 +98,25 @@ def test_old_guides_are_short_redirects_not_diverging_recipes():
         assert len(text.splitlines()) <= 20
 
 
+def test_current_docs_do_not_reintroduce_removed_operator_restrictions():
+    review = prose(ROOT / 'docs/HUMAN_REVIEW_UI.md')
+    architecture = prose(ROOT / 'docs/ARCHITECTURE.md')
+    assert 'All indexed measured campaign outputs' in review
+    assert 'manual source\n   registration is not required' in review
+    assert 'answers and control-surface navigation' not in review
+    assert 'Shared console navigation remains present' in review
+    assert 'overlaps are unavailable for Ollama' not in architecture
+    assert 'Legacy overlap metadata does not exclude a live candidate' in architecture
+
+
+def test_current_project_docs_use_plain_ascii_punctuation():
+    problems = []
+    for path in (ROOT / 'docs').glob('*.md'):
+        if not path.name.startswith('HISTORICAL_') and re.search(r'[\u2010-\u2015\u2018\u2019\u201c\u201d]', prose(path)):
+            problems.append(path.name)
+    assert not problems, problems
+
+
 def test_instruction_sequences_have_no_missing_or_restarted_steps():
     text = prose(ROOT / 'docs/SMALL_CAMPAIGNS.md')
     for section in re.split(r'^#{1,6} ', text, flags=re.MULTILINE):

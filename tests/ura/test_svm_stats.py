@@ -5,8 +5,11 @@ import json
 import pytest
 
 from test_operator_operations import app  # noqa: F401
+from test_rig_web_busy_browser import browser as shared_browser
 from experiments.rig_web_app import svm_stats
 from experiments.rig_web_app.workspace_store import activity_role
+
+browser = shared_browser
 
 
 def report(app, name='svm', **changes):
@@ -102,6 +105,27 @@ def test_unfinished_study_does_not_hide_completed_study_selector(app):
     app.db.register_svm_study('pending', 'Pending', [])
     _, _, body = svm_stats.response(app, dict(study='pending'))
     assert b'Saved results are not available yet' in body and b'Finished' in body
+    assert b'Download CSV' not in body and b'Full study report' not in body
+    assert b'unknown selected text answers' not in body
+    for kind in ('csv', 'svg'):
+        with pytest.raises(ValueError, match='not available yet'):
+            svm_stats.response(app, dict(study='pending', export=kind))
+
+
+def test_missing_study_notice_wraps_long_source_paths_on_mobile(app, browser):
+    from experiments.rig_web_app.ui import _STYLE
+    name = 'missing-' + 'x' * 150
+    app.db.register_svm_study(name, 'Unfinished study', [])
+    _, _, body = svm_stats.response(app, dict(study=name, protocol='group_holdout'))
+    page = browser.new_page(viewport=dict(width=390, height=1000))
+    try:
+        page.set_content(body.decode().replace("<link rel='stylesheet' href='/static/style.css'>", '<style>' + _STYLE + '</style>'))
+        notice = page.locator('.notice.amber')
+        assert notice.evaluate('e=>e.scrollWidth<=e.clientWidth+1')
+        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
+        assert page.locator('[name=study]').is_visible()
+    finally:
+        page.close()
 
 
 def test_csv_escapes_spreadsheet_formulas():
