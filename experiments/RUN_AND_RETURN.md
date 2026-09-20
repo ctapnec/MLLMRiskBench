@@ -473,7 +473,9 @@ of an undocumented policy-code abbreviation.
 
 This is the operator path from a clean Linux GPU machine to the evidence bundle
 for the thesis. It covers the broad hosted and local model roster, all twenty-five source converters, the runner-safe external attack bridges, and nine complete
-source-native evaluators. Experiments and the human audit are still pending.
+source-native evaluators. Campaign completion must be established from the
+retained campaign records; this general runbook does not declare their status.
+Independent human assessment remains a separate research activity.
 Preflight, dry-run, diagnostic-canary, and bounded transport-probe artifacts are
 diagnostics, not thesis results.
 

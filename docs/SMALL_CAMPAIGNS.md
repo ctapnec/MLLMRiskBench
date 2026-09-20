@@ -128,6 +128,9 @@ matching. An answer or judgment cannot be copied merely because its input matche
    **Calculate call limits automatically** enabled and manual overrides closed.
    Set `--deadline-seconds` to `3600`. Set **Local process wall-time cap (hours)**
    to `1` for the local example; leave it empty for the API example.
+   An empty local wall-time field means no process wall-time cap. Do not enter
+   `0` or `-1`: neither is an unlimited setting. Keep the call-start deadline
+   positive even when the optional process cap is empty.
 7. Under **Local model serving**, preserve assessed defaults. Leave **Full model
    SHA verification (slow, optional)** unchecked. Leave **Output** automatic;
    the system creates the directory, without translating a campaign name into a path.
@@ -318,6 +321,15 @@ recorded Haiku cost. These dated amounts are not prices for a new selection or
 current purse balances. No model/framework installation was needed.
 
 ## If a step fails or is interrupted
+
+### Review reports an invalid setting
+
+Review keeps your choices in Build and identifies the field to correct. If the
+field is on another tab, browser validation opens that tab. For an older failed
+preparation, return to **Configure in Build**, correct the named choice, save,
+and click **Review campaign** again. Repeatedly resuming an operation with the
+same invalid settings cannot repair it. Do not delete the campaign or its saved
+results to correct an input.
 
 ### A job is active, or failed after saving an answer
 

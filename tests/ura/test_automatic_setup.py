@@ -111,9 +111,13 @@ def test_completed_campaign_review_reuses_original_after_output_and_receipt_refr
     monkeypatch.setattr(app,'_ensure_operation_worker',lambda *a:None)
     form=dict(params,setup_mode='automatic',campaign_flow='on',campaign_collection_cost='1',
               campaign_inputs='fresh',_refresh_setup='yes')
-    status,location,_=app.handle('POST','/build/review',form)
-    assert status==303
-    operation=app._operations[location.rsplit('/',1)[-1]]
+    # Seed historical completed work. This fixture's transport-only route is
+    # not a runnable new campaign; reopening must not re-admit or execute it.
+    from experiments.rig_web_app.campaign_flow import settings
+    saved=app._save_build_campaign(settings(app,app._runtime_builder_params(app._builder_params(form))))
+    key=app._start_operation('campaign',saved)
+    location='/operations/'+key
+    operation=app._operations[key]
     original=json.loads(json.dumps(operation['original_params']))
     operation['status']='complete'
     with app.db._conn:

@@ -39,6 +39,7 @@ from .catalog import (
 
 from .ui import _BUILDER_SCRIPT, _page, _page_tablist, _page_tabpanel
 from .reports import load_pricing, rate_for
+from .builder_validation import builder_field_label
 
 
 class BuilderPageMixin:
@@ -1805,12 +1806,26 @@ class BuilderPageMixin:
             attrs = f" value='{html.escape(current)}'" if current else ""
             ph = f" placeholder='{html.escape(placeholder)}'" if placeholder else ""
             step = " step='any'" if kind == "number" else ""
+            if field in {
+                "max_queries", "max_turns", "lock_stale_seconds",
+                "cap_target", "cap_judge", "cap_http", "local_budget_hours", "deadline",
+            }:
+                step = " step='1' min='1'"
+            elif field == "target_answer_retries":
+                step = " step='1' min='0' max='10'"
+            elif field in {"ideator_pair_limit", "t3cap_limit", "hcap_limit"}:
+                step = " step='1' min='0'"
+            elif field in {"t3cap_sample_seed", "hcap_sample_seed"}:
+                step = " step='1'"
+            elif field == "hcap_cases":
+                step = " step='1' min='1' max='1000'"
+            field_id = "build-field-" + field
             return (
-                f"<div class='fieldcell'><label class='fieldlabel'>"
+                f"<div class='fieldcell'><label class='fieldlabel' for='{field_id}'>"
                 f"{html.escape(label)} "
                 f"<span class='fieldhint'>{html.escape(hint)}</span></label>"
                 f"<input class='wide' type='{kind}'{step} "
-                f"name='{html.escape(field)}'{attrs}{ph}>{err(field)}</div>"
+                f"id='{field_id}' name='{html.escape(field)}'{attrs}{ph}>{err(field)}</div>"
             )
 
         engine_runtime_fields = (
@@ -2410,7 +2425,7 @@ class BuilderPageMixin:
         error_summary = ""
         if errors:
             items = "".join(
-                f"<li><strong>{html.escape(field)}</strong>: {html.escape(message)}</li>"
+                f"<li><strong>{html.escape(builder_field_label(field))}</strong>: {html.escape(message)}</li>"
                 for field, message in sorted(errors.items())
             )
             error_summary = (

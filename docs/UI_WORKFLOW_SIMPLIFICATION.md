@@ -1,6 +1,8 @@
 # Operator workflows
 
-Status: shared campaign execution is deployed and accepted on the rig.
+Shared campaign execution is deployed on the rig. Acceptance applies to the
+recorded scenarios below; the [current flow audit](UI_FLOW_ACCEPTANCE.md) tracks
+the broader re-audit after the 20 September invalid-setting failure.
 Ordinary preparation flows were deployed on 19 September 2026. Direct runs,
 matched hosted collection, local/Haiku judging and personal review now advance
 without manual internal job handoffs. The coverage table below also records
@@ -62,10 +64,17 @@ Use the existing job launcher and stage implementations. Do not introduce a
 second experiment engine or weaken selection, accounting, budget or admission
 semantics. Validate on the rig, including restart, duplicate submissions, stop,
 failed-child handling and the absence of target/judge calls during preparation.
-Update both small-campaign walkthroughs and the Guide only against verified
+Update the combined small-campaign walkthrough and the Guide only against verified
 behavior. A long document is not a substitute for removing operator handoffs.
 
-## Verified behavior
+## Workflow contract
+
+Review validates operator fields before starting background preparation and
+keeps the submitted choices visible when correction is needed. Number inputs
+must reflect backend ranges; an invalid control on a hidden tab is revealed,
+without starting a loading overlay or a request. Background errors retain the
+affected field name. Optional local wall time is blank or a positive whole
+number of hours; neither zero nor -1 means unlimited.
 
 Saving a campaign keeps Build open. Execution calculates target/judge/HTTP
 limits from its projection by default; technical overrides are collapsed.

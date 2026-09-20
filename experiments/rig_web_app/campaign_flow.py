@@ -103,7 +103,8 @@ def settings(app, params):
 def panel(app, params):
     from .builder_haiku_judging import _choices
 
-    escape = lambda value: html.escape(str(value), quote=True)
+    def escape(value):
+        return html.escape(str(value), quote=True)
     saved = params.get("campaign_inputs") == "saved"
     choices = _choices(app)
     judge = params.get("campaign_judge_model", choices[0] if choices else "")
@@ -156,6 +157,15 @@ def advance(app, operation):
             from ura.guardrail_setup import resolve_scoring_settings
 
             params = resolve_scoring_settings(params)
+        if params.get("campaign_inputs", "fresh") == "fresh":
+            errors = app._validate_builder(params, preparation=True)
+            if errors:
+                from .builder_validation import builder_field_label
+
+                raise ValueError("; ".join(
+                    f"{builder_field_label(field)}: {message}"
+                    for field, message in errors.items()
+                ))
         from .campaign_assessment import prepare_values
 
         for kind in ("local", "haiku"):
@@ -177,9 +187,6 @@ def advance(app, operation):
         if params.get("campaign_inputs", "fresh") == "saved":
             kind, snapshot = "matched", None
         else:
-            errors = app._validate_builder(params, preparation=True)
-            if errors:
-                raise ValueError("; ".join(errors.values()))
             params, snapshot, _ = app._capture_execution_config_snapshot(params)
             params = app._bind_execution_config_bundle_identity(params)
             freeze_spending(app, operation, params)
@@ -527,13 +534,35 @@ def progress(app, operation):
             "<p>[[text:campaign_flow.collection_and_selected_assessment_stages_have_finished_coverage]]</p>"
         )
     else:
+        choice_errors = {}
+        if (
+            not operation.get("preparation")
+            and operation["params"].get("campaign_inputs", "fresh") == "fresh"
+        ):
+            try:
+                choice_errors = app._validate_builder(
+                    app._runtime_builder_params(operation["params"]), preparation=True
+                )
+            except (OSError, ValueError):
+                pass  # Retain the original failure when current setup is unavailable.
         body += (
             '<p class="notice amber">'
             + html.escape(operation.get("error") or _ui_text("campaign_flow.campaign_stopped"))
-            + '</p><form class="action-row" method="post" action="/operations/'
-            + operation["id"]
-            + _ui_template('/retry"><button>[[text:campaign_flow.resume_campaign]]</button></form>')
+            + '</p>'
         )
+        if choice_errors:
+            from .builder_validation import builder_field_label
+
+            body += '<ul>' + ''.join(
+                '<li><strong>' + html.escape(builder_field_label(field)) + '</strong>: '
+                + html.escape(message) + '</li>' for field, message in choice_errors.items()
+            ) + '</ul>'
+        else:
+            body += (
+                '<form class="action-row" method="post" action="/operations/'
+                + operation["id"]
+                + _ui_template('/retry"><button>[[text:campaign_flow.resume_campaign]]</button></form>')
+            )
         body += (
             '<p><a href="/build?campaign_id='
             + owner

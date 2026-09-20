@@ -12,7 +12,14 @@ FILES = ['README.md', 'docs/README.md', 'docs/SMALL_CAMPAIGNS.md',
     'docs/CAMPAIGN_WORKSPACES.md', 'docs/UI_WORKFLOW_SIMPLIFICATION.md',
     'docs/OPERATOR_REGRESSION_AUDIT.md', 'docs/RESPONSE_SVM.md',
     'docs/HUMAN_REVIEW_UI.md', 'docs/ARCHITECTURE.md', 'docs/WORKSTATION_ARCHIVE_PLAN.md',
-    'docs/DOCUMENTATION_MAINTENANCE.md', 'experiments/RUN_AND_RETURN.md']
+    'docs/DOCUMENTATION_MAINTENANCE.md', 'docs/UI_FLOW_ACCEPTANCE.md',
+    'experiments/RUN_AND_RETURN.md']
+FILES = sorted(set(FILES) | {
+    str(path.relative_to(ROOT)).replace("\\", "/")
+    for directory in (ROOT / "docs", ROOT / "distro")
+    for path in directory.glob("*.md")
+    if not path.name.startswith("HISTORICAL_")
+})
 
 
 def prose(path):

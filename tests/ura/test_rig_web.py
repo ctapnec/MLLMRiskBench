@@ -2767,7 +2767,9 @@ def test_builder_mode_validation_rejects_before_subprocess(tmp_path: Path) -> No
     assert status == 200 and len(app.jobs) == started
     for field in ("scope", "max_age", "att", "cap_target", "cap_judge",
                   "cap_http", "deadline", "limit", "project_revision"):
-        assert f"<strong>{field}</strong>" in text, field
+        from experiments.rig_web_app.builder_validation import builder_field_label
+
+        assert f"<strong>{builder_field_label(field)}</strong>" in text, field
 
 
 def test_builder_dry_run_composes_and_starts(tmp_path: Path) -> None:

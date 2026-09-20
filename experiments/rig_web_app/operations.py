@@ -12,7 +12,6 @@ import json
 import re
 import threading
 import time
-from pathlib import Path
 from uuid import uuid4
 
 from .ui import _page
@@ -293,7 +292,7 @@ class OperationsMixin:
             dict(operation, root=self._operation_root(operation))
         )
 
-    def _start_operation(self, kind, params, *, snapshot=None):
+    def _start_operation(self, kind, params, *, snapshot=None, create=True):
         if kind not in _TITLES:
             raise ValueError(_ui_text("operations.choose_a_supported_operation"))
         params = dict(params)
@@ -353,6 +352,8 @@ class OperationsMixin:
                     )
                 ):
                     return operation["id"]
+            if not create:
+                return None
             operation = dict(
                 id=uuid4().hex,
                 kind=kind,

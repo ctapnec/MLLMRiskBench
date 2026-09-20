@@ -32,8 +32,9 @@ human-review preparation is separate from generating demonstration outputs.
 ### Approved Flash example - 14 September
 
 The operator approved a small Gemini Flash demonstration, initially estimated
-at approximately 20 matched text/image inputs, with a USD 1.00 Google cap. The latest
-reported Google purse is USD 7.95. This example does not inherit the cancelled
+at approximately 20 matched text/image inputs, with a USD 1.00 Google cap. The
+Google purse reported on 14 September was USD 7.95, not a current balance.
+This example does not inherit the cancelled
 Pro supplement's allocation or inputs automatically. Keep it in a separately
 named demonstration campaign, outside the thesis study's statistical population.
 

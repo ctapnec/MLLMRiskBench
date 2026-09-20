@@ -4975,6 +4975,7 @@ class LifecycleMixin:
                 data = dict(form or {})
                 if (
                     data.get("campaign_flow") == "on"
+                    and data.get("work_kind") != "run"
                     and data.get("mode") == "measured"
                     and (data.get("campaign_id") or data.get("work_kind") == "campaign")
                     and not any(
@@ -4983,10 +4984,27 @@ class LifecycleMixin:
                 ):
                     from .campaign_flow import settings
 
-                    params = settings(
-                        self, self._runtime_builder_params(self._builder_params(data))
-                    )
+                    params = self._runtime_builder_params(self._builder_params(data))
+                    try:
+                        params = settings(self, params)
+                    except ValueError as exc:
+                        return 200, "text/html; charset=utf-8", self._build_page(
+                            prefill=params, errors={"campaign": str(exc)}
+                        )
+                    # Assign automatic paths for a new draft before validating
+                    # it, but never create preparation work for invalid fields.
                     params = self._save_build_campaign(params)
+                    existing = self._start_operation("campaign", params, create=False)
+                    if existing:
+                        # Reopening frozen work is not a request to run it under
+                        # today's hardware/receipt availability or admission.
+                        return 303, "/operations/" + existing, b""
+                    if params.get("campaign_inputs", "fresh") == "fresh":
+                        errors = self._validate_builder(params, preparation=True)
+                        if errors:
+                            return 200, "text/html; charset=utf-8", self._build_page(
+                                prefill=params, errors=errors
+                            )
                     operation_id = self._start_operation("campaign", params)
                     return 303, "/operations/" + operation_id, b""
                 confirm_value = data.pop("confirm", "")

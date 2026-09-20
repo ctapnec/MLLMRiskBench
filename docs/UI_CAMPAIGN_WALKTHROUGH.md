@@ -145,7 +145,8 @@ review links do not grant authority to mutate campaign controls. Wide tables
 scroll within their cards. Action rows and checkbox labels wrap with consistent
 spacing. UI maintenance and regression scope are recorded in
 [Operator workflows](UI_WORKFLOW_SIMPLIFICATION.md) and
-[Operator regression audit](OPERATOR_REGRESSION_AUDIT.md).
+[current UI flow acceptance](UI_FLOW_ACCEPTANCE.md). Dated earlier results remain
+in the [regression record](OPERATOR_REGRESSION_AUDIT.md).
 
 ## Historical demonstration is evidence, not a new recipe
 

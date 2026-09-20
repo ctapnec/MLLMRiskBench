@@ -1660,7 +1660,7 @@
   "catalog.export_deterministic_level_2_json_csv_markdown_broad_tables": "Export deterministic Level-2 JSON/CSV/Markdown broad tables",
   "catalog.export_the_official_jalmbench_parquet_release_for_the_converter": "Export the official JALMBench Parquet release for the converter",
   "catalog.export_the_official_vlsbench_parquet_release_for_the_converter": "Export the official VLSBench Parquet release for the converter",
-  "catalog.final_measured_all_local_process_only_whole_hours_become_a_detach": "Final measured all-local process only. Whole hours become a detached process wall-time cap that terminates and then kills the complete process tree after expiry. Set --deadline-seconds independently for Runner's call-start window.",
+  "catalog.final_measured_all_local_process_only_whole_hours_become_a_detach": "Optional. Enter a positive whole number of hours, or leave empty for no process wall-time cap. Zero and -1 are not unlimited settings. This cap applies only to the final all-local measured process and stops its complete process tree after expiry. Set --deadline-seconds independently for the call-start window.",
   "catalog.fuzzyai_adapter": "FuzzyAI adapter",
   "catalog.giskard_scan_adapter": "Giskard scan adapter",
   "catalog.h4rm3l_0_2_4_in_its_own_explicit_venv": "h4rm3l 0.2.4 in its own explicit venv",

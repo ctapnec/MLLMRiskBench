@@ -19,7 +19,9 @@
 - [Campaign workspaces](CAMPAIGN_WORKSPACES.md): ownership, orchestration,
   publication, recovery, costs and comparison contracts.
 - [Operator workflows](UI_WORKFLOW_SIMPLIFICATION.md) and
-  [regression audit](OPERATOR_REGRESSION_AUDIT.md): automation and verification.
+  [current flow acceptance](UI_FLOW_ACCEPTANCE.md): automation and verification.
+  The [earlier regression audit](OPERATOR_REGRESSION_AUDIT.md) retains dated
+  results, not a blanket acceptance of every current configuration.
 - [Architecture](ARCHITECTURE.md), [schema](SCHEMA.md), [metrics](METRICS.md) and
   [source conformance](SOURCE_CONFORMANCE.md): scientific and technical boundaries.
 

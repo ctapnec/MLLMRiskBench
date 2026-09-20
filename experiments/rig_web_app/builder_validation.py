@@ -4,6 +4,7 @@ from __future__ import annotations
 
 
 from .i18n import template as _ui_template, text as _ui_text
+from .display_labels import label as _ui_label
 
 import hashlib
 import html
@@ -138,6 +139,23 @@ def _local_target_condition(
     if backend == "vllm":
         condition.update({"quantization": quantization, "dtype": dtype})
     return _condition_sha256(condition)
+
+
+def builder_field_label(field: str) -> str:
+    """Keep background validation as actionable as the original form."""
+    if field == "local_budget_hours":
+        return _ui_text("builder_page.local_process_wall_time_cap_hours")
+    return {
+        "cap_target": "--max-total-target-calls",
+        "cap_judge": "--max-total-judge-calls",
+        "cap_http": "--max-total-http-attempts",
+        "deadline": "--deadline-seconds",
+        "max_queries": "--max-queries",
+        "max_turns": "--max-turns",
+        "target_answer_retries": "--target-answer-retries",
+        "lock_stale_seconds": "--lock-stale-seconds",
+        "sample_seed": "--sample-seed",
+    }.get(field, _ui_label(field))
 
 
 class BuilderValidationMixin:

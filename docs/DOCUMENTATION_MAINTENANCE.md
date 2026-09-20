@@ -57,7 +57,16 @@ numbers, technical qualifications and command examples.
    current action names. Explicit CLI recipes and historical procedures can
    retain their technical steps when clearly labelled as such.
 
-The document checks are in tests/ura/test_operator_documentation.py. Run them
+The document checks are in tests/ura/test_operator_documentation.py. Link and
+anchor coverage includes every current document in docs and distro, plus the
+project README and CLI runbook; historical copies are explicitly separate.
+Run them
 on the rig alongside the relevant browser and backend regressions. Review prose
 and preservation semantically as well; automated string/link checks are not a
 proof that all documentation is complete or correct.
+
+Keep acceptance claims scoped and dated. The active checklist belongs in
+[UI flow acceptance](UI_FLOW_ACCEPTANCE.md), while older regression results
+remain a historical record. Provider balances must name their observation date;
+an old balance is not a current allowance. General manuals must not declare a
+campaign pending or complete without consulting its retained records.

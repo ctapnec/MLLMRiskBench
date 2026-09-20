@@ -1270,6 +1270,13 @@ div.innerHTML=\"<input class='wide' type='text' name='att_path\"+n+
 \"<input class='wide' type='text' name='att_sha\"+n+
 (\"' placeholder='\"+[[jshtml:ui.exact_64_hex_sha256]]+\"'>\");
 rows.appendChild(div);refresh();});}
+var automaticCaps=form.querySelector('[name=automatic_caps]');
+function applyAutomaticCaps(){
+['cap_target','cap_judge','cap_http'].forEach(function(name){
+var field=form.querySelector('[name='+name+']');
+if(field){field.disabled=!!(automaticCaps&&automaticCaps.checked);}
+});}
+if(automaticCaps){automaticCaps.addEventListener('change',applyAutomaticCaps);applyAutomaticCaps();}
 form.addEventListener('submit',function(){
 form.querySelector(\"input[name=corpora]\").value=checked('.armbox','data-arm').join(',');
 form.querySelector(\"input[name=api]\").value=checkedKind('api','data-model').join(',');
@@ -1370,6 +1377,21 @@ if(!valid(initial)){initial=tabs[0].getAttribute(\"data-page-tab\");}
 activate(initial);root._activatePageTab=activate;}
 var roots=Array.prototype.slice.call(document.querySelectorAll(\"[data-page-tabs]\"));
 roots.forEach(init);
+// Native form validation must reveal invalid controls on another tab before
+// the browser focuses them. No submission or busy overlay starts for this case.
+var firstInvalid=null;
+document.addEventListener('invalid',function(event){
+var target=event.target;
+if(firstInvalid&&firstInvalid!==target){event.preventDefault();return;}
+if(!firstInvalid){firstInvalid=target;setTimeout(function(){firstInvalid=null;},0);}
+for(var node=target;node&&node!==document;node=node.parentElement){
+if(node.matches&&node.matches('details')){node.open=true;}
+if(node.matches&&node.matches('[data-page-panel]')){
+var root=node.closest('[data-page-tabs]');
+if(root&&root._activatePageTab){root._activatePageTab(node.getAttribute('data-page-panel'));}
+}
+}
+},true);
 function revealHash(){
 roots.forEach(function(root){var panel=hashPanel(root);if(panel&&root._activatePageTab){
 root._activatePageTab(panel.getAttribute(\"data-page-panel\"));}});

@@ -1,5 +1,11 @@
 # Operator regression audit
 
+Historical acceptance record. These results describe their dated revisions,
+settings and exercised scenarios. The [current flow audit](UI_FLOW_ACCEPTANCE.md)
+was reopened on 20 September after a real campaign exposed an invalid-setting
+validation gap. Earlier statements that no findings remained open apply only
+to their recorded pass, not to all present flows or later findings.
+
 ## Scope and execution policy
 
 The current audit covers complete operator workflows, backend execution,
