@@ -134,11 +134,11 @@ def operator_operations(operations, owner):
     ]
 
 
-def operation_contains_job(operations, operation_id, job_id, seen=None):
-    """Follow saved ownership so guidance stays on the parent progress page."""
+def operation_job_ids(operations, operation_id, seen=None):
+    """Read saved job ownership, including nested connection checks, once."""
     seen = set() if seen is None else seen
     if operation_id in seen or operation_id not in operations:
-        return False
+        return set()
     seen.add(operation_id)
     row = operations[operation_id]
     jobs = list(row.get("jobs", [])) + [
@@ -153,12 +153,19 @@ def operation_contains_job(operations, operation_id, job_id, seen=None):
             "haiku_execution",
         )
     ]
-    if job_id in jobs:
-        return True
     children = [row.get("preparation")]
     for connection in row.get("connection_operations", []):
+        jobs.append(connection.get("probe"))
         children.extend((connection.get("preparation"), connection.get("check")))
-    return any(operation_contains_job(operations, child, job_id, seen) for child in children)
+    result = {job_id for job_id in jobs if job_id}
+    for child in children:
+        result.update(operation_job_ids(operations, child, seen))
+    return result
+
+
+def operation_contains_job(operations, operation_id, job_id, seen=None):
+    """Follow saved ownership so guidance stays on the parent progress page."""
+    return job_id in operation_job_ids(operations, operation_id, seen)
 
 
 def campaign_selection(values, *, completed=False):
@@ -1041,33 +1048,77 @@ class OperationsMixin:
         )
 
     def _operation_links(self, owner):
+        from .campaign_flow import ACTIVE
+
         selected = sorted(
-            operator_operations(self._operations, owner), key=lambda row: row.get("created_at", 0)
+            operator_operations(self._operations, owner),
+            key=lambda row: row.get("created_at", 0), reverse=True,
         )
         if not selected:
             return ""
+        states = {}
+        current_jobs = {}
+        for row in selected:
+            current_jobs[row["id"]] = []
+            for job_id in sorted(operation_job_ids(self._operations, row["id"])):
+                job = self.jobs.get(job_id)
+                if job is None:
+                    continue
+                if job_id not in states:
+                    states[job_id] = job.state()
+                if states[job_id] in ACTIVE:
+                    current_jobs[row["id"]].append(job)
+        # An old, still-running workflow must never disappear behind newer history.
+        active = [row for row in selected if row["status"] == "preparing" or current_jobs[row["id"]]]
+        history = [row for row in selected if row not in active]
         body = _ui_template(
-            '<section class="card"><h2>[[text:operations.prepared_and_active_work]]</h2><ul>'
+            '<section class="card" data-operation-work><h2>[[text:operations.prepared_and_active_work]]</h2>'
+            '<p>[[text:operations.work_list_explanation]]</p><ul>'
         )
-        for row in selected[-8:][::-1]:
+        for row in active + history[:8]:
+            jobs = current_jobs[row["id"]]
+            status = row["status"]
+            executed = row.get("execution_job")
+            if status == "ready" and executed in states:
+                status = states[executed]
+            elif status == "preparing" and row.get("execution_authorized"):
+                status = "running"
             action = (
                 _ui_text("operations.review_and_start")
-                if row["status"] == "ready"
+                if status == "ready"
                 else _ui_text("operations.view_progress")
-                if row["status"] in {"preparing", "complete"}
+                if status in ACTIVE | {"preparing", "complete"}
                 else _ui_text("operations.inspect_problem")
             )
             body += (
                 "<li>"
                 + html.escape(_TITLES[row["kind"]])
                 + " - "
-                + html.escape(_ui_label(row["status"]))
+                + html.escape(_ui_label(status))
                 + ' - <a href="/operations/'
                 + row["id"]
                 + '">'
                 + action
-                + "</a></li>"
+                + "</a>"
             )
+            if row in active:
+                labels = self._operation_labels(row)
+                stage = labels[min(row["step"], len(labels) - 1)]
+                child = self._operations.get(row.get("preparation"), row)
+                if child.get("connection_operations") and not child.get("connections_complete"):
+                    stage = _ui_text("operations.connection_checks")
+                body += '<p>' + html.escape(_ui_text("operations.current_stage", stage=stage)) + '</p>'
+                if jobs:
+                    body += '<ul>'
+                    for job in jobs:
+                        body += '<li><a href="/jobs/' + html.escape(job.job_id) + '">' + html.escape(
+                            _ui_text("operations.active_job", work=self._job_work_label(job),
+                                     status=_ui_label(states[job.job_id]), job=job.job_id)
+                        ) + '</a></li>'
+                    body += '</ul>'
+                else:
+                    body += '<p>' + html.escape(_ui_text("operations.between_stages")) + '</p>'
+            body += '</li>'
         return body + "</ul></section>"
 
     def _finish_probe_automatically(self, job):

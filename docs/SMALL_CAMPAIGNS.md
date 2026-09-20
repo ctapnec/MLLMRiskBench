@@ -183,7 +183,11 @@ selected local assessment, selected Haiku assessment and publication.
 Return through **Campaigns -> your campaign name -> Overview -> Prepared and
 active work**, or **Configure in Build -> General -> Prepared and active work**.
 Select **View progress**, or **Review and start** if execution has not begun.
-Reopening does not repeat completed work.
+Active workflows appear first with their **Current stage** and links to running
+or retry-waiting jobs. A connection probe is active work, but is not yet measured
+collection. Recent finished/failed workflows follow below. This list is a
+snapshot when the page opens; **View progress** follows the stages automatically.
+Reopening a workflow or job does not repeat completed work.
 **Review campaign** also reopens the existing result when its choices and
 configured generation settings are unchanged. Automatically discovered connection
 checks and output-folder numbering do not request another experiment. Change the

@@ -58,7 +58,10 @@ transferable unless their actual delivered prompts are replayed.
 
 Open **Campaigns -> your campaign -> Overview -> Prepared and active work**,
 or return through **Configure in Build -> General**. Follow the parent campaign,
-not its internal preparation or connection-check entries.
+not separate internal preparation tasks. The active workflow is listed first,
+with its current stage and running/waiting job links; recent finished history
+follows. This summary reflects the page load. **View progress** opens the
+automatically updating parent page. Job links inspect work without restarting it.
 
 **Stop campaign** stops active work and prevents later handoffs.
 **Resume campaign** continues the affected stage using saved checkpoints.
