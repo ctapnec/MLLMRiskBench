@@ -1549,7 +1549,7 @@ navigate(form.getAttribute('data-busy')||[[js:ui.submitting]]);cancelled(event);
 ['keydown','change','input'].forEach(function(name){document.addEventListener(name,function(event){
 if(busy()){block(event);}},true);});
 window.addEventListener('beforeunload',function(event){navigate([[js:ui.loading_page]]);cancelled(event);});
-window.addEventListener('pageshow',reset);
+window.addEventListener('pageshow',function(event){if(event.persisted){reset();}});
 })();""")
 
 _BUSY_OVERLAY = (

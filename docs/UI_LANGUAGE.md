@@ -89,6 +89,13 @@ independent of the UI catalog and can still execute directly.
    `tests/ura/test_rig_web_language_boundaries.py` checks direct HTML label
    boundaries and exercises campaign navigation with special characters in
    display names. Escape headings and tab labels too, not only form values.
+   `tests/ura/test_human_review_requests_browser.py` exercises actual review
+   requests with delayed replies, HTTP errors, network failure, timeout and
+   unreadable responses. It checks duplicate prevention, retained choices,
+   localized feedback and recovery after a failed save. Review actions use
+   stable data attributes, never a translated button's wording. Test initial
+   page loading too: a normal `pageshow` must not dismiss an active request's
+   spinner; restoring a page from browser history must release navigation state.
 4. Exercise the relevant real page and its errors, loading states and recovery
    controls. Language work must not change execution semantics or research data.
 
