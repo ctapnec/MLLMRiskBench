@@ -1898,11 +1898,19 @@ def test_detached_redactor_keeps_logging_across_console_close_and_restart(
     repo = tmp_path / "repo"
     repo.mkdir()
     script = repo / "restart_runner.py"
+    release = repo / "release"
+    checkpoint = repo / "ready"
     script.write_text(
         "import sys,time\n"
+        "from pathlib import Path\n"
         "value=sys.argv[sys.argv.index('--model-acquisition-store')+1]\n"
         "print('before:'+value, flush=True)\n"
-        "time.sleep(3)\n"
+        "Path(__file__).with_name('ready').touch()\n"
+        "release=Path(__file__).with_name('release')\n"
+        "deadline=time.monotonic()+30\n"
+        "while not release.exists():\n"
+        " if time.monotonic()>deadline: raise RuntimeError('Test release timed out')\n"
+        " time.sleep(0.02)\n"
         "print('after:'+value, flush=True)\n",
         encoding="utf-8",
     )
@@ -1923,22 +1931,34 @@ def test_detached_redactor_keeps_logging_across_console_close_and_restart(
             state_dir=state,
             repo_root=repo,
             commands={"run_matrix": command},
+            gpu_hardware={},
+            system_hardware={},
         )
 
     first = new_app()
-    job = first.start_job(
-        "run_matrix", {"--model-acquisition-store": str(private_store)}
-    )
-    time.sleep(0.2)
-    started = time.monotonic()
-    first.close()
-    assert time.monotonic() - started < 1.5
-    assert first._log_capture_workers == {}
-
-    restarted = new_app()
+    restarted = None
+    closed = False
     try:
+        job = first.start_job(
+            "run_matrix", {"--model-acquisition-store": str(private_store)}
+        )
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if checkpoint.exists():
+                break
+            time.sleep(0.02)
+        else:
+            pytest.fail("detached child did not reach the restart checkpoint")
+        first.close()
+        closed = True
+        # Test detachment itself, not host scheduling against a 1.5s stopwatch.
+        # Waiting for the child here would consume its release deadline and fail.
+        assert job.process.poll() is None, "console close waited for the child"
+        assert first._log_capture_workers == {}
+        restarted = new_app()
         restored = restarted.jobs[job.job_id]
         assert restored.state() == "running"
+        release.touch()
         log_path = restored.directory / "stdout.log"
         deadline = time.time() + 10
         while time.time() < deadline:
@@ -1952,7 +1972,11 @@ def test_detached_redactor_keeps_logging_across_console_close_and_restart(
         assert str(private_store) not in text
         assert str(private_store).replace("\\", "/") not in text
     finally:
-        restarted.close()
+        release.touch()
+        if not closed:
+            first.close()
+        if restarted is not None:
+            restarted.close()
 
 
 def test_hosted_judge_sampling_and_data_transfer_are_fail_closed_in_builder(
