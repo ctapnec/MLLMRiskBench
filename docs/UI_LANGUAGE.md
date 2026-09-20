@@ -86,6 +86,9 @@ independent of the UI catalog and can still execute directly.
    Keep `data-state`, option values and ownership decisions untranslated; escape
    the visible label separately. Include single-word work descriptions and
    failure/preparation states, not only successful campaigns.
+   `tests/ura/test_rig_web_language_boundaries.py` checks direct HTML label
+   boundaries and exercises campaign navigation with special characters in
+   display names. Escape headings and tab labels too, not only form values.
 4. Exercise the relevant real page and its errors, loading states and recovery
    controls. Language work must not change execution semantics or research data.
 

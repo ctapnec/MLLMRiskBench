@@ -267,8 +267,9 @@ def test_reconciled_campaign_state_overrides_stale_running_runtime_event(
         "<form method='post' action='/build' id='builder'>", 1
     )[0]
     assert "Install running" not in runtime_html
+    expected_label = {"orphaned": "Orphaned", "unknown": "Unknown", "failed": "Failed", "partial": "Partial"}[campaign_status]
     assert (
-        f"<span class='badge {expected_tone}'>Install {campaign_status}</span>"
+        f"<span class='badge {expected_tone}'>Install {expected_label}</span>"
         in runtime_html
     )
     assert "this action is not reported as live" in runtime_html

@@ -316,7 +316,7 @@ def test_internal_diagnostics_never_become_separate_operator_tasks(app,monkeypat
     owner=operation['params']['campaign_id']
     assert [row['id'] for row in operator_operations(app._operations,owner)]==[operation['id']]
     links=app._operation_links(owner)
-    assert 'Campaign - complete' in links and 'Review and start' not in links
+    assert 'Campaign - Complete' in links and 'Review and start' not in links
     assert probe['id'] not in links and check['id'] not in links
     steps,stage,notice,_=campaign_guide._guidance(app,dict(operation['params'],work_kind='campaign'))
     assert steps[stage][0]=='Results' and 'Campaign is complete' in notice

@@ -2469,7 +2469,7 @@ def test_jobs_date_controls_and_external_indeterminate_presentation_match_ui(
     assert "targetfilters job-date-filters" in jobs
     assert jobs.count("type='datetime-local'") == 2
     assert ".job-date-filters input[type=datetime-local]" in style
-    assert "<span class='badge amber'>external, unknown</span>" in dashboard
+    assert "<span class='badge amber'>external, Unknown</span>" in dashboard
     assert "running state cannot be verified" in dashboard
     assert "External running state is a task-log report" not in dashboard
     assert "reported running" not in (jobs + dashboard).lower()

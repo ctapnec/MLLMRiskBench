@@ -301,7 +301,7 @@ def _comparison_body(db, campaign, query):
     for side, owner in (("left", campaign), ("right", query.get("right_campaign", ""))):
         form += (
             "<fieldset class='comparison-condition'><legend>"
-            + _ui_label(side)
+            + html.escape(_ui_label(side))
             + _ui_template(" [[text:workspace_comparison.condition_2]]</legend>")
         )
         if side == "right":

@@ -131,7 +131,7 @@ class HumanReviewPagesMixin:
                 else _ui_text("human_review_pages.independent_study")
             )
             + "; "
-            + _ui_label(r["mode"])
+            + html.escape(_ui_label(r["mode"]))
             + ")</li>"
             for r in self._human_store().studies(campaign)
         )
@@ -224,7 +224,7 @@ class HumanReviewPagesMixin:
         )
         qualifications = "".join(
             "<label>"
-            + _ui_label(k)
+            + html.escape(_ui_label(k))
             + _ui_template(
                 " [[text:human_review_pages.correct_answers_out_of_20]]<select name='correct_"
             )
@@ -251,7 +251,8 @@ class HumanReviewPagesMixin:
                 "<section class='review-card'><h2>[[text:human_review_pages.review_progress]]</h2><dl>"
             )
             + "".join(
-                "<dt>" + _ui_label(k) + "</dt><dd>" + str(v) + "</dd>" for k, v in counts.items()
+                "<dt>" + html.escape(_ui_label(k)) + "</dt><dd>" + str(v) + "</dd>"
+                for k, v in counts.items()
             )
             + "</dl><p>"
         )

@@ -230,7 +230,7 @@ def response(app, query):
     for side in ("left", "right"):
         body += (
             '<label class="campaign-field">'
-            + _ui_label(side)
+            + html.escape(_ui_label(side))
             + _ui_template(' [[text:stats_jobs.job]]<select name="')
             + side
             + _ui_template(

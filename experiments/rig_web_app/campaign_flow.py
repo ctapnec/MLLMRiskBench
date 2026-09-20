@@ -559,7 +559,7 @@ def progress(app, operation):
         if summary:
             body += (
                 '<section class="card"><h2>'
-                + _ui_label(kind)
+                + html.escape(_ui_label(kind))
                 + _ui_template(" [[text:campaign_flow.assessment_coverage]]</h2><p>")
                 + str(summary["selected_outputs"])
                 + _ui_template(" [[text:campaign_flow.selected_answers]]</p><ul>")

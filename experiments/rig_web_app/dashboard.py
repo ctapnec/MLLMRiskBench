@@ -442,7 +442,7 @@ class DashboardMixin:
                 )
                 + f"</td>{token_cells}{cost_cell}</tr>"
             )
-        heads = "".join(f"<th>{_ui_label(c)}</th>" for c in _TOKEN_CATEGORIES)
+        heads = "".join(f"<th>{html.escape(_ui_label(c))}</th>" for c in _TOKEN_CATEGORIES)
         unindexed = not detail and self._has_completion_markers()
         if detail:
             detail_table = (
@@ -2313,7 +2313,7 @@ class DashboardMixin:
                 parts.append(
                     (
                         "<h4>"
-                        + f"{_ui_label(judge)}"
+                        + f"{html.escape(_ui_label(judge))}"
                         + ": "
                         + f"{outcome['decided']}"
                         + _ui_text("dashboard.decided")
@@ -2380,7 +2380,7 @@ class DashboardMixin:
                 parts.append(
                     (
                         "<p>"
-                        + f"{_ui_label(judge)}"
+                        + f"{html.escape(_ui_label(judge))}"
                         + ": "
                         + f"{estimate(rate)}"
                         + "; "

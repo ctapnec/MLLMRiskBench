@@ -284,7 +284,7 @@ def render(data, campaign, query):
         if ranked(condition):
             content += (
                 "<p>"
-                + _ui_label(side)
+                + html.escape(_ui_label(side))
                 + _ui_text("workspace_comparison_many.condition_rule")
                 + escape(CONDITION_MODES[condition])
                 + _ui_template(
@@ -303,7 +303,7 @@ def render(data, campaign, query):
             if skipped:
                 content += (
                     "<details><summary>"
-                    + _ui_label(side)
+                    + html.escape(_ui_label(side))
                     + (
                         ": "
                         + f"{len(skipped)}"
@@ -336,7 +336,7 @@ def render(data, campaign, query):
                 '<p class="notice amber" title="'
                 + escape(", ".join(models), quote=True)
                 + '">'
-                + _ui_label(side)
+                + html.escape(_ui_label(side))
                 + ": "
                 + reason
                 + _ui_text("workspace_comparison_many.for")

@@ -626,7 +626,7 @@ class WorkspacePagesMixin:
         return _page(
             _ui_label(context),
             "<h1>"
-            + _ui_label(context)
+            + html.escape(_ui_label(context))
             + "</h1>"
             + (self._work_view_tabs(context, "campaigns") if context in {"jobs", "stats"} else "")
             + _ui_template(
@@ -663,7 +663,7 @@ class WorkspacePagesMixin:
                 + "'"
                 + (" aria-current='page'" if tab == section else "")
                 + ">"
-                + _ui_label(tab)
+                + html.escape(_ui_label(tab))
                 + "</a>"
                 for tab in sections
             )
@@ -807,7 +807,7 @@ class WorkspacePagesMixin:
             + navigation
             + (self._operation_links(campaign_id) if section in {"overview", "activity"} else "")
             + "<section class='card'><h2>"
-            + _ui_label(section)
+            + html.escape(_ui_label(section))
             + "</h2>"
             + content
             + "</section>",
