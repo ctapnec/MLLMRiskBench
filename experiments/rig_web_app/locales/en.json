@@ -1,4 +1,6 @@
 {
+  "archive_view.read_only": "Archive view: browsing copied results. Editing, job execution, model downloads and automatic continuation are disabled.",
+  "archive_view.cli_help": "Browse a copied archive without resuming jobs, preparing work or accepting edits.",
   "analysis_summary.analysis_is_not_complete_open_its_job_for_progress_or_recovery": "Analysis is not complete. Open its job for progress or recovery.",
   "analysis_summary.analysis_results": "Analysis results",
   "analysis_summary.dataset_and_exclusions": "Dataset and exclusions",

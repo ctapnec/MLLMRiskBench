@@ -198,6 +198,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--state-dir", type=Path, default=Path("runs") / "rig-web")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8642)
+    parser.add_argument("--archive-view", action="store_true", help=_ui_text("archive_view.cli_help"))
     parser.add_argument(
         "--runner-root",
         type=Path,
@@ -233,6 +234,9 @@ def main(argv: list[str] | None = None) -> int:
     runner_options = (
         {"repo_root": args.runner_root.resolve(strict=True)} if args.runner_root else {}
     )
+    runner_options["archive_view"] = args.archive_view
+    if args.archive_view and args.reindex:
+        parser.error(_ui_text("archive_view.read_only"))
     if args.verify_artifact_sha256 and not args.reindex:
         parser.error(_ui_text("server.verify_artifact_sha256_requires_reindex"))
     if args.check_database:

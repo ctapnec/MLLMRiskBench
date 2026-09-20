@@ -106,7 +106,9 @@ class LifecycleMixin:
         system_hardware: Mapping[str, Any] | None = None,
         ollama_service: OllamaService | None = None,
         framework_runtime_service: FrameworkRuntimeService | None = None,
+        archive_view: bool = False,
     ) -> None:
+        self.archive_view = archive_view
         self.results_root = results_root
         self.state_dir = state_dir
         self.repo_root = repo_root
@@ -181,8 +183,9 @@ class LifecycleMixin:
         )
         self.db = ConsoleDB(state_dir / "console.db", repo_root=self.repo_root)
         self._restore_jobs()
-        self._restore_model_acquisition_workflows()
-        self._recover_unrecorded_runs()
+        if not self.archive_view:
+            self._restore_model_acquisition_workflows()
+            self._recover_unrecorded_runs()
         self._restore_operations()
 
     def close(self) -> None:
@@ -261,6 +264,8 @@ class LifecycleMixin:
                 continue
             job, stored = self._job_from_db_row(row)
             self.jobs[job_id] = job
+            if self.archive_view:
+                continue
             self._restore_job_execution(job)
             if job.state() in {"complete", "failed", "stopped", "interrupted"}:
                 self._publish_direct_hosted_job(job)
@@ -269,6 +274,8 @@ class LifecycleMixin:
 
     def _restore_job_execution(self, job: Job) -> None:
         """Recover process ownership or a command's durable terminal result."""
+        if self.archive_view:
+            return
         from .job_runtime import RecoveredProcess, read_state
 
         record = read_state(job.directory)
@@ -491,6 +498,8 @@ class LifecycleMixin:
         being lost.
         """
 
+        if self.archive_view:
+            return
         pin = os.environ.get("REF_URA", "")
         automatic_ollama_readiness: list[Job] = []
         for job in list(self.jobs.values()):
@@ -3551,6 +3560,8 @@ class LifecycleMixin:
         execution_snapshot: Mapping[str, bytes] | None = None,
         campaign_id: str = "",
     ) -> Job:
+        if self.archive_view:
+            raise ValueError(_ui_text("archive_view.read_only"))
         bound_campaign = str((builder_params or {}).get("campaign_id", ""))
         if campaign_id and bound_campaign and campaign_id != bound_campaign:
             raise ValueError(_ui_text("lifecycle.campaign_differs_from_the_reviewed_build_launch"))
@@ -4282,6 +4293,22 @@ class LifecycleMixin:
     # -- request handling --------------------------------------------------
 
     def handle(
+        self,
+        method: str,
+        target: str,
+        form: Mapping[str, str] | None = None,
+    ) -> tuple[int, str, bytes]:
+        if self.archive_view and method != "GET":
+            return 403, "text/plain; charset=utf-8", _ui_text("archive_view.read_only").encode()
+        status, content_type, body = self._handle_request(method, target, form)
+        if self.archive_view and content_type.startswith("text/html"):
+            notice = '<aside class="notice blue" role="status">' + html.escape(
+                _ui_text("archive_view.read_only")
+            ) + '</aside>'
+            body = re.sub(rb'(<body[^>]*>)', lambda match: match[0] + notice.encode(), body, count=1)
+        return status, content_type, body
+
+    def _handle_request(
         self,
         method: str,
         target: str,

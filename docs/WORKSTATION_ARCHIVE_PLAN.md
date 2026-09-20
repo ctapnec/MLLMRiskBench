@@ -9,8 +9,41 @@ an archive transfer or workstation execution has already passed acceptance.
    Use the same retained inputs, seed and replay conditions for comparison.
    Keep demonstration results separate from the thesis study populations.
 3. Let the operator reproduce those small examples using the documented UI flow.
-4. Transfer the completed experiment archive and console state to Windows only
-   after path relocation, media, statistics and export acceptance succeeds.
+4. Copy the completed experiment archive and console state into a separate
+   workstation directory. Accept path resolution, media, statistics and exports
+   before retiring the rig from the browsing and analysis workflow.
+
+## Workstation copy - 20 September 2026
+
+The operator completed the local demonstration and explicitly waived another
+hosted demonstration. The next task is copying retained data, not generating
+another campaign. The rig originals are to remain intact.
+
+The selected copy contains 98,057 files (13.1 GiB), compressed into 14 resumable
+parts totaling 1.63 GiB. Selection includes the console's consistent SQLite
+backup, campaign and demonstration results, referenced engineering artifacts,
+judgments, recoveries, SVM reports, human/Astra review state and referenced media.
+Unrelated regression trees, model weights, framework environments, provider
+secrets and live console process logs are not part of the transfer. Historical
+failed records are retained rather than filtered out of the evidence.
+
+The workstation's existing Ubuntu environment under WSL provides the Linux
+filesystem semantics used by retained paths. Local directory mounts preserve
+those paths without rewriting prompts, answers, scientific identities or stored
+accounting. Only the lightweight console dependencies are needed for browsing.
+
+The console's `--archive-view` option disables mutation requests, direct job
+launches, process recovery, automatic preparation and acquisition continuation.
+It preserves historical jobs and operations for inspection and leaves result
+exports available. An archive is not a new execution host simply because its
+old preparation state is present. Keep the compressed copy unchanged while the
+extracted working copy supplies the local console's derived caches.
+
+Acceptance requires compressed-stream integrity, archive member counts, file
+sizes, SQLite record counts and actual local UI/media/export checks. It does not
+repeat model-weight hashing, reinstall framework runtimes or make paid calls.
+Transfer and workstation UI acceptance are in progress; this paragraph is not
+a claim that either has completed.
 
 ## Small UI demonstrations
 

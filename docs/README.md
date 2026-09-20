@@ -14,6 +14,8 @@
 ## Administration and development
 
 - [Installation](../distro/README.md): environments, managed runtimes and services.
+- [Workstation archive](WORKSTATION_ARCHIVE_PLAN.md): copying retained results,
+  preserving paths and browsing without restarting rig work.
 - [Run and return](../experiments/RUN_AND_RETURN.md): CLI equivalents; dated
   campaign recipes are not extra tasks in the current UI.
 - [Campaign workspaces](CAMPAIGN_WORKSPACES.md): ownership, orchestration,

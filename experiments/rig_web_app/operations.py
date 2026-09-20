@@ -278,7 +278,7 @@ class OperationsMixin:
                 except (OSError, ValueError, KeyError, TypeError):
                     continue
         for value in self._operations.values():
-            if value["status"] == "preparing":
+            if value["status"] == "preparing" and not self.archive_view:
                 self._ensure_operation_worker(value["id"])
 
     def _operation_root(self, operation):
