@@ -66,6 +66,17 @@ def test_help_does_not_change_cli_or_projection_and_never_applies_to_single_runs
         app._builder_params(dict(guided, campaign_guide='yes'))
 
 
+def test_recovery_guide_covers_rejection_before_any_job_exists(app):
+    params = app._save_build_campaign(draft(campaign_guide='on'))
+    steps, _, _, _ = campaign_guide._guidance(app, params)
+    recovery = next(step for step in steps if step[0] == 'Recovery')
+    assert 'before a job starts' in recovery[2]
+    assert 'Save campaign and Review campaign again' in recovery[2]
+    assert 'Do not retry unchanged invalid settings' in recovery[2]
+    assert ('Change campaign settings', '/build?campaign_id=' + params['campaign_id'] + '#build-general') in recovery[3]
+    assert not app.jobs
+
+
 @pytest.mark.parametrize('state,role,expected', [
     ('running', 'collection', 'Run'), ('failed', 'judging', 'Recovery'),
     ('complete', 'collection', 'Judge'), ('complete', 'judging', 'Results'),

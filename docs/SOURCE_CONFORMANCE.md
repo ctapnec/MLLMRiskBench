@@ -5,6 +5,11 @@ acquired benchmark files and a measured Runner grid. It is one compact JSON
 receipt, not a download manager, general provenance database, or workflow
 engine.
 
+This is the administrator/developer procedure for admitting new or changed
+source material. A normal UI campaign reuses its installed source configuration
+and current admission record automatically. Do not repeat source acquisition or
+manual receipt authoring merely to create another campaign with unchanged data.
+
 The checked-in source-instance example says how logical arms map to converters
 and environment locators. It does **not** show what the operator actually
 acquired. After acquisition, copy it to the ignored local registry and configure
@@ -57,20 +62,22 @@ Operator-local source-conformance receipts and engineering logs remain ignored
 diagnostics. They are not committed repository material, current admission,
 usable thesis evidence, or authority for a software/source revision. A previous
 26-entry diagnostic audit found no new issue in 19 entries, but those entries
-remain historical traceability only. Six mapping reviews are superseded pending a fresh
-observation and review: `siuo_release`, `vlsbench_release`,
+remain historical traceability only. At that audit, six mapping reviews required
+new observations and review: `siuo_release`, `vlsbench_release`,
 `mllmguard_position_swapping`, `mllmguard_noise_injection`,
 `videosafetybench_benign_query`, and `videosafetybench_harmful_query`.
 
-JALMBench is a separate upstream-accounting gap: its historical consumed
-manifest has 220,240 rows, while upstream discovered and text-only-excluded
-counts remain `CANNOT-VERIFY` until a new exact exporter summary is retained.
+JALMBench had a separate upstream-accounting gap: its historical consumed
+manifest had 220,240 rows, while upstream discovered and text-only-excluded
+counts were `CANNOT-VERIFY` without a new exact exporter summary.
 VLSBench overlaps both groups; its evidenced refresh is 2,241 discovered, 2,240
 accepted, one empty-instruction exclusion, and zero rejected-invalid rows, and
-still requires the exact retained summary. Thus seven unique historical entries
-need action. Their source-to-input and conversion mappings remain traceability;
-do not edit the old receipt. Produce new observations, reviews, summaries, and
-receipt bytes for current RUN-002 admission.
+required its exact retained summary. Thus seven unique historical entries
+needed action at that point. Their source-to-input and conversion mappings
+remain traceability; do not edit the old receipt. This historical finding does
+not describe the admission status of a later campaign. Inspect the current
+selected receipt and its source bindings before deciding whether any new
+observation, review or summary is needed.
 
 ## Evidence boundary
 

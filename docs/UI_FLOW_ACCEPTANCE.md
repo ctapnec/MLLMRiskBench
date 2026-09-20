@@ -55,8 +55,35 @@ fault injection; name that substitution in the evidence.
   Anthropic regression allowance, not a fresh allowance for every round.
 
 Current execution evidence is under `runs/engineering/ui-flow-audit-20260920` on
-the rig. Completion of this checklist requires the recorded results; this file
-does not assert that pending acceptance has passed.
+the rig. Exact results and deployed revisions belong to findings RA-782 and
+RA-783 in the development ledger, not to an unqualified assertion that every
+possible model, source and external failure combination has been executed.
+
+## Regression map
+
+| Workflow family | Maintained automated coverage | Real acceptance in this audit |
+| --- | --- | --- |
+| Campaign and standalone choices | `test_campaign_validation_boundary`, `test_unified_campaign_flow`, `test_automatic_setup`, `test_builder_scope_browser` | New local text/image, fresh hosted text and saved-input hosted campaigns; standalone offline run |
+| Preparation, capture, stop and resume | `test_operator_operations`, `test_automatic_analysis`, supervisor/lifecycle tests | Automatic handoffs in the three campaigns; failed SVM recovery and completed-work reopening |
+| Saved-output assessment | `test_campaign_assessment`, retained judging executor tests | Local and Haiku assessment on each new measured answer; no regeneration for later assessment |
+| Results, comparison, costs and exports | `test_workspace_comparison*`, `test_comparison_insights*`, workspace publication/accounting tests | New matched-input comparison, five chart measures, CSV/SVG downloads and cost totals reconciled against indexed rows |
+| Human review | `test_human_review*` | Saved prompt/image display, wizard navigation and unrated personal CSV; synthetic ratings/roles/conflicts remain isolated tests |
+| Response SVM | `test_response_svm*`, `test_automatic_analysis`, `test_svm_stats` | New study over saved answers, finalized-checkpoint failure recovery and an explicit insufficient-group outcome |
+| Shared UI and configuration | `test_rig_web_busy_browser`, `test_rig_web_language*`, `test_operator_navigation`, configuration tests | Guide/menu destinations and tabs at desktop/mobile widths; actual failed campaign and invalid-form controls after deployment |
+| Documents | `test_operator_documentation` | Follow the combined guide; review current versus historical instructions and preserved qualifications |
+
+The patterns above name tests in `tests/ura` unless the executor/lifecycle test
+lives in `tests/experiments`. Run the complete suite with the installed rig
+environment and its Chromium browser dependency available. Do not count a
+browser test as covered when the browser dependency caused it to skip.
+
+Destructive installation scenarios, third-party outages, provider error
+responses, independent reviewer roles and conflicting submissions use isolated
+integration/browser tests. They do not require reinstalling working runtimes,
+spending on every provider or manufacturing human research ratings. Windows-only
+process/junction cases are not executed on the Linux rig and remain explicit
+skips. The small real runs establish the documented workflows for their selected
+models and inputs, not scientific coverage of every supported framework.
 
 ## Operator documents
 

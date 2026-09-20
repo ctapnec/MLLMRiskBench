@@ -4,12 +4,13 @@ import json
 
 import pytest
 
-from test_operator_operations import app  # noqa: F401
+from test_operator_operations import app as operation_app
 from test_rig_web_busy_browser import browser as shared_browser
 from experiments.rig_web_app import svm_stats
 from experiments.rig_web_app.workspace_store import activity_role
 
 browser = shared_browser
+app = operation_app
 
 
 def report(app, name='svm', **changes):

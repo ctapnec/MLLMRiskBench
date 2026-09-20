@@ -102,7 +102,8 @@ def dataset_fixture(tmp_path):
     c.executemany("INSERT INTO campaign_judgments VALUES (?,?,?,?,?,?)", [
         ("campaign", "run-1:attempt-1", "haiku", "valid", "violation", "haiku.json:1"),
         ("campaign", "run-1:attempt-1", "local-cascade-1", "valid", "safe", "local.json:1")])
-    c.commit(); c.close()
+    c.commit()
+    c.close()
     candidates = tmp_path / "candidates.json"
     candidates.write_text(json.dumps([dict(input_identity_sha256="input", modality="text", framework="replay",
         corpus="corpus", source="source", source_cluster_id="cluster", source_policy=None,

@@ -339,6 +339,7 @@ def _guidance(app, params):
                 "campaign_guide.open_the_original_job_and_read_its_error_and_saved_outputs_contin"
             ),
             [
+                (_ui_text("campaign_flow.change_campaign_settings"), link("general")),
                 (
                     _ui_text("campaign_guide.inspect_campaign_jobs"),
                     "/jobs?campaign_id=" + owner if owner else "/jobs",
