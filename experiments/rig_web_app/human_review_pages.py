@@ -208,7 +208,11 @@ class HumanReviewPagesMixin:
             "<li>"
             + html.escape(r["id"])
             + " - "
-            + r["role"]
+            + html.escape(
+                _ui_text("human_review_pages.independent_rater")
+                if r["role"] == "rater"
+                else _ui_text("human_review_pages.adjudicator")
+            )
             + (
                 _ui_text("human_review_pages.withdrawn")
                 if r["withdrawn"]

@@ -9,7 +9,7 @@ import pytest
 
 from experiments.rig_web_app import display_labels, ui
 from test_operator_operations import app  # noqa: F401
-from test_human_review_ui import prepared
+from test_human_review_ui import prepared, qualification
 
 # Imported pytest fixtures deliberately share names with test parameters.
 # ruff: noqa: F811
@@ -112,4 +112,44 @@ def test_review_mode_qualifications_and_progress_escape_labels(app, monkeypatch,
     body = raw.decode()
     assert status == 200 and html.escape(sentinel) in body and sentinel not in body
     assert store.study(study)["mode"] == "common"
+    assert store.summary(study)["counts"]["submitted"] == 0
+
+
+@pytest.mark.parametrize(
+    "role,key", [("rater", "independent_rater"), ("adjudicator", "adjudicator")]
+)
+def test_review_members_use_the_same_catalog_roles_as_enrollment(app, monkeypatch, role, key):
+    from experiments.rig_web_app import human_review_pages
+
+    owner = app.db.create_workspace("Reviewer labels", "local")
+    sample = app.results_root / "reviewer-labels.csv"
+    prepared(sample)
+    store = app._human_store()
+    study = store.create(
+        campaign=owner,
+        name="Synthetic reviewer test",
+        prepared=sample,
+        mode="common",
+        metadata=dict(
+            ethics="test fixture",
+            consent="synthetic consent",
+            compensation="test terms",
+            stop_contact="test operator",
+            results=str(app.results_root),
+        ),
+    )
+    store.enroll(study, "synthetic-reviewer", role, qualification())
+    original = human_review_pages._ui_text
+    sentinel = "Reviewer <em>literal</em> &"
+    monkeypatch.setattr(
+        human_review_pages,
+        "_ui_text",
+        lambda message, **values: (
+            sentinel if message == "human_review_pages." + key else original(message, **values)
+        ),
+    )
+    status, _, raw = app.handle("GET", "/human-evaluation/" + study)
+    body = raw.decode()
+    assert status == 200 and html.escape(sentinel) in body and sentinel not in body
+    assert store.summary(study)["reviewers"][0]["role"] == role
     assert store.summary(study)["counts"]["submitted"] == 0
