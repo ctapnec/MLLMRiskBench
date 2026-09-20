@@ -966,9 +966,7 @@ if(!enabled){status.textContent=[[js:ui.select_one_or_more_arms_to_configure_sam
 else if(!exact){status.textContent=[[js:ui.enter_a_non_negative_cluster_limit_now_the_exact_slider_range_and]];}
 else{var effective=countKeys.reduce(function(total,key){var available=parseInt(counts[key].total_clusters,10);
 return total+(value===0?available:Math.min(value,available));},0);
-status.textContent=[[js:ui.effective_selection]]+effective+[[js:ui.clusters_across]]+effectiveCount+
-[[js:ui.independently_capped_arm]]+(effectiveCount===1?'':'s')+
-[[js:ui.converted_row_fanout_is_fixed_by_the_matching_preflight]];}}
+status.textContent=window.uraFormat([[js:ui.effective_selection_summary]],{clusters:effective,arms:effectiveCount});}}
 if(sampleRange&&sampleNumber){
 sampleRange.addEventListener('input',function(){sampleNumber.value=this.value;});}
 function rememberPickerSelection(){

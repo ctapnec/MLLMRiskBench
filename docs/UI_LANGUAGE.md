@@ -96,6 +96,12 @@ independent of the UI catalog and can still execute directly.
    stable data attributes, never a translated button's wording. Test initial
    page loading too: a normal `pageshow` must not dismiss an active request's
    spinner; restoring a page from browser history must release navigation state.
+   `tests/ura/test_rig_web_language_counts.py` changes the word order of count
+   messages in notice restoration and the live sampling summary. Use complete
+   templates with named values; never append an English plural suffix in source.
+   Check one and several selected arms, retained input values, zero-as-full
+   selection, dismissed-notice persistence and literal rendering of special
+   characters. Operator-authored notice contents remain unchanged data.
 4. Exercise the relevant real page and its errors, loading states and recovery
    controls. Language work must not change execution semantics or research data.
 
