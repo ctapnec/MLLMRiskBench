@@ -45,12 +45,23 @@ LITERAL_IDENTIFIERS = {
 
 
 def test_authored_interface_copy_uses_plain_ascii_punctuation():
-    assert all(message.isascii() for message in i18n.catalog().values())
+    assert all(html.unescape(message).isascii() for message in i18n.catalog().values())
     for path in ROOT.glob("*.py"):
         source = path.read_text(encoding="utf-8")
         assert source.isascii(), path.name
         # Entity spelling must not hide typographic punctuation from the audit.
-        assert html.unescape(source).isascii(), path.name
+        # JavaScript &&params must not be mistaken for the lax HTML entity &para.
+        decode_entities = lambda value: re.sub(
+            r"&(?:#[0-9]+|#x[0-9a-fA-F]+|[A-Za-z][A-Za-z0-9]+);",
+            lambda match: html.unescape(match.group()),
+            value,
+        )
+        assert decode_entities(source).isascii(), path.name
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                if path.name == "i18n.py" and node.value in {"\u2028", "\u2029"}:
+                    continue  # Characters escaped by the JavaScript encoder, not UI copy.
+                assert decode_entities(node.value).isascii(), (path.name, node.lineno)
 
 
 def test_ascii_copy_policy_never_rewrites_retained_unicode_answers():
@@ -58,6 +69,69 @@ def test_ascii_copy_policy_never_rewrites_retained_unicode_answers():
 
     raw = "<pre>\u7814\u7a76 \u2014 retained answer \u201cquoted\u201d</pre>"
     assert raw in ui._page("Research", raw).decode("utf-8")
+
+
+def test_both_display_branches_use_catalog_not_only_one():
+    findings = []
+    for path in ROOT.glob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.IfExp):
+                continue
+            for branch, other in ((node.body, node.orelse), (node.orelse, node.body)):
+                if not isinstance(branch, ast.Constant) or not isinstance(branch.value, str):
+                    continue
+                if not re.search(r"[A-Za-z]", branch.value):
+                    continue
+                if any(
+                    isinstance(call, ast.Call)
+                    and isinstance(call.func, ast.Name)
+                    and call.func.id == "_ui_text"
+                    for call in ast.walk(other)
+                ):
+                    findings.append((path.name, node.lineno, branch.value))
+    assert not findings, findings
+
+
+@pytest.mark.parametrize("healthy", [True, False])
+def test_database_status_and_reindex_labels_are_catalogued(monkeypatch, healthy):
+    from types import SimpleNamespace
+    from experiments.rig_web_app import pages
+
+    original = pages._ui_text
+    messages = {
+        "pages.healthy",
+        "pages.unavailable",
+        "pages.completed",
+        "pages.failed_status",
+        "pages.unknown",
+    }
+    monkeypatch.setattr(
+        pages,
+        "_ui_text",
+        lambda key, **values: "Translated <&>" if key in messages else original(key, **values),
+    )
+    app = SimpleNamespace(
+        db=SimpleNamespace(
+            health=lambda: {
+                "healthy": healthy,
+                "counts": {"jobs": None},
+                "schema_version": 1,
+                "last_error": "",
+            }
+        )
+    )
+    result = pages.PagesMixin._db_card(app, '{"ok":' + str(healthy).lower() + "}")
+    assert result.count("Translated &lt;&amp;&gt;") == 3
+    assert "Translated <&>" not in result
+
+
+def test_playbook_placeholder_is_plain_text_not_entity_spelling():
+    from experiments.rig_web_app.pages import PagesMixin
+    from urllib.parse import unquote
+
+    result = unquote(PagesMixin._playbook_card())
+    assert "--expected-revision=<40-hex pin>" in result
+    assert "&lt;40-hex pin&gt;" not in result
 
 
 def authored(value: str) -> str:

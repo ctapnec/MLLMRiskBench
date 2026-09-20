@@ -226,7 +226,7 @@ class SettingsMixin:
                     "funded": funded,
                     "present": bool(value.strip()),
                     "hint": (
-                        "set"
+                        _ui_text("settings.set")
                         if name == "HF_TOKEN" and value.strip()
                         else self._mask(value)
                         if value.strip()
@@ -616,7 +616,11 @@ class SettingsMixin:
             cards = []
             for token, (relative, _example, description) in _EDITABLE_CONFIGS.items():
                 path = self.repo_root / relative
-                state = "exists" if path.is_file() else _ui_text("settings.not_created_yet")
+                state = (
+                    _ui_text("settings.exists")
+                    if path.is_file()
+                    else _ui_text("settings.not_created_yet")
+                )
                 cards.append(
                     "<div class='card'><h2>"
                     + _icon("sliders")

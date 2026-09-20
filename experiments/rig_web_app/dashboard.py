@@ -788,7 +788,9 @@ class DashboardMixin:
     def _stats_cost_text(cost_rows: list[dict[str, Any]]) -> str:
         billable = [row for row in cost_rows if row.get("billable")]
         if not billable:
-            return _ui_text("dashboard.local_not_billed_2") if cost_rows else "N/A"
+            return (
+                _ui_text("dashboard.local_not_billed_2") if cost_rows else _ui_text("dashboard.n_a")
+            )
         if any(row.get("cost") is None for row in billable):
             return _ui_text("dashboard.n_a_incomplete_pricing_or_usage")
         by_currency: dict[str, float] = {}
@@ -884,7 +886,11 @@ class DashboardMixin:
                 _ui_text("dashboard.measured_attempt_evidence_incomplete"),
                 "amber",
             )
-        return "unknown", _ui_text("dashboard.unclassified_non_authoritative"), "gray"
+        return (
+            html.escape(_ui_text("dashboard.unknown")),
+            _ui_text("dashboard.unclassified_non_authoritative"),
+            "gray",
+        )
 
     _STATS_PAGE_SIZE = 24
 
@@ -1503,7 +1509,7 @@ class DashboardMixin:
                     for currency, value in sorted(cost["by_currency"].items())
                 )
             else:
-                cost_text = "N/A"
+                cost_text = _ui_text("dashboard.n_a")
             rows.append(
                 "<tr>"
                 f"<td>{html.escape(str(cost['role']))}</td>"
@@ -1734,18 +1740,22 @@ class DashboardMixin:
                 ci_low = row.get("ci_low")
                 ci_high = row.get("ci_high")
                 ci_text = (
-                    "N/A"
+                    _ui_text("dashboard.n_a")
                     if ci_low is None or ci_high is None
                     else f"{float(ci_low):.4f}, {float(ci_high):.4f}"
                 )
-                value_text = "N/A" if row["value"] is None else f"{float(row['value']):.4f}"
+                value_text = (
+                    _ui_text("dashboard.n_a")
+                    if row["value"] is None
+                    else f"{float(row['value']):.4f}"
+                )
                 table_rows.append(
                     "<tr>"
-                    f"<td>{html.escape(str(group.get('model') or 'N/A'))}</td>"
-                    f"<td>{html.escape(str(group.get('source') or 'N/A'))}</td>"
-                    f"<td>{html.escape(str(group.get('risk') or 'N/A'))}</td>"
-                    f"<td>{html.escape(str(group.get('effective_modality') or 'N/A'))}</td>"
-                    f"<td>{html.escape(str(group.get('attacker') or 'N/A'))}</td>"
+                    f"<td>{html.escape(str(group.get('model') or _ui_text('dashboard.n_a')))}</td>"
+                    f"<td>{html.escape(str(group.get('source') or _ui_text('dashboard.n_a')))}</td>"
+                    f"<td>{html.escape(str(group.get('risk') or _ui_text('dashboard.n_a')))}</td>"
+                    f"<td>{html.escape(str(group.get('effective_modality') or _ui_text('dashboard.n_a')))}</td>"
+                    f"<td>{html.escape(str(group.get('attacker') or _ui_text('dashboard.n_a')))}</td>"
                     f"<td>{value_text}</td>"
                     f"<td>{html.escape(ci_text)}</td><td>{int(row['n']):,}</td></tr>"
                 )
@@ -1831,7 +1841,9 @@ class DashboardMixin:
             "class='barchart'" in self._stats_report_card(report) for report in campaign["reports"]
         )
         detail_label = (
-            "Statistics &amp; diagrams" if has_chart else _ui_text("dashboard.statistics_details")
+            html.escape(_ui_text("dashboard.statistics_diagrams"))
+            if has_chart
+            else _ui_text("dashboard.statistics_details")
         )
         coverage_text = str(
             campaign.get("coverage_text") or self._stats_coverage_text(campaign["evidence"])
@@ -3120,9 +3132,9 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
                 _ui_template(
                     "</h2><p class='note'>[[text:dashboard.terminal_lifecycle_rows_are_not_relabelled_as_runner_cells_the_re]] <strong>"
                 )
-                + f"{('permitted' if revision_pooling else _ui_text('dashboard.not_permitted'))}"
+                + f"{(html.escape(_ui_text('dashboard.permitted')) if revision_pooling else _ui_text('dashboard.not_permitted'))}"
                 + _ui_template("</strong> [[text:dashboard.and_cross_source_pooling_as]] <strong>")
-                + f"{('permitted' if source_pooling else _ui_text('dashboard.not_permitted'))}"
+                + f"{(html.escape(_ui_text('dashboard.permitted')) if source_pooling else _ui_text('dashboard.not_permitted'))}"
                 + _ui_template("</strong>[[text:dashboard.the_inventory_contains]] <strong>")
                 + f"{len(rows):,}"
                 + _ui_template("</strong> [[text:dashboard.terminal_rows_across]] <strong>")
@@ -3392,7 +3404,7 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
                 coverage = (
                     f"{decided}/{completed}"
                     if isinstance(decided, int) and isinstance(completed, int)
-                    else "N/A"
+                    else _ui_text("dashboard.n_a")
                 )
                 missing_responses = row.get("judgments_missing_responses")
                 missing_response_text = (
@@ -3406,7 +3418,7 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
                 value_text = (
                     f"{float(value):.4f}"
                     if isinstance(value, (int, float)) and not isinstance(value, bool)
-                    else "N/A"
+                    else _ui_text("dashboard.n_a")
                 )
                 if row.get("metric_authority") == "supplementary_non_authoritative":
                     synthetic = row.get("evidence_class") == "synthetic"
@@ -3423,17 +3435,17 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
                         )
                         if isinstance(reliability, (int, float))
                         and not isinstance(reliability, bool)
-                        else "invalid/missing"
+                        else _ui_text("dashboard.invalid_missing")
                     )
                 else:
-                    evidence = "authoritative/source-native"
-                    reliability_text = "N/A"
+                    evidence = _ui_text("dashboard.source_native")
+                    reliability_text = _ui_text("dashboard.n_a")
                 query_count = row.get("approximate_model_query_count")
                 reference_count = row.get("approximate_source_reference_use_count")
                 proxy_support = (
                     f"{query_count}/{reference_count}"
                     if isinstance(query_count, int) and isinstance(reference_count, int)
-                    else "N/A"
+                    else _ui_text("dashboard.n_a")
                 )
                 table_rows.append(
                     f"<tr><td><code>{html.escape(str(row.get('model_spec', '')))}"
@@ -3443,8 +3455,8 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
                     f"<td>{html.escape(str(row.get('defense', '')))}</td>"
                     f"<td><strong>{value_text}</strong></td>"
                     f"<td>{ci}</td>"
-                    f"<td>{html.escape(str(row.get('n_records', 'N/A')))}</td>"
-                    f"<td>{html.escape(str(n_clusters) if n_clusters is not None else 'N/A')}</td>"
+                    f"<td>{html.escape(str(row.get('n_records', _ui_text('dashboard.n_a'))))}</td>"
+                    f"<td>{html.escape(str(n_clusters) if n_clusters is not None else _ui_text('dashboard.n_a'))}</td>"
                     f"<td>{coverage}</td>"
                     f"<td>{html.escape(missing_response_text)}</td>"
                     f"<td>{proxy_support}</td>"
@@ -3735,7 +3747,7 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
 
         def shown(value: object, suffix: str = "") -> str:
             if value is None or value == "":
-                return "unknown"
+                return html.escape(_ui_text("dashboard.unknown"))
             return html.escape(str(value)) + suffix
 
         physical = system.get("physical_cpu_count")

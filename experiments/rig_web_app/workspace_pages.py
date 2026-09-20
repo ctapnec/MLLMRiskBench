@@ -101,7 +101,7 @@ class WorkspacePagesMixin:
                     )
 
                 value = (
-                    "unknown"
+                    _ui_text("workspace_pages.unknown_status")
                     if low is None
                     else tokens(low)
                     if low == high
@@ -879,12 +879,18 @@ class WorkspacePagesMixin:
                 return unknown
 
             def amount(value):
-                return "unknown" if value is None else f"${value / 1_000_000:,.6f}"
+                return (
+                    _ui_text("workspace_pages.unknown_status")
+                    if value is None
+                    else f"${value / 1_000_000:,.6f}"
+                )
 
             def tokens(row, name):
                 total = row[name + "_tokens"]
                 missing = row[name + "_unknown"]
-                return ("unknown" if total is None else f"{total:,}") + (
+                return (
+                    _ui_text("workspace_pages.unknown_status") if total is None else f"{total:,}"
+                ) + (
                     ("; " + f"{missing:,}" + _ui_text("workspace_pages.attempt_s_unknown"))
                     if missing
                     else ""
@@ -1210,7 +1216,11 @@ class WorkspacePagesMixin:
                 item = details.get(key)
                 if key == "output_allowance" and item == -1:
                     return _ui_text("workspace_pages.native_maximum_no_fixed_output_cap")
-                return "unknown" if item is None else html.escape(str(item))
+                return (
+                    html.escape(_ui_text("workspace_pages.unknown_status"))
+                    if item is None
+                    else html.escape(str(item))
+                )
 
             metadata = (
                 _ui_template(
@@ -1250,7 +1260,7 @@ class WorkspacePagesMixin:
                 + (
                     self._workspace_source_link(details["source_ref"])
                     if details.get("source_ref")
-                    else "unknown"
+                    else html.escape(_ui_text("workspace_pages.unknown_status"))
                 )
                 + "</p></details>"
             )
@@ -1270,7 +1280,13 @@ class WorkspacePagesMixin:
                     html.escape(row["modality"]),
                     html.escape(row["framework"] + " / " + row["corpus"]),
                     html.escape(row["outcome"] or "pending"),
-                    "unknown" if row["truncated"] is None else "yes" if row["truncated"] else "no",
+                    html.escape(
+                        _ui_text("workspace_pages.unknown_status")
+                        if row["truncated"] is None
+                        else _ui_text("workspace_pages.yes")
+                        if row["truncated"]
+                        else _ui_text("workspace_pages.no")
+                    ),
                     metadata,
                 ]
             )

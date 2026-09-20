@@ -918,7 +918,7 @@ class BuilderPageMixin:
                     f" data-compatible='{fit_data}'"
                 )
                 fit_text = (
-                    "fits"
+                    _ui_text("builder_page.fits")
                     if fit is True
                     else _ui_text("builder_page.does_not_fit")
                     if fit is False
@@ -1138,7 +1138,7 @@ class BuilderPageMixin:
                                 + " - "
                                 + f"{context_text}"
                                 + " - "
-                                + f"{('pinned' if pinned else _ui_text('builder_page.revision_required'))}"
+                                + f"{(_ui_text('builder_page.pinned') if pinned else _ui_text('builder_page.revision_required'))}"
                             )
                             + (
                                 f" - {profile['compatibility_note']}"

@@ -85,9 +85,9 @@ def judge_name(identity, settings=None):
         label
         + _ui_text("workspace_judge_settings.approximate_metrics")
         + (
-            "on"
+            _ui_text("workspace_judge_settings.on")
             if mode is True
-            else "off"
+            else _ui_text("workspace_judge_settings.off")
             if mode is False
             else _ui_text("workspace_judge_settings.not_recorded")
         )

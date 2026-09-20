@@ -184,11 +184,11 @@ class PagesMixin:
 
         health = self.db.health()
         tone = "green" if health["healthy"] else "red"
-        state = "healthy" if health["healthy"] else "UNAVAILABLE"
+        state = _ui_text("pages.healthy") if health["healthy"] else _ui_text("pages.unavailable")
         counts = health["counts"]
         count_text = (
             ", ".join(
-                f"{name}: {value if value is not None else 'unknown'}"
+                f"{name}: {value if value is not None else _ui_text('pages.unknown')}"
                 for name, value in counts.items()
             )
             if counts
@@ -218,7 +218,11 @@ class PagesMixin:
                     "<div class='notice "
                     + ("blue" if summary.get("ok") else "red")
                     + _ui_template("'><strong>[[text:pages.reindex]] ")
-                    + ("completed" if summary.get("ok") else "FAILED")
+                    + html.escape(
+                        _ui_text("pages.completed")
+                        if summary.get("ok")
+                        else _ui_text("pages.failed_status")
+                    )
                     + _ui_template(
                         ".</strong><p class='note'>[[text:pages.derived_usage_cost_and_report_indexes_were_rebuilt_from_retained]]"
                     )
@@ -243,7 +247,7 @@ class PagesMixin:
                 "<p><span class='badge "
                 + f"{tone}"
                 + "'>"
-                + f"{state}"
+                + f"{html.escape(state)}"
                 + _ui_template("</span> [[text:pages.schema_v]]")
                 + f"{health['schema_version']}"
                 + " - "
@@ -322,14 +326,17 @@ class PagesMixin:
         pin = os.environ.get("REF_URA", "")
         cost_rows, _cost_unavailable = self._usage_cost_rows()
         if cost_rows is None:
-            spend_value, spend_label = "unknown", _ui_text("pages.calculated_spend_db_unavailable")
+            spend_value, spend_label = (
+                _ui_text("pages.unknown"),
+                _ui_text("pages.calculated_spend_db_unavailable"),
+            )
         else:
             billable = [r for r in cost_rows if r["billable"]]
             if not billable:
-                spend_value = "N/A"
+                spend_value = _ui_text("pages.n_a")
                 spend_label = _ui_text("pages.calculated_spend_no_recorded_billable_usage")
             elif any(r["cost"] is None for r in billable):
-                spend_value = "N/A"
+                spend_value = _ui_text("pages.n_a")
                 spend_label = _ui_text("pages.calculated_spend_price_tokens_missing")
             else:
                 by_currency: dict[str, float] = {}
@@ -354,7 +361,7 @@ class PagesMixin:
                     )
                     spend_label = _ui_text("pages.calculated_spend_mixed_currencies_not_summed")
                 else:
-                    spend_value = "N/A"
+                    spend_value = _ui_text("pages.n_a")
                     spend_label = _ui_text("pages.calculated_spend_currency_unavailable")
         stats = (
             "<div class='cols'><div class='card'><div class='stat'><span class='value'>"
@@ -550,7 +557,11 @@ class PagesMixin:
         partial_rows = []
         for campaign in partial_campaigns:
             route_id = quote(campaign.route_id)
-            pending = "unknown" if campaign.pending_tasks is None else str(campaign.pending_tasks)
+            pending = (
+                _ui_text("pages.unknown")
+                if campaign.pending_tasks is None
+                else str(campaign.pending_tasks)
+            )
             partial_rows.append(
                 (
                     campaign.started_at,
@@ -1700,7 +1711,7 @@ class PagesMixin:
                 + _ui_template(
                     "</td></tr><tr><td>[[text:pages.thesis_empirical_evidence]]</td><td>[[text:pages.no]]</td></tr><tr><td>[[text:pages.hosted_calls_allowed]]</td><td>"
                 )
-                + f"{('yes' if campaign.hosted_calls_allowed else 'no')}"
+                + f"{html.escape(_ui_text('pages.yes') if campaign.hosted_calls_allowed else _ui_text('pages.no'))}"
                 + _ui_template(
                     "</td></tr><tr><td>[[text:pages.reserved_call_budget_not_execution]]</td><td>"
                 )

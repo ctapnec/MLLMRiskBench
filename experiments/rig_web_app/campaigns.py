@@ -1248,7 +1248,7 @@ def _load_campaign(
                 )
             )
     if target_call_cap is not None:
-        calls = "unknown" if call_error else str(reserved_calls)
+        calls = _ui_text("campaigns.unknown") if call_error else str(reserved_calls)
         parts.append(
             (
                 _ui_text("campaigns.call_budget_reserved")

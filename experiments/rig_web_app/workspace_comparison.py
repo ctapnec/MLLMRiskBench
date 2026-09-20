@@ -254,7 +254,7 @@ def _condition_tokens(row, prefix):
         return _ui_text("workspace_comparison.native_maximum") if value == -1 else f"{value:,}"
 
     value = (
-        "unknown"
+        _ui_text("workspace_comparison.unknown")
         if low is None
         else tokens(low)
         + ((_ui_text("workspace_comparison.to") + tokens(high)) if high != low else "")

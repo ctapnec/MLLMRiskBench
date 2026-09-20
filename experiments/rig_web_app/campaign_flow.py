@@ -376,7 +376,7 @@ def review(app, operation):
     body += (
         _ui_template("<ul><li>[[text:campaign_flow.local_saved_answer_assessment]] ")
         + (
-            "selected"
+            html.escape(_ui_text("campaign_flow.selected"))
             if params.get("campaign_local") == "on"
             else _ui_text("campaign_flow.not_selected")
         )

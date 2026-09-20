@@ -69,6 +69,10 @@ independent of the UI catalog and can still execute directly.
    an unchanged English screenshot alone cannot establish catalog coverage.
    The separate source audit checks authored HTML/SVG text, accessibility
    attributes, HTTP error bodies, review vocabulary and named substitutions.
+   Check both branches of conditional labels, including unavailable-data
+   fallbacks. Plain text stays plain in the catalog; HTML entities are not a
+   substitute for escaping at the rendering boundary. Punctuation checks also
+   inspect decoded Python literals and explicit HTML entities.
    Negative controls keep HTTP headers, CSS classes, SQL, keyboard keys,
    capture-method identifiers and retained log markers out of translations.
 4. Exercise the relevant real page and its errors, loading states and recovery

@@ -2308,7 +2308,11 @@ class BuilderValidationMixin:
         if native_selected:
             errors["attackers"] = (
                 f"{', '.join(native_selected)} "
-                + (_ui_text("builder_validation.is_a") if len(native_selected) == 1 else "are")
+                + (
+                    _ui_text("builder_validation.is_a")
+                    if len(native_selected) == 1
+                    else _ui_text("builder_validation.are")
+                )
                 + _ui_text(
                     "builder_validation.native_artifact_integration_s_run_matrix_cannot_replay_them_throu"
                 )
