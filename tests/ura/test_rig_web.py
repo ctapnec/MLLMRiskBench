@@ -115,9 +115,7 @@ def _isolated_app(tmp_path: Path) -> RigWebApp:
     results = tmp_path / "runs"
     results.mkdir(exist_ok=True)
     return RigWebApp(
-        results_root=results,
-        state_dir=tmp_path / "state",
-        repo_root=repo,
+        results_root=results, state_dir=tmp_path / "state", repo_root=repo,
     )
 
 
@@ -187,7 +185,9 @@ def _engine_runtime_config(
             "environment_files": 7,
             "environment_bytes": 70,
         }
-        receipt["runtime_id"] = "engine-runtime-" + engine_runtime._sha256_json(receipt)[:24]
+        receipt["runtime_id"] = (
+            "engine-runtime-" + engine_runtime._sha256_json(receipt)[:24]
+        )
         entries[engine] = {
             "interpreter": str(interpreter.resolve()),
             "receipt": receipt,
@@ -211,29 +211,22 @@ def _opening_tag(document: str, marker: str) -> str:
 
     marker_at = document.index(marker)
     start = document.rfind("<", 0, marker_at)
-    return document[start : document.index(">", marker_at) + 1]
+    return document[start:document.index(">", marker_at) + 1]
 
 
 def test_command_construction_is_typed_and_allowlisted() -> None:
-    argv = build_argv(
-        "level1_evidence",
-        {
-            "--eligibility": "runs/a/eligibility.json",
-            "--results": "runs/a",
-            "--out-json": "runs/a/l1.json",
-            "--out-csv": "runs/a/l1.csv",
-        },
-    )
+    argv = build_argv("level1_evidence", {
+        "--eligibility": "runs/a/eligibility.json",
+        "--results": "runs/a",
+        "--out-json": "runs/a/l1.json",
+        "--out-csv": "runs/a/l1.csv",
+    })
     assert argv[:3] == [sys.executable, "-m", "experiments.level1_evidence"]
     assert argv[3:] == [
-        "--eligibility",
-        "runs/a/eligibility.json",
-        "--results",
-        "runs/a",
-        "--out-json",
-        "runs/a/l1.json",
-        "--out-csv",
-        "runs/a/l1.csv",
+        "--eligibility", "runs/a/eligibility.json",
+        "--results", "runs/a",
+        "--out-json", "runs/a/l1.json",
+        "--out-csv", "runs/a/l1.csv",
     ]
 
     with pytest.raises(ValueError, match="unknown command"):
@@ -242,12 +235,9 @@ def test_command_construction_is_typed_and_allowlisted() -> None:
         build_argv("level1_evidence", {"--exec": "evil"})
     with pytest.raises(ValueError):
         build_argv("run_matrix", {"--limit": "12; rm -rf /"})
-    assert build_argv(
-        "run_matrix",
-        {
-            "--sampling-policy": SOURCE_ORDER_CLUSTER_PREFIX,
-        },
-    )[-2:] == ["--sampling-policy", SOURCE_ORDER_CLUSTER_PREFIX]
+    assert build_argv("run_matrix", {
+        "--sampling-policy": SOURCE_ORDER_CLUSTER_PREFIX,
+    })[-2:] == ["--sampling-policy", SOURCE_ORDER_CLUSTER_PREFIX]
     with pytest.raises(ValueError, match="must be one of"):
         build_argv("run_matrix", {"--sampling-policy": "ignored-policy-mutant"})
 
@@ -298,15 +288,12 @@ def test_run_matrix_can_launch_only_through_validated_builder(
         build_argv("webui_selftest", {})
     # The operator start sequence is reachable from the console: the receipt
     # scaffold/validation command is allowlisted.
-    argv = build_argv(
-        "source_conformance",
-        {
-            "--scaffold": "on",
-            "--arm": "strongreject_official",
-            "--source-config": "experiments/source-instances.json",
-            "--out": "runs/thesis/receipt.scaffold.json",
-        },
-    )
+    argv = build_argv("source_conformance", {
+        "--scaffold": "on",
+        "--arm": "strongreject_official",
+        "--source-config": "experiments/source-instances.json",
+        "--out": "runs/thesis/receipt.scaffold.json",
+    })
     assert argv[2] == "experiments.source_conformance"
     assert "--scaffold" in argv and "--arm" in argv
 
@@ -331,25 +318,21 @@ def test_builder_engine_runtime_config_is_exactly_selected_or_rejected(
         assert "engine_runtime_config" in missing
         assert "requires a path and exact SHA-256" in missing["engine_runtime_config"]
 
-        unused = app._validate_builder(
-            {
-                **base,
-                "attackers": "replay",
-                "engine_runtime_config": str(config),
-                "engine_runtime_config_sha": digest,
-            }
-        )
+        unused = app._validate_builder({
+            **base,
+            "attackers": "replay",
+            "engine_runtime_config": str(config),
+            "engine_runtime_config_sha": digest,
+        })
         assert "engine_runtime_config" in unused
         assert "allowed only when" in unused["engine_runtime_config"]
 
-        extra = app._validate_builder(
-            {
-                **base,
-                "attackers": "pyrit",
-                "engine_runtime_config": str(config),
-                "engine_runtime_config_sha": digest,
-            }
-        )
+        extra = app._validate_builder({
+            **base,
+            "attackers": "pyrit",
+            "engine_runtime_config": str(config),
+            "engine_runtime_config_sha": digest,
+        })
         assert "engine_runtime_config" in extra
         assert "exactly the selected" in extra["engine_runtime_config"]
     finally:
@@ -372,7 +355,9 @@ def test_engine_runtime_config_is_ticket_bound_private_and_path_free(
         "engine_runtime_config": str(config),
         "engine_runtime_config_sha": digest,
     }
-    reviewed, snapshot, _snapshot_digest = app._capture_execution_config_snapshot(params)
+    reviewed, snapshot, _snapshot_digest = app._capture_execution_config_snapshot(
+        params
+    )
     assert snapshot["engine_runtime_config"] == config.read_bytes()
     command, values, rebound = app._compose_from_builder(
         reviewed,
@@ -414,17 +399,16 @@ def test_engine_runtime_config_is_ticket_bound_private_and_path_free(
             execution_snapshot=snapshot,
         )
         assert str(transient) in launched["argv"]
-        assert launched["env"]["URA_PRIVATE_TRANSIENT_ENGINE_RUNTIME_CONFIG"] == str(
-            transient.resolve()
-        )
-        retained = json.dumps(
-            {
-                "argv": job.argv,
-                "builder_params": job.builder_params,
-                "command": json.loads((job.directory / "command.json").read_text(encoding="utf-8")),
-            },
-            sort_keys=True,
-        )
+        assert launched["env"][
+            "URA_PRIVATE_TRANSIENT_ENGINE_RUNTIME_CONFIG"
+        ] == str(transient.resolve())
+        retained = json.dumps({
+            "argv": job.argv,
+            "builder_params": job.builder_params,
+            "command": json.loads(
+                (job.directory / "command.json").read_text(encoding="utf-8")
+            ),
+        }, sort_keys=True)
         for private_value in (
             str(config),
             str(transient),
@@ -457,7 +441,9 @@ def test_engine_runtime_private_config_is_consumed_and_restart_state_is_path_fre
         "engine_runtime_config": str(config),
         "engine_runtime_config_sha": digest,
     }
-    reviewed, snapshot, _snapshot_digest = app._capture_execution_config_snapshot(params)
+    reviewed, snapshot, _snapshot_digest = app._capture_execution_config_snapshot(
+        params
+    )
     command, values, rebound = app._compose_from_builder(
         reviewed,
         execution_snapshot=snapshot,
@@ -502,7 +488,9 @@ def test_engine_runtime_private_config_is_consumed_and_restart_state_is_path_fre
             "file": f"private-engine-runtime-config@sha256:{digest}",
             "sha256": digest,
             "bytes": len(snapshot["engine_runtime_config"]),
-            "normalized_selected_sha256": run_matrix._sha256_json(selection.identity_descriptor()),
+            "normalized_selected_sha256": run_matrix._sha256_json(
+                selection.identity_descriptor()
+            ),
         }
         assert not transient.exists()
 
@@ -516,7 +504,9 @@ def test_engine_runtime_private_config_is_consumed_and_restart_state_is_path_fre
                 "argv": restored.argv,
                 "builder_params": restored.builder_params,
                 "command": json.loads(
-                    (restored.directory / "command.json").read_text(encoding="utf-8")
+                    (restored.directory / "command.json").read_text(
+                        encoding="utf-8"
+                    )
                 ),
             },
             sort_keys=True,
@@ -546,7 +536,9 @@ def test_engine_runtime_transient_tamper_fails_before_popen(
         "engine_runtime_config": str(config),
         "engine_runtime_config_sha": digest,
     }
-    reviewed, snapshot, _snapshot_digest = app._capture_execution_config_snapshot(params)
+    reviewed, snapshot, _snapshot_digest = app._capture_execution_config_snapshot(
+        params
+    )
     command, values, rebound = app._compose_from_builder(
         reviewed,
         execution_snapshot=snapshot,
@@ -633,7 +625,9 @@ def test_job_lifecycle_start_monitor_stop(tmp_path: Path) -> None:
     while quick.state() == "running" and time.time() < deadline:
         time.sleep(0.1)
     assert quick.state() == "complete"
-    log_status, _, log_body = app.handle("GET", f"/jobs/{quick.job_id}/log?stream=stdout")
+    log_status, _, log_body = app.handle(
+        "GET", f"/jobs/{quick.job_id}/log?stream=stdout"
+    )
     assert log_status == 200
     assert b"selftest complete" in log_body
 
@@ -705,7 +699,9 @@ def test_explicit_local_path_is_launch_only_not_durable_console_state(
         values["--judge-model"] = spec
         params["api"] = "mock"
         params["judge_model"] = spec
-    _identities, _private_path, durable_digest = app._local_config_projection(values)
+    _identities, _private_path, durable_digest = app._local_config_projection(
+        values
+    )
     assert durable_digest is not None
     params["_local_config_snapshot_sha256"] = durable_digest
 
@@ -737,7 +733,9 @@ def test_explicit_local_path_is_launch_only_not_durable_console_state(
         preview = app._preview_page("run_matrix", values, params, prepared=True).decode("utf-8")
         assert str(checkpoint) not in preview and spec not in preview
         assert identity in preview
-        ticket_match = re.search(r"name='launch_ticket' value='([^']+)'", preview)
+        ticket_match = re.search(
+            r"name='launch_ticket' value='([^']+)'", preview
+        )
         assert ticket_match is not None
         ticket_params = app._launch_ticket_params(ticket_match.group(1))
         assert ticket_params is not None
@@ -748,7 +746,9 @@ def test_explicit_local_path_is_launch_only_not_durable_console_state(
         # Execution parity: the child receives the exact real locator/config.
         assert spec in launched["argv"]
         assert str(local_config) in launched["argv"]
-        assert launched["env"]["URA_PRIVATE_TRANSIENT_LOCAL_CONFIG"] == str(local_config.resolve())
+        assert launched["env"]["URA_PRIVATE_TRANSIENT_LOCAL_CONFIG"] == str(
+            local_config.resolve()
+        )
         assert local_config.is_file()
 
         # Retention parity: every durable/rendered projection is content-only.
@@ -787,12 +787,10 @@ def test_explicit_local_path_is_launch_only_not_durable_console_state(
         restored = _app(tmp_path)
         try:
             restored_job = restored.jobs[job.job_id]
-            restored_text = json.dumps(
-                {
-                    "argv": restored_job.argv,
-                    "builder_params": restored_job.builder_params,
-                }
-            )
+            restored_text = json.dumps({
+                "argv": restored_job.argv,
+                "builder_params": restored_job.builder_params,
+            })
             assert str(checkpoint) not in restored_text and spec not in restored_text
             assert identity in restored_text
             assert run_kind(restored_job.command, restored_job.argv) == "measured"
@@ -812,15 +810,8 @@ def test_duplicate_local_config_is_rejected_before_job_or_popen(
     spec = f"vllm:{checkpoint}"
     encoded_spec = json.dumps(spec)
     raw = (
-        "{"
-        + encoded_spec
-        + ':{"digest":"'
-        + "a" * 64
-        + '"},'
-        + encoded_spec
-        + ':{"digest":"'
-        + "b" * 64
-        + '"}}'
+        "{" + encoded_spec + ':{"digest":"' + "a" * 64 + '"},'
+        + encoded_spec + ':{"digest":"' + "b" * 64 + '"}}'
     )
     local_config = tmp_path / "ambiguous-local-targets.json"
     local_config.write_text(raw, encoding="utf-8")
@@ -913,15 +904,12 @@ def test_close_detaches_running_job_without_killing_it(tmp_path: Path) -> None:
 def test_failed_job_displays_failure_and_stderr(tmp_path: Path) -> None:
     app = _app(tmp_path)
     # A real allowlisted CLI with a missing input fails fast and nonzero.
-    job = app.start_job(
-        "level1_evidence",
-        {
-            "--eligibility": str(tmp_path / "missing.json"),
-            "--results": str(tmp_path / "missing"),
-            "--out-json": str(tmp_path / "out.json"),
-            "--out-csv": str(tmp_path / "out.csv"),
-        },
-    )
+    job = app.start_job("level1_evidence", {
+        "--eligibility": str(tmp_path / "missing.json"),
+        "--results": str(tmp_path / "missing"),
+        "--out-json": str(tmp_path / "out.json"),
+        "--out-csv": str(tmp_path / "out.csv"),
+    })
     deadline = time.time() + 60
     while job.state() == "running" and time.time() < deadline:
         time.sleep(0.2)
@@ -972,20 +960,17 @@ def test_job_detail_lookup_reconciles_detached_log_publication(tmp_path: Path) -
 
 def test_artifact_rendering_shows_evidence_badges(tmp_path: Path) -> None:
     app = _app(tmp_path)
-    (app.results_root / "level1.json").write_text(
-        json.dumps(
-            {
-                "schema_version": "ura-level1-evidence/2",
-                "scope": {
-                    "evidence_kind": "diagnostic_dry_run",
-                    "empirical_validity_established": False,
-                },
-                "counts": {"planning_strata": {"structural_not_applicable": 2}},
-            }
-        ),
-        encoding="utf-8",
+    (app.results_root / "level1.json").write_text(json.dumps({
+        "schema_version": "ura-level1-evidence/2",
+        "scope": {
+            "evidence_kind": "diagnostic_dry_run",
+            "empirical_validity_established": False,
+        },
+        "counts": {"planning_strata": {"structural_not_applicable": 2}},
+    }), encoding="utf-8")
+    (app.results_root / "table.csv").write_text(
+        "metric,value\nASR,1.0\n", encoding="utf-8"
     )
-    (app.results_root / "table.csv").write_text("metric,value\nASR,1.0\n", encoding="utf-8")
     status, content_type, body = app.handle("GET", "/artifacts?path=level1.json")
     assert status == 200 and "text/html" in content_type
     text = body.decode("utf-8")
@@ -1003,13 +988,13 @@ def test_artifact_rendering_shows_evidence_badges(tmp_path: Path) -> None:
 
 
 def test_badges_distinguish_measured_and_canary() -> None:
-    assert ("measured run", "blue") in evidence_badges({"scope": {"evidence_kind": "measured_run"}})
-    badges = evidence_badges(
-        {
-            "evidence_class": "synthetic_offline",
-            "campaign_authorized": False,
-        }
+    assert ("measured run", "blue") in evidence_badges(
+        {"scope": {"evidence_kind": "measured_run"}}
     )
+    badges = evidence_badges({
+        "evidence_class": "synthetic_offline",
+        "campaign_authorized": False,
+    })
     assert ("synthetic offline", "amber") in badges
     assert ("campaign not authorized", "gray") in badges
 
@@ -1022,9 +1007,10 @@ def test_console_covers_runbook_clis_except_private_typed_controllers() -> None:
 
     from experiments.rig_web import COMMANDS
 
-    runbook = (Path(__file__).resolve().parents[2] / "experiments" / "RUN_AND_RETURN.md").read_text(
-        encoding="utf-8"
-    )
+    runbook = (
+        Path(__file__).resolve().parents[2]
+        / "experiments" / "RUN_AND_RETURN.md"
+    ).read_text(encoding="utf-8")
     used = set(re.findall(r"python -m experiments\.([a-z0-9_]+)", runbook))
     used.discard("rig_web")
     allowlisted = {entry.module.split(".", 1)[1] for entry in COMMANDS.values()}
@@ -1036,11 +1022,8 @@ def test_console_covers_runbook_clis_except_private_typed_controllers() -> None:
         # packaging operation must not be exposed as a Rig Web command.
         "local_campaign",
         # Invoked by the campaign controllers or Stats, not raw operator jobs.
-        "hosted_attempt_budget",
-        "hosted_retained_execute",
-        "operational_costs",
-        "retained_response_judge_report",
-        "retained_response_view",
+        "hosted_attempt_budget", "hosted_retained_execute", "operational_costs",
+        "retained_response_judge_report", "retained_response_view",
     }
     assert not (private_typed_controllers & allowlisted)
     missing = sorted(used - allowlisted - private_typed_controllers)
@@ -1056,8 +1039,7 @@ def test_config_editor_writes_only_allowlisted_json_with_backup(tmp_path: Path) 
     repo = tmp_path / "repo"
     (repo / "experiments").mkdir(parents=True)
     app = RigWebApp(
-        results_root=tmp_path / "runs2",
-        state_dir=tmp_path / "state2",
+        results_root=tmp_path / "runs2", state_dir=tmp_path / "state2",
         repo_root=repo,
     )
     # A clean valid save.
@@ -1095,11 +1077,12 @@ def test_config_editor_writes_only_allowlisted_json_with_backup(tmp_path: Path) 
     # The editor page renders and a save POST round-trips.
     status, _, body = app.handle("GET", "/config")
     assert status == 200 and b"api-targets" in body
-    status, ctype, _ = app.handle("POST", "/config", {"file": "api-targets", "content": '{"ok":1}'})
+    status, ctype, _ = app.handle(
+        "POST", "/config", {"file": "api-targets", "content": '{"ok":1}'}
+    )
     assert status == 303 and ctype.startswith("/config")
     # Secrets file names are not in the allowlist.
     from experiments.rig_web import _EDITABLE_CONFIGS
-
     assert all("env" not in key for key in _EDITABLE_CONFIGS)
 
 
@@ -1108,7 +1091,8 @@ def test_config_editor_rejects_duplicate_content_without_writing(
 ) -> None:
     app = _isolated_app(tmp_path)
     target = app.repo_root / "experiments" / "api-targets.json"
-    ambiguous = '{"api:model":{"modalities":["text"]},"api:model":{"modalities":["image"]}}'
+    ambiguous = '{"api:model":{"modalities":["text"]},' \
+        '"api:model":{"modalities":["image"]}}'
 
     with pytest.raises(ValueError, match="duplicate JSON object key"):
         app.save_config("api-targets", ambiguous)
@@ -1154,38 +1138,21 @@ def test_builder_page_renders_full_surface(tmp_path: Path) -> None:
     assert "applyScope" in text and "intersects" in text
     # Every material Runner control is present.
     for field in (
-        "name='project_revision'",
-        "name='project_revision_sha'",
-        "name='source_conformance'",
-        "name='source_conformance_sha'",
-        "name='scope'",
-        "name='max_age'",
-        "name='att_path1'",
-        "name='att_sha1'",
-        "name='seeds'",
-        "name='max_queries'",
-        "name='max_turns'",
-        "name='target_answer_retries'",
-        "name='cap_target'",
-        "name='cap_judge'",
-        "name='cap_http'",
-        "name='local_budget_hours'",
-        "name='deadline'",
-        "name='limit'",
-        "name='sample_seed'",
-        "name='sampling_policy'",
+        "name='project_revision'", "name='project_revision_sha'",
+        "name='source_conformance'", "name='source_conformance_sha'",
+        "name='scope'", "name='max_age'", "name='att_path1'",
+        "name='att_sha1'", "name='seeds'", "name='max_queries'",
+        "name='max_turns'", "name='target_answer_retries'",
+        "name='cap_target'", "name='cap_judge'",
+        "name='cap_http'", "name='local_budget_hours'", "name='deadline'",
+        "name='limit'", "name='sample_seed'", "name='sampling_policy'",
         "name='dtype'",
-        "name='quantization'",
-        "name='judge_model'",
-        "name='defense_guard'",
-        "name='canary_dry'",
-        "name='approximate_common_metrics'",
+        "name='quantization'", "name='judge_model'", "name='defense_guard'",
+        "name='canary_dry'", "name='approximate_common_metrics'",
         # Scoring revision/device are resolved from installed metadata. The
         # separately selected defense retains explicit execution controls.
-        "name='guardrail_model'",
-        "name='defense_guardrail_model'",
-        "name='defense_guardrail_revision'",
-        "name='defense_guardrail_device'",
+        "name='guardrail_model'", "name='defense_guardrail_model'",
+        "name='defense_guardrail_revision'", "name='defense_guardrail_device'",
     ):
         assert field in text, field
     assert "id='sample-limit-range'" in text
@@ -1199,17 +1166,12 @@ def test_attacker_registry_parity_and_full_inventory() -> None:
     # The console's attacker mirror must equal the maintained engines registry
     # (all 20), so the builder can never silently omit an engine.
     import sys
-
     sys.path.insert(0, "src")
     from ura.adapters.engines import ATTACKER_NAMES
     from experiments.rig_web import (
-        _ATTACKER_NAMES,
-        _ARM_CATALOG,
-        _INELIGIBLE_ARMS,
-        _FRAMEWORKS,
+        _ATTACKER_NAMES, _ARM_CATALOG, _INELIGIBLE_ARMS, _FRAMEWORKS,
         _SOURCE_METRIC_ARMS,
     )
-
     assert _ATTACKER_NAMES == ATTACKER_NAMES
     assert len(_FRAMEWORKS) == 20
     assert len(_ARM_CATALOG) == 45  # all maintained source arms
@@ -1222,7 +1184,9 @@ def test_attacker_registry_parity_and_full_inventory() -> None:
     assert len(_INELIGIBLE_ARMS) == 15
     assert len(_SOURCE_METRIC_ARMS) == 2
     common_arms = [
-        arm for arm, _mods, reason in _ARM_CATALOG if not reason and arm not in _SOURCE_METRIC_ARMS
+        arm
+        for arm, _mods, reason in _ARM_CATALOG
+        if not reason and arm not in _SOURCE_METRIC_ARMS
     ]
     assert len(common_arms) == 28
     assert len(common_arms) + len(_SOURCE_METRIC_ARMS) + len(_INELIGIBLE_ARMS) == 45
@@ -1242,7 +1206,6 @@ def test_attacker_registry_parity_and_full_inventory() -> None:
     # exactly, so the console never claims a scored lane the runtime does not
     # implement (nor disables one it does).
     from ura.source_metrics import _IMPLEMENTED_SOURCE_EVALUATORS
-
     assert {metric for _a, (metric, _atk) in _SOURCE_METRIC_ARMS.items()} == {
         metric for _src, metric in _IMPLEMENTED_SOURCE_EVALUATORS
     }
@@ -1254,7 +1217,6 @@ def test_builder_lists_all_arms_and_only_campaign_attackers(tmp_path: Path) -> N
         _ATTACKER_NAMES,
         _BUILDER_OMITTED_ATTACKERS,
     )
-
     app = _app(tmp_path)
     try:
         _s, _c, body = app.handle("GET", "/build")
@@ -1277,7 +1239,7 @@ def test_builder_lists_all_arms_and_only_campaign_attackers(tmp_path: Path) -> N
         for arm, _mods, _reason in _ARM_CATALOG:
             marker = f"data-arm='{arm}'"
             at = text.index(marker)
-            input_tag = text[text.rfind("<input", 0, at) : text.find(">", at)]
+            input_tag = text[text.rfind("<input", 0, at):text.find(">", at)]
             if "disabled" in input_tag:
                 disabled_arms.add(arm)
         assert disabled_arms == blocked_arms
@@ -1290,10 +1252,7 @@ def test_builder_lists_all_arms_and_only_campaign_attackers(tmp_path: Path) -> N
         # Receipt-admitted ineligible arms remain selectable so the server can
         # return their exact fail-closed reason; only receipt-blocked arms are
         # disabled. The source-metric arms are selectable because they do run.
-        assert (
-            "source-specific metric - approximate proxy available (evaluator not integrated)"
-            in text
-        )
+        assert "source-specific metric - approximate proxy available (evaluator not integrated)" in text
         assert "source-specific metric - runnable (replay attacker only)" in text
         assert "badge amber tip" in text and "approximate opt-in" in text
         assert "badge amber tip" in text and "source-metric" in text
@@ -1302,7 +1261,6 @@ def test_builder_lists_all_arms_and_only_campaign_attackers(tmp_path: Path) -> N
         # native_import remains the real action for the native-only ENGINES.
         assert "native_import" in text
         from experiments.rig_web import _NATIVE_ONLY_ATTACKERS
-
         assert "native-only" in text  # native-artifact attackers badged
         for attacker in _NATIVE_ONLY_ATTACKERS:
             assert f"data-fw='{attacker}'" in text  # still visible, disabled
@@ -1316,32 +1274,27 @@ def test_builder_disables_and_rejects_source_receipt_blocked_arm(
 ) -> None:
     receipt = tmp_path / "source-conformance.json"
     receipt.write_text(
-        json.dumps(
-            {
-                "schema": "ura-source-conformance/1",
-                "claim_scope": "acquisition_and_conversion_traceability_only",
-                "arms": [
-                    {
-                        "arm_id": "bipia_test_qa",
-                        "converter": "bipia",
-                        "path_env": "URA_BIPIA_TEST_QA_PATH",
-                        "source_label": "BIPIA test QA",
-                        "split": "official-test",
-                        "disposition": "blocked",
-                        "reason": "licensed NewsQA base is unavailable",
-                        "upstream_uri": None,
-                        "requested_revision": None,
-                        "observed_revision": None,
-                        "consumed_input": None,
-                        "components": [],
-                        "operator_decision": None,
-                        "raw_records": None,
-                        "semantic_review": None,
-                    }
-                ],
-            }
-        )
-        + "\n",
+        json.dumps({
+            "schema": "ura-source-conformance/1",
+            "claim_scope": "acquisition_and_conversion_traceability_only",
+            "arms": [{
+                "arm_id": "bipia_test_qa",
+                "converter": "bipia",
+                "path_env": "URA_BIPIA_TEST_QA_PATH",
+                "source_label": "BIPIA test QA",
+                "split": "official-test",
+                "disposition": "blocked",
+                "reason": "licensed NewsQA base is unavailable",
+                "upstream_uri": None,
+                "requested_revision": None,
+                "observed_revision": None,
+                "consumed_input": None,
+                "components": [],
+                "operator_decision": None,
+                "raw_records": None,
+                "semantic_review": None,
+            }],
+        }) + "\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("URA_SOURCE_CONFORMANCE_MANIFEST", str(receipt))
@@ -1364,8 +1317,8 @@ def test_builder_disables_and_rejects_source_receipt_blocked_arm(
         page = app.handle("GET", "/build")[2].decode("utf-8")
         marker = "data-arm='bipia_test_qa'"
         at = page.index(marker)
-        input_tag = page[page.rfind("<input", 0, at) : page.find(">", at)]
-        row = page[page.rfind("<label", 0, at) : page.find("</label>", at)]
+        input_tag = page[page.rfind("<input", 0, at):page.find(">", at)]
+        row = page[page.rfind("<label", 0, at):page.find("</label>", at)]
         assert "disabled" in input_tag
         assert "blocked by source receipt" in row
         assert "licensed NewsQA base is unavailable" in row
@@ -1383,7 +1336,7 @@ def test_builder_disables_and_rejects_source_receipt_blocked_arm(
         unbound_page = app.handle("GET", "/build")[2].decode("utf-8")
         at = unbound_page.index(marker)
         unbound_input = unbound_page[
-            unbound_page.rfind("<input", 0, at) : unbound_page.find(">", at)
+            unbound_page.rfind("<input", 0, at):unbound_page.find(">", at)
         ]
         assert "disabled" not in unbound_input
         assert "corpora" not in app._validate_builder(params)
@@ -1400,16 +1353,14 @@ def test_t3mp3st_is_selectable_and_requires_a_validated_capture_bundle(
     results = repo / "runs"
     results.mkdir(parents=True)
     app = RigWebApp(
-        results_root=results,
-        state_dir=results / "state",
-        repo_root=repo,
+        results_root=results, state_dir=results / "state", repo_root=repo,
     )
     started = len(app.jobs)
     try:
         page = app.handle("GET", "/build")[2].decode("utf-8")
         assert "data-fw='t3mp3st'" in page
-        t3_row = page[page.index("data-fw='t3mp3st'") :]
-        t3_row = t3_row[: t3_row.index("</label>")]
+        t3_row = page[page.index("data-fw='t3mp3st'"):]
+        t3_row = t3_row[:t3_row.index("</label>")]
         assert "capture + replay" in t3_row
         assert "prepare + replay" not in t3_row
         assert "prepared-framework-badge" in t3_row
@@ -1420,18 +1371,14 @@ def test_t3mp3st_is_selectable_and_requires_a_validated_capture_bundle(
         assert "aria-expanded='false'" in checkbox and " checked" not in checkbox
         assert " hidden" in panel and "aria-hidden='true'" in panel
 
-        _status, _content_type, body = app.handle(
-            "POST",
-            "/build",
-            {
-                "mode": "dry_run",
-                "corpora": "strongreject_official",
-                "attackers": "t3mp3st",
-                "judges": "rules",
-                "out": "runs/t3-forged",
-                "seeds": "0",
-            },
-        )
+        _status, _content_type, body = app.handle("POST", "/build", {
+            "mode": "dry_run",
+            "corpora": "strongreject_official",
+            "attackers": "t3mp3st",
+            "judges": "rules",
+            "out": "runs/t3-forged",
+            "seeds": "0",
+        })
         text = body.decode("utf-8")
         assert "T3MP3ST plan bundle path is required" in text
         checkbox = _opening_tag(text, "data-fw='t3mp3st'")
@@ -1456,8 +1403,8 @@ def test_harmbench_is_selectable_and_requires_its_generated_capture_config(
         assert "data-arm='harmbench_text'" in page
         assert "data-arm='harmbench_multimodal'" in page
         assert "harmbench" in _SUGGEST_STATIC["attackers"]
-        harm_row = page[page.index("data-fw='harmbench'") :]
-        harm_row = harm_row[: harm_row.index("</label>")]
+        harm_row = page[page.index("data-fw='harmbench'"):]
+        harm_row = harm_row[:harm_row.index("</label>")]
         assert "prepare + replay" in harm_row
         assert "capture + replay" not in harm_row
         assert "prepared-framework-badge" in harm_row
@@ -1467,18 +1414,14 @@ def test_harmbench_is_selectable_and_requires_its_generated_capture_config(
         assert "aria-expanded='false'" in checkbox and " checked" not in checkbox
         assert " hidden" in panel and "aria-hidden='true'" in panel
 
-        _status, _content_type, body = app.handle(
-            "POST",
-            "/build",
-            {
-                "mode": "dry_run",
-                "corpora": "strongreject_official",
-                "attackers": "harmbench",
-                "judges": "rules",
-                "out": "runs/harmbench-forged",
-                "seeds": "0",
-            },
-        )
+        _status, _content_type, body = app.handle("POST", "/build", {
+            "mode": "dry_run",
+            "corpora": "strongreject_official",
+            "attackers": "harmbench",
+            "judges": "rules",
+            "out": "runs/harmbench-forged",
+            "seeds": "0",
+        })
         text = body.decode("utf-8")
         assert "HarmBench capture config path is required" in text
         checkbox = _opening_tag(text, "data-fw='harmbench'")
@@ -1504,14 +1447,20 @@ def test_prepared_workflows_live_under_attack_frameworks_without_nested_forms(
         # are deliberately separate forms before the campaign builder. They
         # must never become nested in that form.
         before_builder = page[:builder_at]
-        runtime_actions = before_builder.count("action='/build/framework-runtimes'")
+        runtime_actions = before_builder.count(
+            "action='/build/framework-runtimes'"
+        )
         assert runtime_actions == 16
         assert before_builder.count("<form ") == 4 + runtime_actions
         assert before_builder.count("</form>") == 4 + runtime_actions
         assert page[builder_at:].count("<form ") == 1
         assert "Prepared attack workflows" not in page
-        assert "formaction='/build/t3mp3st/capture' formmethod='post'" in page
-        assert "formaction='/build/harmbench/prepare' formmethod='post'" in page
+        assert (
+            "formaction='/build/t3mp3st/capture' formmethod='post'" in page
+        )
+        assert (
+            "formaction='/build/harmbench/prepare' formmethod='post'" in page
+        )
         assert "panel.hidden=!visible" in page
         assert "panel.setAttribute('aria-hidden'" in page
         assert "box.setAttribute('aria-expanded'" in page
@@ -1530,130 +1479,94 @@ def test_prepared_workflows_live_under_attack_frameworks_without_nested_forms(
         assert "padding:.12rem .65rem; gap:.3rem;" in css
         assert "@media (max-width:400px) {" in css
         assert (
-            ".workflow-grid, .workflow-panel .cols { grid-template-columns:minmax(0,1fr); }" in css
+            ".workflow-grid, .workflow-panel .cols { "
+            "grid-template-columns:minmax(0,1fr); }" in css
         )
         assert (
             ".prepared-workflows, .workflow-panel, .workflow-step {" in css
             and "min-width:0; max-width:100%;" in css
         )
 
-        _command, _values, params = app._compose_from_builder(
-            {
-                "mode": "dry_run",
-                "corpora": "synth",
-                "attackers": "replay",
-                "judges": "rules",
-                "out": "runs/dry",
-                "seeds": "0",
-                "t3cap_model": "not-a-campaign-field",
-                "hcap_repo": "not-a-campaign-field",
-                "t3_artifact": "runs/stale-t3.json",
-                "t3_artifact_sha": "a" * 64,
-                "harm_config": "runs/stale-harm.json",
-            }
-        )
+        _command, _values, params = app._compose_from_builder({
+            "mode": "dry_run", "corpora": "synth", "attackers": "replay",
+            "judges": "rules", "out": "runs/dry", "seeds": "0",
+            "t3cap_model": "not-a-campaign-field",
+            "hcap_repo": "not-a-campaign-field",
+            "t3_artifact": "runs/stale-t3.json",
+            "t3_artifact_sha": "a" * 64,
+            "harm_config": "runs/stale-harm.json",
+        })
         assert "t3cap_model" not in params and "hcap_repo" not in params
         assert "t3_artifact" not in params and "t3_artifact_sha" not in params
         assert "harm_config" not in params
-        projection = app._projection_params(
-            {
-                **params,
-                "t3cap_model": "ignored",
-                "hcap_repo": "ignored",
-                "t3_artifact": "runs/stale-t3.json",
-                "t3_artifact_sha": "a" * 64,
-                "harm_config": "runs/stale-harm.json",
-            }
-        )
+        projection = app._projection_params({
+            **params, "t3cap_model": "ignored", "hcap_repo": "ignored",
+            "t3_artifact": "runs/stale-t3.json",
+            "t3_artifact_sha": "a" * 64,
+            "harm_config": "runs/stale-harm.json",
+        })
         assert "t3cap_model" not in projection and "hcap_repo" not in projection
         assert "t3_artifact" not in projection and "harm_config" not in projection
 
-        selected = app._builder_params(
-            {
-                "mode": "dry_run",
-                "corpora": "synth",
-                "attackers": "t3mp3st,harmbench",
-                "judges": "rules",
-                "out": "runs/dry",
-                "seeds": "0",
-                "t3_artifact": "runs/selected-t3.json",
-                "t3_artifact_sha": "b" * 64,
-                "harm_config": "runs/selected-harm.json",
-            }
-        )
+        selected = app._builder_params({
+            "mode": "dry_run", "corpora": "synth",
+            "attackers": "t3mp3st,harmbench", "judges": "rules",
+            "out": "runs/dry", "seeds": "0",
+            "t3_artifact": "runs/selected-t3.json",
+            "t3_artifact_sha": "b" * 64,
+            "harm_config": "runs/selected-harm.json",
+        })
         assert selected["t3_artifact"] == "runs/selected-t3.json"
         assert selected["harm_config"] == "runs/selected-harm.json"
         selected_projection = app._projection_params(selected)
-        assert selected_projection["t3_artifact"] == ("private-t3mp3st-artifact@sha256:" + "b" * 64)
+        assert selected_projection["t3_artifact"] == (
+            "private-t3mp3st-artifact@sha256:" + "b" * 64
+        )
         assert selected_projection["harm_config"] == "private-harmbench-config"
     finally:
         app.close()
 
 
 def test_prepared_attack_configs_are_verified_and_materialized_for_runtime(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = tmp_path / "repo"
     (repo / "experiments").mkdir(parents=True)
-    (repo / "experiments" / "api-targets.json").write_text(
-        json.dumps(
-            {
-                "openai:test-model": {
-                    "modalities": ["text"],
-                    "max_tokens": 64,
-                    "temperature": 0.0,
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    (repo / "experiments" / "source-instances.json").write_text(
-        json.dumps(
-            {
-                "strongreject_official": {
-                    "converter": "strongreject",
-                    "path_env": "URA_STRONGREJECT_OFFICIAL_PATH",
-                },
-                "harmbench_text": {
-                    "converter": "harmbench",
-                    "path_env": "URA_HARMBENCH_TEXT_PATH",
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
+    (repo / "experiments" / "api-targets.json").write_text(json.dumps({
+        "openai:test-model": {
+            "modalities": ["text"], "max_tokens": 64, "temperature": 0.0,
+        },
+    }), encoding="utf-8")
+    (repo / "experiments" / "source-instances.json").write_text(json.dumps({
+        "strongreject_official": {
+            "converter": "strongreject",
+            "path_env": "URA_STRONGREJECT_OFFICIAL_PATH",
+        },
+        "harmbench_text": {
+            "converter": "harmbench",
+            "path_env": "URA_HARMBENCH_TEXT_PATH",
+        },
+    }), encoding="utf-8")
     results = repo / "runs"
     results.mkdir()
     app = RigWebApp(
-        results_root=results,
-        state_dir=results / "state",
-        repo_root=repo,
+        results_root=results, state_dir=results / "state", repo_root=repo,
     )
     try:
         t3_bundle = results / "t3-bundle.json"
-        t3_bundle.write_text(
-            json.dumps(
-                {
-                    "format_version": "ura-t3mp3st-plan-bundle/1",
-                    "upstream_revision": "a" * 40,
-                    "source_provider": "openai",
-                    "source_model": "source-model",
-                    "corpus": {"sha256": "b" * 64, "records": 1},
-                    "entries": [],
-                }
-            ),
-            encoding="utf-8",
-        )
+        t3_bundle.write_text(json.dumps({
+            "format_version": "ura-t3mp3st-plan-bundle/1",
+            "upstream_revision": "a" * 40,
+            "source_provider": "openai",
+            "source_model": "source-model",
+            "corpus": {"sha256": "b" * 64, "records": 1},
+            "entries": [],
+        }), encoding="utf-8")
         t3_sha = hashlib.sha256(t3_bundle.read_bytes()).hexdigest()
         t3_params = {
-            "mode": "dry_run",
-            "corpora": "strongreject_official",
-            "attackers": "t3mp3st",
-            "judges": "rules",
-            "seeds": "0",
-            "out": "runs/t3",
-            "t3_artifact": str(t3_bundle),
+            "mode": "dry_run", "corpora": "strongreject_official",
+            "attackers": "t3mp3st", "judges": "rules", "seeds": "0",
+            "out": "runs/t3", "t3_artifact": str(t3_bundle),
             "t3_artifact_sha": t3_sha,
         }
         assert app._validate_builder(t3_params) == {}
@@ -1669,54 +1582,32 @@ def test_prepared_attack_configs_are_verified_and_materialized_for_runtime(
         }
 
         harm_artifact = results / "harmbench-capture.json"
-        harm_artifact.write_text(
-            json.dumps(
-                {
-                    "format_version": "ura-harmbench-transfer-replay/1",
-                    "upstream_revision": "c" * 40,
-                    "experiment": "llama2_7b",
-                    "methods": ["PEZ", "PAP-top5"],
-                    "cases_per_method": 2,
-                    "selection": {
-                        "corpus_name": "harmbench_text",
-                        "limit": 1,
-                        "sample_seed": 7,
-                    },
-                    "source_artifact": {},
-                    "source_requests": [],
-                    "cases": [],
-                    "content_sha256": "d" * 64,
-                }
-            ),
-            encoding="utf-8",
-        )
+        harm_artifact.write_text(json.dumps({
+            "format_version": "ura-harmbench-transfer-replay/1",
+            "upstream_revision": "c" * 40,
+            "experiment": "llama2_7b",
+            "methods": ["PEZ", "PAP-top5"],
+            "cases_per_method": 2,
+            "selection": {
+                "corpus_name": "harmbench_text", "limit": 1, "sample_seed": 7,
+            },
+            "source_artifact": {}, "source_requests": [], "cases": [],
+            "content_sha256": "d" * 64,
+        }), encoding="utf-8")
         harm_sha = hashlib.sha256(harm_artifact.read_bytes()).hexdigest()
         harm_config = results / "harmbench-attackers.json"
-        harm_config.write_text(
-            json.dumps(
-                {
-                    "harmbench": {
-                        "methods": ["PEZ", "PAP-top5"],
-                        "experiment": "llama2_7b",
-                        "upstream_revision": "c" * 40,
-                        "replay_artifact": str(harm_artifact),
-                        "replay_artifact_sha256": harm_sha,
-                    }
-                }
-            ),
-            encoding="utf-8",
-        )
+        harm_config.write_text(json.dumps({"harmbench": {
+            "methods": ["PEZ", "PAP-top5"],
+            "experiment": "llama2_7b",
+            "upstream_revision": "c" * 40,
+            "replay_artifact": str(harm_artifact),
+            "replay_artifact_sha256": harm_sha,
+        }}), encoding="utf-8")
         harm_params = {
-            "mode": "dry_run",
-            "corpora": "harmbench_text",
-            "attackers": "harmbench",
-            "judges": "rules",
-            "seeds": "0",
-            "sample_seed": "7",
-            "limit": "1",
-            "max_queries": "4",
-            "max_turns": "4",
-            "out": "runs/harm",
+            "mode": "dry_run", "corpora": "harmbench_text",
+            "attackers": "harmbench", "judges": "rules", "seeds": "0",
+            "sample_seed": "7", "limit": "1", "max_queries": "4",
+            "max_turns": "4", "out": "runs/harm",
             "harm_config": str(harm_config),
         }
         assert app._validate_builder(harm_params) == {}
@@ -1736,59 +1627,52 @@ def test_prepared_attack_configs_are_verified_and_materialized_for_runtime(
         def fake_start(command, values, *, builder_params=None, **_kwargs):
             started.append((command, dict(values), dict(builder_params or {})))
             return Job(
-                job_id=f"replay-{len(started)}",
-                command=command,
-                argv=build_argv(command, values),
-                directory=results / "state" / "fake",
-                process=None,
-                restored_state="complete",
-                restored_exit=0,
+                job_id=f"replay-{len(started)}", command=command,
+                argv=build_argv(command, values), directory=results / "state" / "fake",
+                process=None, restored_state="complete", restored_exit=0,
             )
 
         monkeypatch.setattr(app, "start_job", fake_start)
         monkeypatch.setattr(
-            app,
-            "_read_lane_projection",
-            lambda _params: ({"target_calls": 1, "judge_calls": 0, "http_attempts": 1}, ""),
+            app, "_read_lane_projection",
+            lambda _params: ({"target_calls": 1, "judge_calls": 0,
+                              "http_attempts": 1}, ""),
         )
         common = {
-            "mode": "measured",
-            "api": "openai:test-model",
-            "judges": "rules",
-            "seeds": "0",
-            "limit": "1",
-            "cap_target": "10",
-            "cap_judge": "10",
-            "cap_http": "10",
-            "deadline": "600",
-            "scope": "scope-1",
-            "max_age": "24",
-            "att_path1": "runs/att.json",
-            "att_sha1": "",
+            "mode": "measured", "api": "openai:test-model",
+            "judges": "rules", "seeds": "0", "limit": "1",
+            "cap_target": "10", "cap_judge": "10", "cap_http": "10",
+            "deadline": "600", "scope": "scope-1", "max_age": "24",
+            "att_path1": "runs/att.json", "att_sha1": "",
             "project_revision": "runs/project.json",
             "project_revision_sha": "",
             "source_conformance": str(results / "source.json"),
             "source_conformance_sha": "",
         }
         attestation_receipt = results / "att.json"
-        attestation_receipt.write_text('{"schema":"fixture-attestation"}\n', encoding="utf-8")
+        attestation_receipt.write_text(
+            '{"schema":"fixture-attestation"}\n', encoding="utf-8"
+        )
         project_receipt = results / "project.json"
-        project_receipt.write_text('{"schema":"fixture-project"}\n', encoding="utf-8")
+        project_receipt.write_text(
+            '{"schema":"fixture-project"}\n', encoding="utf-8"
+        )
         source_receipt = results / "source.json"
         source_receipt.write_text('{"schema":"fixture"}\n', encoding="utf-8")
-        common["att_sha1"] = hashlib.sha256(attestation_receipt.read_bytes()).hexdigest()
-        common["project_revision_sha"] = hashlib.sha256(project_receipt.read_bytes()).hexdigest()
-        common["source_conformance_sha"] = hashlib.sha256(source_receipt.read_bytes()).hexdigest()
+        common["att_sha1"] = hashlib.sha256(
+            attestation_receipt.read_bytes()
+        ).hexdigest()
+        common["project_revision_sha"] = hashlib.sha256(
+            project_receipt.read_bytes()
+        ).hexdigest()
+        common["source_conformance_sha"] = hashlib.sha256(
+            source_receipt.read_bytes()
+        ).hexdigest()
         replay_form = {
-            **common,
-            "corpora": "strongreject_official",
-            "attackers": "t3mp3st",
-            "sample_seed": "0",
-            "max_queries": "1",
-            "max_turns": "1",
-            "out": "runs/t3-measured",
-            "t3_artifact": str(t3_bundle),
-            "t3_artifact_sha": t3_sha,
+            **common, "corpora": "strongreject_official",
+            "attackers": "t3mp3st", "sample_seed": "0",
+            "max_queries": "1", "max_turns": "1", "out": "runs/t3-measured",
+            "t3_artifact": str(t3_bundle), "t3_artifact_sha": t3_sha,
         }
         # Exercise the prepared review; initial Build submission now starts
         # its no-call preparation operation, covered by flow tests.
@@ -1799,14 +1683,10 @@ def test_prepared_attack_configs_are_verified_and_materialized_for_runtime(
             body,
         )
         assert ticket is not None
-        status, location, _ = app.handle(
-            "POST",
-            "/build",
-            {
-                "confirm": "yes",
-                "launch_ticket": ticket.group(1).decode("ascii"),
-            },
-        )
+        status, location, _ = app.handle("POST", "/build", {
+            "confirm": "yes",
+            "launch_ticket": ticket.group(1).decode("ascii"),
+        })
         assert status == 303 and location == "/jobs/replay-1"
         command, values, _params = started[-1]
         assert command == "run_matrix" and values["--attackers"] == "t3mp3st"
@@ -1820,14 +1700,9 @@ def test_prepared_attack_configs_are_verified_and_materialized_for_runtime(
         run_matrix.build_parser().parse_args(build_argv(command, values)[3:])
 
         replay_form = {
-            **common,
-            "corpora": "harmbench_text",
-            "attackers": "harmbench",
-            "sample_seed": "7",
-            "max_queries": "4",
-            "max_turns": "4",
-            "out": "runs/harm-measured",
-            "harm_config": str(harm_config),
+            **common, "corpora": "harmbench_text", "attackers": "harmbench",
+            "sample_seed": "7", "max_queries": "4", "max_turns": "4",
+            "out": "runs/harm-measured", "harm_config": str(harm_config),
         }
         command, values, params = app._compose_from_builder(replay_form)
         body = app._preview_page(command, values, params, prepared=True)
@@ -1836,14 +1711,10 @@ def test_prepared_attack_configs_are_verified_and_materialized_for_runtime(
             body,
         )
         assert ticket is not None
-        status, location, _ = app.handle(
-            "POST",
-            "/build",
-            {
-                "confirm": "yes",
-                "launch_ticket": ticket.group(1).decode("ascii"),
-            },
-        )
+        status, location, _ = app.handle("POST", "/build", {
+            "confirm": "yes",
+            "launch_ticket": ticket.group(1).decode("ascii"),
+        })
         assert status == 303 and location == "/jobs/replay-2"
         command, values, _params = started[-1]
         assert command == "run_matrix" and values["--attackers"] == "harmbench"
@@ -1884,61 +1755,57 @@ def test_prepared_attack_configs_use_canonical_paths_with_symlinked_results_root
     try:
         t3_bundle = results / "t3-bundle.json"
         t3_bundle.write_text(
-            json.dumps(
-                {
-                    "format_version": "ura-t3mp3st-plan-bundle/1",
-                    "upstream_revision": "a" * 40,
-                    "source_provider": "local",
-                    "source_model": "planner",
-                }
-            ),
+            json.dumps({
+                "format_version": "ura-t3mp3st-plan-bundle/1",
+                "upstream_revision": "a" * 40,
+                "source_provider": "local",
+                "source_model": "planner",
+            }),
             encoding="utf-8",
         )
         t3_sha = hashlib.sha256(t3_bundle.read_bytes()).hexdigest()
 
         harm_bundle = results / "harmbench-capture.json"
         harm_bundle.write_text(
-            json.dumps(
-                {
-                    "format_version": "ura-harmbench-transfer-replay/1",
-                    "upstream_revision": "b" * 40,
-                    "experiment": "fixture-model",
-                    "methods": ["PEZ"],
-                }
-            ),
+            json.dumps({
+                "format_version": "ura-harmbench-transfer-replay/1",
+                "upstream_revision": "b" * 40,
+                "experiment": "fixture-model",
+                "methods": ["PEZ"],
+            }),
             encoding="utf-8",
         )
         harm_sha = hashlib.sha256(harm_bundle.read_bytes()).hexdigest()
         harm_config = results / "harmbench-attackers.json"
         harm_config.write_text(
-            json.dumps(
-                {
-                    "harmbench": {
-                        "methods": ["PEZ"],
-                        "experiment": "fixture-model",
-                        "upstream_revision": "b" * 40,
-                        "replay_artifact": str(harm_bundle),
-                        "replay_artifact_sha256": harm_sha,
-                    }
-                }
-            ),
+            json.dumps({"harmbench": {
+                "methods": ["PEZ"],
+                "experiment": "fixture-model",
+                "upstream_revision": "b" * 40,
+                "replay_artifact": str(harm_bundle),
+                "replay_artifact_sha256": harm_sha,
+            }}),
             encoding="utf-8",
         )
 
-        generated = app._materialize_prepared_attacker_config(
-            {
-                "attackers": "t3mp3st,harmbench",
-                "t3_artifact": str(t3_bundle),
-                "t3_artifact_sha": t3_sha,
-                "harm_config": str(harm_config),
-            }
-        )
+        generated = app._materialize_prepared_attacker_config({
+            "attackers": "t3mp3st,harmbench",
+            "t3_artifact": str(t3_bundle),
+            "t3_artifact_sha": t3_sha,
+            "harm_config": str(harm_config),
+        })
         assert generated is not None
         document = json.loads(generated.read_text(encoding="utf-8"))
-        assert document["t3mp3st"]["response_artifact"] == str(t3_bundle.resolve(strict=True))
-        assert document["harmbench"]["replay_artifact"] == str(harm_bundle.resolve(strict=True))
+        assert document["t3mp3st"]["response_artifact"] == str(
+            t3_bundle.resolve(strict=True)
+        )
+        assert document["harmbench"]["replay_artifact"] == str(
+            harm_bundle.resolve(strict=True)
+        )
 
-        operational, _ = run_matrix._load_attacker_config(str(generated), ["t3mp3st", "harmbench"])
+        operational, _ = run_matrix._load_attacker_config(
+            str(generated), ["t3mp3st", "harmbench"]
+        )
         portable = run_matrix._portable_attacker_configs(operational)
         assert "response_artifact" not in portable["t3mp3st"]
         assert "replay_artifact" not in portable["harmbench"]
@@ -1947,8 +1814,7 @@ def test_prepared_attack_configs_use_canonical_paths_with_symlinked_results_root
 
 
 def test_prepared_capture_forms_validate_preview_and_start_exact_commands(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = tmp_path / "repo"
     results = repo / "runs"
@@ -1958,9 +1824,7 @@ def test_prepared_capture_forms_validate_preview_and_start_exact_commands(
     source = tmp_path / "behaviors.csv"
     source.write_text("BehaviorID,Behavior\n1,test\n", encoding="utf-8")
     app = RigWebApp(
-        results_root=results,
-        state_dir=results / "state",
-        repo_root=repo,
+        results_root=results, state_dir=results / "state", repo_root=repo,
     )
     framework_lock = repo / "experiments" / "framework_runtime_lock.json"
     framework_env = tmp_path / "framework-venvs"
@@ -1975,38 +1839,26 @@ def test_prepared_capture_forms_validate_preview_and_start_exact_commands(
     def fake_start(command, values, **_kwargs):
         captured.append((command, dict(values)))
         return Job(
-            job_id="capture-job",
-            command=command,
-            argv=build_argv(command, values),
-            directory=results / "state" / "fake",
-            process=None,
-            restored_state="complete",
-            restored_exit=0,
+            job_id="capture-job", command=command,
+            argv=build_argv(command, values), directory=results / "state" / "fake",
+            process=None, restored_state="complete", restored_exit=0,
         )
 
     monkeypatch.setattr(app, "start_job", fake_start)
     try:
         t3_form = {
-            "t3cap_corpus": "strongreject_official",
-            "t3cap_limit": "1",
+            "t3cap_corpus": "strongreject_official", "t3cap_limit": "1",
             "t3cap_sample_seed": "0",
             "t3cap_endpoint": "http://127.0.0.1:3333/api/general/plan",
-            "t3cap_revision": "a" * 40,
-            "t3cap_provider": "openai",
-            "t3cap_model": "source-model",
-            "t3cap_timeout": "120",
+            "t3cap_revision": "a" * 40, "t3cap_provider": "openai",
+            "t3cap_model": "source-model", "t3cap_timeout": "120",
             "t3cap_out": str(results / "t3-captures"),
         }
-        status, _, body = app.handle(
-            "POST",
-            "/build/t3mp3st/capture",
-            {
-                **t3_form,
-                "t3cap_revision": "not-a-commit",
-                "t3cap_limit": "",
-                "corpora": "unrelated-builder-value",
-            },
-        )
+        status, _, body = app.handle("POST", "/build/t3mp3st/capture", {
+            **t3_form, "t3cap_revision": "not-a-commit",
+            "t3cap_limit": "",
+            "corpora": "unrelated-builder-value",
+        })
         text = body.decode("utf-8")
         checkbox = _opening_tag(text, "data-fw='t3mp3st'")
         panel = _opening_tag(text, "id='prepared-t3mp3st'")
@@ -2016,14 +1868,9 @@ def test_prepared_capture_forms_validate_preview_and_start_exact_commands(
         assert "value='1'" not in _opening_tag(text, "name='t3cap_limit'")
         assert "unrelated-builder-value" not in text
 
-        status, _, body = app.handle(
-            "POST",
-            "/build/t3mp3st/capture",
-            {
-                **t3_form,
-                "corpora": "unrelated-builder-value",
-            },
-        )
+        status, _, body = app.handle("POST", "/build/t3mp3st/capture", {
+            **t3_form, "corpora": "unrelated-builder-value",
+        })
         text = body.decode("utf-8")
         assert status == 200 and not captured
         assert "Out-of-band paid/compute step" in text
@@ -2037,9 +1884,7 @@ def test_prepared_capture_forms_validate_preview_and_start_exact_commands(
 
         # Full parameters plus confirm=yes are not a confirmation capability.
         no_ticket = app.handle(
-            "POST",
-            "/build/t3mp3st/capture",
-            {**t3_form, "confirm": "yes"},
+            "POST", "/build/t3mp3st/capture", {**t3_form, "confirm": "yes"},
         )
         assert no_ticket[0] == 200 and not captured
         assert b"confirmation expired or was changed" in no_ticket[2]
@@ -2053,9 +1898,7 @@ def test_prepared_capture_forms_validate_preview_and_start_exact_commands(
             },
         )
         assert status == 303 and location.startswith("/operations/")
-        assert (
-            app._operations[location.rsplit("/", 1)[-1]]["params"]["capture_job"] == "capture-job"
-        )
+        assert app._operations[location.rsplit('/',1)[-1]]['params']['capture_job']=='capture-job'
         assert captured[-1][0] == "capture_t3mp3st"
         assert captured[-1][1]["--out"] == str(results / "t3-captures")
         assert captured[-1][1]["--framework-lock"] == str(framework_lock)
@@ -2073,9 +1916,7 @@ def test_prepared_capture_forms_validate_preview_and_start_exact_commands(
 
         # A changed confirmation burns its ticket before rejection.
         tamper_preview = app.handle(
-            "POST",
-            "/build/t3mp3st/capture",
-            t3_form,
+            "POST", "/build/t3mp3st/capture", t3_form,
         )[2].decode("utf-8")
         tamper_ticket = re.search(
             r"name='launch_ticket' value='([^']+)'",
@@ -2102,28 +1943,18 @@ def test_prepared_capture_forms_validate_preview_and_start_exact_commands(
         assert tampered[0] == burned[0] == 200 and len(captured) == 1
 
         harm_form = {
-            "hcap_repo": str(checkout),
-            "hcap_revision": "b" * 40,
-            "hcap_source": str(source),
-            "hcap_corpus": "harmbench_text",
-            "hcap_methods": "PEZ,PAP-top5",
-            "hcap_experiment": "llama2_7b",
-            "hcap_limit": "1",
-            "hcap_sample_seed": "0",
-            "hcap_cases": "1",
+            "hcap_repo": str(checkout), "hcap_revision": "b" * 40,
+            "hcap_source": str(source), "hcap_corpus": "harmbench_text",
+            "hcap_methods": "PEZ,PAP-top5", "hcap_experiment": "llama2_7b",
+            "hcap_limit": "1", "hcap_sample_seed": "0", "hcap_cases": "1",
             "hcap_artifact_out": str(results / "harm" / "capture.json"),
             "hcap_config_out": str(results / "harm" / "attackers.json"),
         }
-        status, _, body = app.handle(
-            "POST",
-            "/build/harmbench/prepare",
-            {
-                **harm_form,
-                "hcap_revision": "not-a-commit",
-                "hcap_experiment": "",
-                "judges": "unrelated-builder-value",
-            },
-        )
+        status, _, body = app.handle("POST", "/build/harmbench/prepare", {
+            **harm_form, "hcap_revision": "not-a-commit",
+            "hcap_experiment": "",
+            "judges": "unrelated-builder-value",
+        })
         text = body.decode("utf-8")
         checkbox = _opening_tag(text, "data-fw='harmbench'")
         panel = _opening_tag(text, "id='prepared-harmbench'")
@@ -2131,8 +1962,7 @@ def test_prepared_capture_forms_validate_preview_and_start_exact_commands(
         assert " checked" in checkbox and "aria-expanded='true'" in checkbox
         assert " hidden" not in panel and "aria-hidden='false'" in panel
         assert "value='llama2_7b'" not in _opening_tag(
-            text,
-            "name='hcap_experiment'",
+            text, "name='hcap_experiment'",
         )
         assert "unrelated-builder-value" not in text
 
@@ -2145,9 +1975,7 @@ def test_prepared_capture_forms_validate_preview_and_start_exact_commands(
         )
         assert harm_ticket is not None
         harm_no_ticket = app.handle(
-            "POST",
-            "/build/harmbench/prepare",
-            {**harm_form, "confirm": "yes"},
+            "POST", "/build/harmbench/prepare", {**harm_form, "confirm": "yes"},
         )
         assert harm_no_ticket[0] == 200 and len(captured) == 1
         status, location, _ = app.handle(
@@ -2159,9 +1987,7 @@ def test_prepared_capture_forms_validate_preview_and_start_exact_commands(
             },
         )
         assert status == 303 and location.startswith("/operations/")
-        assert (
-            app._operations[location.rsplit("/", 1)[-1]]["params"]["capture_job"] == "capture-job"
-        )
+        assert app._operations[location.rsplit('/',1)[-1]]['params']['capture_job']=='capture-job'
         command, values = captured[-1]
         assert command == "harmbench_capture"
         assert [values["--method"], values["--method#1"]] == ["PEZ", "PAP-top5"]
@@ -2175,14 +2001,9 @@ def test_prepared_capture_forms_validate_preview_and_start_exact_commands(
         )
         assert harm_replay[0] == 200 and len(captured) == 2
 
-        status, _, _ = app.handle(
-            "POST",
-            "/jobs",
-            {
-                "command": "capture_t3mp3st",
-                "--out": str(results / "forged"),
-            },
-        )
+        status, _, _ = app.handle("POST", "/jobs", {
+            "command": "capture_t3mp3st", "--out": str(results / "forged"),
+        })
         assert status == 400
     finally:
         app.close()
@@ -2221,42 +2042,34 @@ def test_prepared_capture_forms_accept_canonical_symlinked_results_root(
         ),
     )
     try:
-        status, _, body = app.handle(
-            "POST",
-            "/build/t3mp3st/capture",
-            {
-                "t3cap_corpus": "strongreject_official",
-                "t3cap_limit": "1",
-                "t3cap_sample_seed": "0",
-                "t3cap_endpoint": "http://127.0.0.1:3333/api/general/plan",
-                "t3cap_revision": "a" * 40,
-                "t3cap_provider": "local",
-                "t3cap_model": "source-model",
-                "t3cap_timeout": "120",
-                "t3cap_out": "runs/t3-captures",
-            },
-        )
+        status, _, body = app.handle("POST", "/build/t3mp3st/capture", {
+            "t3cap_corpus": "strongreject_official",
+            "t3cap_limit": "1",
+            "t3cap_sample_seed": "0",
+            "t3cap_endpoint": "http://127.0.0.1:3333/api/general/plan",
+            "t3cap_revision": "a" * 40,
+            "t3cap_provider": "local",
+            "t3cap_model": "source-model",
+            "t3cap_timeout": "120",
+            "t3cap_out": "runs/t3-captures",
+        })
         text = body.decode("utf-8")
         assert status == 200 and "Review T3MP3ST capture" in text
         assert str((real_results / "t3-captures").resolve()) in text
 
-        status, _, body = app.handle(
-            "POST",
-            "/build/harmbench/prepare",
-            {
-                "hcap_repo": str(checkout),
-                "hcap_revision": "b" * 40,
-                "hcap_source": str(source),
-                "hcap_corpus": "harmbench_text",
-                "hcap_methods": "DirectRequest",
-                "hcap_experiment": "llama2_7b",
-                "hcap_limit": "1",
-                "hcap_sample_seed": "0",
-                "hcap_cases": "1",
-                "hcap_artifact_out": "runs/harm/capture.json",
-                "hcap_config_out": "runs/harm/attackers.json",
-            },
-        )
+        status, _, body = app.handle("POST", "/build/harmbench/prepare", {
+            "hcap_repo": str(checkout),
+            "hcap_revision": "b" * 40,
+            "hcap_source": str(source),
+            "hcap_corpus": "harmbench_text",
+            "hcap_methods": "DirectRequest",
+            "hcap_experiment": "llama2_7b",
+            "hcap_limit": "1",
+            "hcap_sample_seed": "0",
+            "hcap_cases": "1",
+            "hcap_artifact_out": "runs/harm/capture.json",
+            "hcap_config_out": "runs/harm/attackers.json",
+        })
         text = body.decode("utf-8")
         assert status == 200 and "Review HarmBench prepare" in text
         assert str((real_results / "harm" / "capture.json").resolve()) in text
@@ -2269,17 +2082,18 @@ def test_native_only_note_is_a_tooltip_not_repeated_inline(tmp_path: Path) -> No
     # The identical native_import explanation lives in ONE tooltip per
     # native-only framework badge, not repeated inline under every one.
     from experiments.rig_web import _NATIVE_ONLY_ATTACKERS
-
     app = _app(tmp_path)
     try:
         _s, _c, body = app.handle("GET", "/build")
         text = body.decode("utf-8")
-        assert "badge gray tip" in text  # focusable tooltip trigger
-        assert "class='tiptext'>" in text  # the note lives in a tooltip
+        assert "badge gray tip" in text          # focusable tooltip trigger
+        assert "class='tiptext'>" in text        # the note lives in a tooltip
         assert "native_import" in text
         # Exactly one native explanation per native-only framework. Other
         # compact builder badges may independently use the same tooltip class.
-        assert text.count("native-artifact integration; run_matrix") == len(_NATIVE_ONLY_ATTACKERS)
+        assert text.count("native-artifact integration; run_matrix") == len(
+            _NATIVE_ONLY_ATTACKERS
+        )
     finally:
         app.close()
 
@@ -2288,7 +2102,6 @@ def test_modality_shown_as_icons_not_word_tags(tmp_path: Path) -> None:
     # Modalities render as colored accessible icon chips, not TEXT/IMAGE word
     # tags, clustered right of the name in a flex header (not trailing it).
     from experiments.rig_web import _mod_icon
-
     glyph = _mod_icon("text")
     assert "class='modicon m-text'" in glyph  # per-modality colored chip
     assert "title='text'" in glyph and "aria-label='text'" in glyph
@@ -2335,16 +2148,15 @@ def test_native_only_attacker_rejected_and_classified() -> None:
     # The native-only classification must match the harness registry, and a
     # native-only attacker in a common-runner lane is rejected before Popen.
     import sys
-
     sys.path.insert(0, "src")
     from ura.adapters.engines import (
         ATTACKER_NAMES,
         attacker_runner_replay_eligible,
     )
     from experiments.rig_web import _NATIVE_ONLY_ATTACKERS
-
     actual_native = {
-        name for name in ATTACKER_NAMES if attacker_runner_replay_eligible(name) is False
+        name for name in ATTACKER_NAMES
+        if attacker_runner_replay_eligible(name) is False
     }
     assert _NATIVE_ONLY_ATTACKERS == actual_native
 
@@ -2353,19 +2165,11 @@ def test_native_only_attacker_rejected_server_side(tmp_path: Path) -> None:
     app = _app(tmp_path)
     started = len(app.jobs)
     try:
-        _s, _c, body = app.handle(
-            "POST",
-            "/build",
-            {
-                "mode": "dry_run",
-                "corpora": "strongreject_official",
-                "api": "anthropic:claude-opus-5",
-                "attackers": "garak",
-                "judges": "rules",
-                "out": "runs/n",
-                "seeds": "0",
-            },
-        )
+        _s, _c, body = app.handle("POST", "/build", {
+            "mode": "dry_run", "corpora": "strongreject_official",
+            "api": "anthropic:claude-opus-5", "attackers": "garak",
+            "judges": "rules", "out": "runs/n", "seeds": "0",
+        })
         text = body.decode("utf-8")
         assert "native-artifact" in text and "native_import" in text
         assert len(app.jobs) == started  # no Popen
@@ -2386,64 +2190,44 @@ def test_ineligible_arm_requires_explicit_approximate_metrics_opt_in(
         page = app.handle("GET", "/build")[2].decode("utf-8")
         marker = "data-arm='agentharm_harmful'"
         at = page.index(marker)
-        input_tag = page[page.rfind("<input", 0, at) : page.find(">", at)]
+        input_tag = page[page.rfind("<input", 0, at):page.find(">", at)]
         assert "disabled" not in input_tag  # operator can choose the row
         assert "approximate opt-in" in page and "badge amber tip" in page
         reason = html_lib.escape(_INELIGIBLE_REASONS["agentharm_harmful"])
-        row = page[page.rfind("<label", 0, at) : page.find("</label>", at)]
+        row = page[page.rfind("<label", 0, at):page.find("</label>", at)]
         assert row.count(reason) == 1  # one custom tooltip, no title duplicate
         badge_at = page.index("<span class='badge amber tip'", at)
-        badge_tag = page[badge_at : page.find(">", badge_at)]
+        badge_tag = page[badge_at:page.find(">", badge_at)]
         assert "title=" not in badge_tag
-        _s, _c, body = app.handle(
-            "POST",
-            "/build",
-            {
-                "mode": "dry_run",
-                "corpora": "agentharm_harmful",
-                "api": "anthropic:claude-opus-5",
-                "attackers": "replay",
-                "judges": "rules",
-                "out": "runs/a",
-                "seeds": "0",
-            },
-        )
+        _s, _c, body = app.handle("POST", "/build", {
+            "mode": "dry_run", "corpora": "agentharm_harmful",
+            "api": "anthropic:claude-opus-5", "attackers": "replay",
+            "judges": "rules", "out": "runs/a", "seeds": "0",
+        })
         text = body.decode("utf-8")
         assert "common-metric-ineligible" in text
         assert "Select the explicit approximate" in text
         assert len(app.jobs) == started  # no Popen
         # A source-specific-metric arm (not agentic) is also rejected.
-        _s2, _c2, body2 = app.handle(
-            "POST",
-            "/build",
-            {
-                "mode": "dry_run",
-                "corpora": "cyberseceval_prompt_injection",
-                "api": "anthropic:claude-opus-5",
-                "attackers": "replay",
-                "judges": "rules",
-                "out": "runs/a2",
-                "seeds": "0",
-            },
-        )
+        _s2, _c2, body2 = app.handle("POST", "/build", {
+            "mode": "dry_run", "corpora": "cyberseceval_prompt_injection",
+            "api": "anthropic:claude-opus-5", "attackers": "replay",
+            "judges": "rules", "out": "runs/a2", "seeds": "0",
+        })
         assert "common-metric-ineligible" in body2.decode("utf-8")
         assert len(app.jobs) == started
         for arm in (
             "mllmguard_position_swapping",
             "mllmguard_noise_injection",
         ):
-            errors = app._validate_builder(
-                {
-                    "mode": "dry_run",
-                    "corpora": arm,
-                    "api": "anthropic:claude-opus-5",
-                    "attackers": "replay",
-                    "judges": "rules",
-                    "out": f"runs/{arm}",
-                    "seeds": "0",
-                }
+            errors = app._validate_builder({
+                "mode": "dry_run", "corpora": arm,
+                "api": "anthropic:claude-opus-5", "attackers": "replay",
+                "judges": "rules", "out": f"runs/{arm}", "seeds": "0",
+            })
+            assert "truthfulness" in errors.get(
+                "approximate_common_metrics", ""
             )
-            assert "truthfulness" in errors.get("approximate_common_metrics", "")
 
         enabled = {
             "mode": "dry_run",
@@ -2462,35 +2246,31 @@ def test_ineligible_arm_requires_explicit_approximate_metrics_opt_in(
         assert values["--approximate-common-metrics"] == "on"
         assert "--approximate-common-metrics" in build_argv(command, values)
 
-        _command, default_values, _params = app._compose_from_builder(
-            {
-                **enabled,
-                "corpora": "strongreject_official",
-                "approximate_common_metrics": "",
-            }
-        )
+        _command, default_values, _params = app._compose_from_builder({
+            **enabled,
+            "corpora": "strongreject_official",
+            "approximate_common_metrics": "",
+        })
         assert "--approximate-common-metrics" not in default_values
 
         checked_page = app._build_page(enabled).decode("utf-8")
-        checkbox = _opening_tag(checked_page, "name='approximate_common_metrics'")
+        checkbox = _opening_tag(
+            checked_page, "name='approximate_common_metrics'"
+        )
         assert " checked" in checkbox
         assert "Non-authoritative" in checked_page
         assert "not probability or accuracy" in checked_page
 
-        tool_errors = app._validate_builder(
-            {
-                **enabled,
-                "corpora": "agentharm_harmful",
-            }
-        )
+        tool_errors = app._validate_builder({
+            **enabled,
+            "corpora": "agentharm_harmful",
+        })
         assert "text+tool source construct" in tool_errors["corpora"]
         assert "fail-closed" in tool_errors["corpora"]
-        assert app._validate_builder(
-            {
-                **enabled,
-                "corpora": "injecagent_direct_harm_base",
-            }
-        )["corpora"].startswith("arm injecagent_direct_harm_base converts")
+        assert app._validate_builder({
+            **enabled,
+            "corpora": "injecagent_direct_harm_base",
+        })["corpora"].startswith("arm injecagent_direct_harm_base converts")
     finally:
         app.close()
 
@@ -2503,58 +2283,35 @@ def test_source_metric_arm_runnable_and_replay_guarded(tmp_path: Path) -> None:
     app = _operator_registry_app(tmp_path)
     try:
         # replay selected -> no ineligible error, no source-metric guard error.
-        errors = app._validate_builder(
-            {
-                "mode": "dry_run",
-                "corpora": "rjudge_release",
-                "api": "anthropic:claude-opus-5",
-                "attackers": "replay",
-                "judges": "rules",
-                "out": "runs/sm",
-                "seeds": "0",
-            }
-        )
+        errors = app._validate_builder({
+            "mode": "dry_run", "corpora": "rjudge_release",
+            "api": "anthropic:claude-opus-5", "attackers": "replay",
+            "judges": "rules", "out": "runs/sm", "seeds": "0",
+        })
         assert "corpora" not in errors  # NOT rejected as ineligible
         assert "attackers" not in errors  # replay satisfies the source metric
         # A non-replay attacker alone -> the source-metric guard rejects it
         # (the arm would produce no scored cell), naming the required metric.
-        errors2 = app._validate_builder(
-            {
-                "mode": "dry_run",
-                "corpora": "rjudge_release",
-                "api": "anthropic:claude-opus-5",
-                "attackers": "crescendo",
-                "judges": "rules",
-                "out": "runs/sm2",
-                "seeds": "0",
-            }
-        )
+        errors2 = app._validate_builder({
+            "mode": "dry_run", "corpora": "rjudge_release",
+            "api": "anthropic:claude-opus-5", "attackers": "crescendo",
+            "judges": "rules", "out": "runs/sm2", "seeds": "0",
+        })
         assert "rjudge_safety_judgment" in errors2.get("attackers", "")
         assert "unscored cells" in errors2["attackers"]
         # gptgeochat_release is likewise runnable (not ineligible).
-        errors3 = app._validate_builder(
-            {
-                "mode": "dry_run",
-                "corpora": "gptgeochat_release",
-                "api": "anthropic:claude-opus-5",
-                "attackers": "replay",
-                "judges": "rules",
-                "out": "runs/sm3",
-                "seeds": "0",
-            }
-        )
+        errors3 = app._validate_builder({
+            "mode": "dry_run", "corpora": "gptgeochat_release",
+            "api": "anthropic:claude-opus-5", "attackers": "replay",
+            "judges": "rules", "out": "runs/sm3", "seeds": "0",
+        })
         assert "corpora" not in errors3
-        mixed = app._validate_builder(
-            {
-                "mode": "dry_run",
-                "corpora": "rjudge_release",
-                "api": "anthropic:claude-opus-5",
-                "attackers": "replay,crescendo",
-                "judges": "rules",
-                "out": "runs/sm4",
-                "seeds": "0",
-            }
-        )
+        mixed = app._validate_builder({
+            "mode": "dry_run", "corpora": "rjudge_release",
+            "api": "anthropic:claude-opus-5",
+            "attackers": "replay,crescendo", "judges": "rules",
+            "out": "runs/sm4", "seeds": "0",
+        })
         assert "unscored cells" in mixed.get("attackers", "")
     finally:
         app.close()
@@ -2567,60 +2324,32 @@ def test_lane_projection_reads_grand_totals_not_per_attacker(tmp_path: Path) -> 
     # understate the ceiling and enable Start below the true bound.
     app = _isolated_app(tmp_path)
     planning_params = {
-        "mode": "measured",
-        "out": "runs/measured",
-        "corpora": "synth",
-        "attackers": "replay,crescendo",
-        "judges": "rules",
-        "cap_target": "9999",
-        "cap_judge": "9999",
-        "cap_http": "9999",
+        "mode": "measured", "out": "runs/measured", "corpora": "synth",
+        "attackers": "replay,crescendo", "judges": "rules",
+        "cap_target": "9999", "cap_judge": "9999", "cap_http": "9999",
     }
     proj_dir = app._preflight_output_dir(planning_params)
-    assert (
-        rig_check.main(
-            [
-                "--dry-run",
-                "--attackers",
-                "replay,crescendo",
-                "--judges",
-                "rules",
-                "--corpora",
-                "synth",
-                "--limit",
-                "2",
-                "--seeds",
-                "0",
-                "--max-queries",
-                "4",
-                "--max-turns",
-                "4",
-                "--out",
-                str(proj_dir),
-            ]
-        )
-        == 0
-    )
+    assert rig_check.main([
+        "--dry-run", "--attackers", "replay,crescendo", "--judges", "rules",
+        "--corpora", "synth", "--limit", "2", "--seeds", "0",
+        "--max-queries", "4", "--max-turns", "4", "--out", str(proj_dir),
+    ]) == 0
     projection_path = next(proj_dir.glob("*.lane-projection.json"))
     projection = json.loads(projection_path.read_text(encoding="utf-8"))
     job_dir = tmp_path / "preflight-job"
     job_dir.mkdir()
     (job_dir / "stdout.log").write_text(
         "prospective no-call lane projection written: "
-        + json.dumps({"artifact": projection_path.name})
-        + "\n",
+        + json.dumps({"artifact": projection_path.name}) + "\n",
         encoding="utf-8",
     )
     (job_dir / "stderr.log").write_text("", encoding="utf-8")
     app.jobs["preflight"] = Job(
-        job_id="preflight",
-        command="run_matrix",
-        argv=["python", "-m", "experiments.run_matrix", "--preflight-only", "--out", str(proj_dir)],
-        directory=job_dir,
-        process=None,
-        builder_params=planning_params,
-        restored_state="complete",
-        restored_exit=0,
+        job_id="preflight", command="run_matrix",
+        argv=["python", "-m", "experiments.run_matrix", "--preflight-only",
+              "--out", str(proj_dir)],
+        directory=job_dir, process=None, builder_params=planning_params,
+        restored_state="complete", restored_exit=0,
     )
     # RUN_AND_RETURN permits replacing the provisional planning caps with the
     # exact printed totals. That cap-only change must reuse this same validated
@@ -2661,14 +2390,15 @@ def test_lane_projection_reads_grand_totals_not_per_attacker(tmp_path: Path) -> 
 
 
 def test_exact_modality_admission_before_popen(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # A target that serves only text cannot run a text+image arm - complete
     # exact modality, not "shares any" - and it is rejected on the form.
     app = _operator_registry_app(tmp_path)
     started = len(app.jobs)
-    api_registry = app.repo_root / "experiments" / "rig" / "api-targets.example.json"
+    api_registry = (
+        app.repo_root / "experiments" / "rig" / "api-targets.example.json"
+    )
     api_document = json.loads(api_registry.read_text(encoding="utf-8"))
     api_document["anthropic:textonly"] = {
         "modalities": ["text"],
@@ -2677,39 +2407,24 @@ def test_exact_modality_admission_before_popen(
     }
     api_registry.write_text(json.dumps(api_document), encoding="utf-8")
     monkeypatch.setattr(
-        app,
-        "_model_options",
+        app, "_model_options",
         lambda: [("anthropic:textonly", "textonly", ("text",), "api")],
     )
     try:
-        _s, _c, body = app.handle(
-            "POST",
-            "/build",
-            {
-                "mode": "dry_run",
-                "corpora": "mmsafety_official",
-                "api": "anthropic:textonly",
-                "attackers": "replay",
-                "judges": "rules",
-                "out": "runs/m",
-                "seeds": "0",
-            },
-        )
+        _s, _c, body = app.handle("POST", "/build", {
+            "mode": "dry_run", "corpora": "mmsafety_official",
+            "api": "anthropic:textonly", "attackers": "replay",
+            "judges": "rules", "out": "runs/m", "seeds": "0",
+        })
         text = body.decode("utf-8")
         assert "requires all of" in text and "mmsafety_official" in text
         assert len(app.jobs) == started
         # A compatible target (serves image) is admitted: no modality error.
-        errors = app._validate_builder(
-            {
-                "mode": "dry_run",
-                "corpora": "strongreject_official",
-                "api": "anthropic:textonly",
-                "attackers": "replay",
-                "judges": "rules",
-                "out": "runs/m",
-                "seeds": "0",
-            }
-        )
+        errors = app._validate_builder({
+            "mode": "dry_run", "corpora": "strongreject_official",
+            "api": "anthropic:textonly", "attackers": "replay",
+            "judges": "rules", "out": "runs/m", "seeds": "0",
+        })
         assert "models" not in errors  # text arm on a text target is fine
     finally:
         app.close()
@@ -2720,74 +2435,46 @@ def test_guardrail_separation_and_wiring(tmp_path: Path) -> None:
     try:
         # Same model for scoring + defense guard is rejected (a guard must not
         # grade its own output).
-        errors = app._validate_builder(
-            {
-                "mode": "dry_run",
-                "corpora": "strongreject_official",
-                "api": "anthropic:claude-opus-5",
-                "attackers": "replay",
-                "judges": "rules,guardrail",
-                "defense": "output",
-                "defense_guard": "guardrail",
-                "guardrail_model": "vllm:guard",
-                "guardrail_revision": "d" * 40,
-                "defense_guardrail_model": "vllm:guard",
-                "out": "runs/g",
-                "seeds": "0",
-            }
-        )
+        errors = app._validate_builder({
+            "mode": "dry_run", "corpora": "strongreject_official",
+            "api": "anthropic:claude-opus-5", "attackers": "replay",
+            "judges": "rules,guardrail", "defense": "output",
+            "defense_guard": "guardrail", "guardrail_model": "vllm:guard",
+            "guardrail_revision": "d" * 40,
+            "defense_guardrail_model": "vllm:guard", "out": "runs/g", "seeds": "0",
+        })
         assert "defense_guardrail_model" in errors
         assert "distinct" in errors["defense_guardrail_model"]
         # The guardrail judge requires a scoring guardrail model.
-        errors = app._validate_builder(
-            {
-                "mode": "dry_run",
-                "corpora": "strongreject_official",
-                "api": "anthropic:claude-opus-5",
-                "attackers": "replay",
-                "judges": "guardrail",
-                "out": "runs/g",
-                "seeds": "0",
-            }
-        )
+        errors = app._validate_builder({
+            "mode": "dry_run", "corpora": "strongreject_official",
+            "api": "anthropic:claude-opus-5", "attackers": "replay",
+            "judges": "guardrail", "out": "runs/g", "seeds": "0",
+        })
         assert "guardrail_model" in errors
         assert "not installed" in errors["guardrail_model"]
-        defense_missing = app._validate_builder(
-            {
-                "mode": "dry_run",
-                "corpora": "strongreject_official",
-                "api": "anthropic:claude-opus-5",
-                "attackers": "replay",
-                "judges": "rules",
-                "defense": "output",
-                "defense_guard": "guardrail",
-                "defense_guardrail_model": "vllm:defender",
-                "out": "runs/g",
-                "seeds": "0",
-            }
-        )
+        defense_missing = app._validate_builder({
+            "mode": "dry_run", "corpora": "strongreject_official",
+            "api": "anthropic:claude-opus-5", "attackers": "replay",
+            "judges": "rules", "defense": "output",
+            "defense_guard": "guardrail",
+            "defense_guardrail_model": "vllm:defender",
+            "out": "runs/g", "seeds": "0",
+        })
         assert "defense_guardrail_revision" in defense_missing
         assert "defense_guardrail_device" in defense_missing
         # Distinct guards + models wire the separate flags.
-        _cmd, values, _p = app._compose_from_builder(
-            {
-                "mode": "dry_run",
-                "corpora": "strongreject_official",
-                "api": "anthropic:claude-opus-5",
-                "attackers": "replay",
-                "judges": "rules,guardrail",
-                "defense": "output",
-                "defense_guard": "guardrail",
-                "guardrail_model": "vllm:scorer",
-                "guardrail_revision": "d" * 40,
-                "guardrail_device": "cuda:0",
-                "defense_guardrail_model": "vllm:defender",
-                "defense_guardrail_revision": "e" * 40,
-                "defense_guardrail_device": "cuda:1",
-                "out": "runs/g",
-                "seeds": "0",
-            }
-        )
+        _cmd, values, _p = app._compose_from_builder({
+            "mode": "dry_run", "corpora": "strongreject_official",
+            "api": "anthropic:claude-opus-5", "attackers": "replay",
+            "judges": "rules,guardrail", "defense": "output",
+            "defense_guard": "guardrail", "guardrail_model": "vllm:scorer",
+            "guardrail_revision": "d" * 40, "guardrail_device": "cuda:0",
+            "defense_guardrail_model": "vllm:defender",
+            "defense_guardrail_revision": "e" * 40,
+            "defense_guardrail_device": "cuda:1",
+            "out": "runs/g", "seeds": "0",
+        })
         assert values["--guardrail-model"] == "vllm:scorer"
         assert values["--guardrail-device"] == "cuda:0"
         assert values["--defense-guardrail-model"] == "vllm:defender"
@@ -2802,40 +2489,25 @@ def test_builder_ordinary_dry_run_synth(tmp_path: Path) -> None:
     try:
         _s, _c, body = app.handle("GET", "/build")
         assert "data-arm='synth'" in body.decode("utf-8")  # synth is selectable
-        _cmd, values, _p = app._compose_from_builder(
-            {
-                "mode": "dry_run",
-                "corpora": "synth",
-                "api": "anthropic:claude-opus-5",
-                "attackers": "replay",
-                "judges": "rules",
-                "out": "runs/s",
-                "seeds": "0",
-            }
-        )
+        _cmd, values, _p = app._compose_from_builder({
+            "mode": "dry_run", "corpora": "synth", "api": "anthropic:claude-opus-5",
+            "attackers": "replay", "judges": "rules", "out": "runs/s", "seeds": "0",
+        })
         assert values["--dry-run"] == "on"
         assert values["--corpora"] == "synth"
         # No admission receipts leak into an offline lane.
         assert "--source-conformance" not in values
-        errors = app._validate_builder(
-            {
-                "mode": "dry_run",
-                "corpora": "synth",
-                "api": "anthropic:claude-opus-5",
-                "attackers": "replay",
-                "judges": "rules",
-                "out": "runs/s",
-                "seeds": "0",
-            }
-        )
+        errors = app._validate_builder({
+            "mode": "dry_run", "corpora": "synth", "api": "anthropic:claude-opus-5",
+            "attackers": "replay", "judges": "rules", "out": "runs/s", "seeds": "0",
+        })
         assert errors == {}
     finally:
         app.close()
 
 
 def test_no_call_projection_gates_start(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The preview reads the no-call preflight's lane-projection and blocks Start
     # when an entered ceiling is below the projected required upper bound.
@@ -2844,42 +2516,30 @@ def test_no_call_projection_gates_start(
     results = tmp_path / "runs"
     results.mkdir()
     app = RigWebApp(
-        results_root=results,
-        state_dir=tmp_path / "state",
-        repo_root=repo,
+        results_root=results, state_dir=tmp_path / "state", repo_root=repo,
     )
     try:
         out_rel = "runs/grid1"
         monkeypatch.setattr(
-            app,
-            "_read_lane_projection",
-            lambda _params: ({"target_calls": 100, "judge_calls": 50, "http_attempts": 300}, ""),
+            app, "_read_lane_projection",
+            lambda _params: ({"target_calls": 100, "judge_calls": 50,
+                              "http_attempts": 300}, ""),
         )
         # Under-provisioned ceilings block Start.
-        html_out, ok = app._ceilings_card(
-            {
-                "out": out_rel,
-                "cap_target": "50",
-                "cap_judge": "50",
-                "cap_http": "300",
-            }
-        )
+        html_out, ok = app._ceilings_card({
+            "out": out_rel, "cap_target": "50", "cap_judge": "50",
+            "cap_http": "300",
+        })
         assert ok is False and "below required" in html_out
         # Sufficient ceilings pass.
-        html_out, ok = app._ceilings_card(
-            {
-                "out": out_rel,
-                "cap_target": "100",
-                "cap_judge": "50",
-                "cap_http": "300",
-            }
-        )
+        html_out, ok = app._ceilings_card({
+            "out": out_rel, "cap_target": "100", "cap_judge": "50",
+            "cap_http": "300",
+        })
         assert ok is True and "covers" in html_out
         # No exact projection yet -> Start remains blocked.
         monkeypatch.setattr(
-            app,
-            "_read_lane_projection",
-            lambda _params: (None, "run preflight"),
+            app, "_read_lane_projection", lambda _params: (None, "run preflight"),
         )
         _html, ok = app._ceilings_card({"out": "runs/empty"})
         assert ok is False
@@ -2888,8 +2548,7 @@ def test_no_call_projection_gates_start(
 
 
 def test_builder_preflight_strips_live_fields_and_uses_dedicated_output(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_receipt = tmp_path / "p.json"
     source_receipt = tmp_path / "s.json"
@@ -2907,49 +2566,32 @@ def test_builder_preflight_strips_live_fields_and_uses_dedicated_output(
     )
     app = _operator_registry_app(tmp_path)
     attestation_receipt = tmp_path / "att.json"
-    attestation_receipt.write_text('{"schema":"fixture-attestation"}\n', encoding="utf-8")
+    attestation_receipt.write_text(
+        '{"schema":"fixture-attestation"}\n', encoding="utf-8"
+    )
     attestation_sha = hashlib.sha256(attestation_receipt.read_bytes()).hexdigest()
     captured: dict[str, object] = {}
 
     def fake_start(command, values, *, builder_params=None, **_kwargs):
         captured.update(command=command, values=dict(values), params=builder_params)
         return Job(
-            job_id="preflight",
-            command=command,
-            argv=build_argv(command, values),
-            directory=tmp_path / "fake-job",
-            process=None,
-            builder_params=dict(builder_params or {}),
-            restored_state="complete",
+            job_id="preflight", command=command, argv=build_argv(command, values),
+            directory=tmp_path / "fake-job", process=None,
+            builder_params=dict(builder_params or {}), restored_state="complete",
             restored_exit=0,
         )
 
     monkeypatch.setattr(app, "start_job", fake_start)
     measured_out = "runs/measured-lane"
-    status, location, _ = app.handle(
-        "POST",
-        "/build",
-        {
-            "preflight_only": "yes",
-            "mode": "measured",
-            "corpora": "strongreject_official",
-            "api": "anthropic:claude-opus-5",
-            "attackers": "replay",
-            "judges": "rules",
-            "limit": "1",
-            "sample_seed": "0",
-            "seeds": "0",
-            "scope": "scope-1",
-            "max_age": "24",
-            "att_path1": str(attestation_receipt),
-            "att_sha1": attestation_sha,
-            "cap_target": "10",
-            "cap_judge": "10",
-            "cap_http": "30",
-            "deadline": "600",
-            "out": measured_out,
-        },
-    )
+    status, location, _ = app.handle("POST", "/build", {
+        "preflight_only": "yes", "mode": "measured",
+        "corpora": "strongreject_official", "api": "anthropic:claude-opus-5",
+        "attackers": "replay", "judges": "rules", "limit": "1",
+        "sample_seed": "0", "seeds": "0", "scope": "scope-1",
+        "max_age": "24", "att_path1": str(attestation_receipt),
+        "att_sha1": attestation_sha, "cap_target": "10", "cap_judge": "10",
+        "cap_http": "30", "deadline": "600", "out": measured_out,
+    })
     assert status == 303 and location == "/jobs/preflight"
     values = captured["values"]
     assert values["--preflight-only"] == "on"
@@ -2982,7 +2624,6 @@ def test_builder_preflight_consumes_private_project_receipt_and_makes_no_calls(
     # Match only Build's preliminary HEAD lookup to that declared fixture.
     import subprocess
     from experiments.rig_web_app import builder_validation
-
     original_run = subprocess.run
 
     def fixture_head(argv, *args, **kwargs):
@@ -3042,7 +2683,9 @@ def test_builder_preflight_consumes_private_project_receipt_and_makes_no_calls(
     monkeypatch.setattr(
         run_matrix,
         "build_target",
-        lambda *_args, **_kwargs: NoGenerationTarget("anthropic:claude-haiku-4-5-20251001"),
+        lambda *_args, **_kwargs: NoGenerationTarget(
+            "anthropic:claude-haiku-4-5-20251001"
+        ),
     )
     preflight_out = app.results_root / "preflight" / "private-revision"
     preflight_values = app._builder_preflight_values(
@@ -3063,7 +2706,6 @@ def test_builder_preflight_consumes_private_project_receipt_and_makes_no_calls(
 
 def test_local_targets_repo_root_parity() -> None:
     from experiments.rig_web import build_argv
-
     argv = build_argv("local_targets", {"--repo-root": "/some/repo", "--refresh": "on"})
     assert "--repo-root" in argv and "/some/repo" in argv
 
@@ -3074,21 +2716,12 @@ def test_builder_mode_validation_rejects_before_subprocess(tmp_path: Path) -> No
     # field-level rejection (a canary is exactly one whole source cluster).
     app = _app(tmp_path)
     started = len(app.jobs)
-    status, _, body = app.handle(
-        "POST",
-        "/build",
-        {
-            "mode": "diagnostic_canary",
-            "corpora": "strongreject_official",
-            "api": "anthropic:claude-opus-5",
-            "attackers": "replay",
-            "judges": "rules,llm",
-            "limit": "8",
-            "sample_seed": "0",
-            "out": "runs/thesis/canary",
-            "seeds": "0",
-        },
-    )
+    status, _, body = app.handle("POST", "/build", {
+        "mode": "diagnostic_canary", "corpora": "strongreject_official",
+        "api": "anthropic:claude-opus-5", "attackers": "replay",
+        "judges": "rules,llm", "limit": "8", "sample_seed": "0",
+        "out": "runs/thesis/canary", "seeds": "0",
+    })
     text = body.decode("utf-8")
     assert status == 200
     assert "exactly --limit 1" in text
@@ -3096,84 +2729,44 @@ def test_builder_mode_validation_rejects_before_subprocess(tmp_path: Path) -> No
     assert len(app.jobs) == started  # nothing composed or executed
 
     # Attestation probe: shape constraints are all enforced.
-    status, _, body = app.handle(
-        "POST",
-        "/build",
-        {
-            "mode": "attestation_probe",
-            "corpora": "a,b",
-            "api": "x,y",
-            "attackers": "replay,crescendo",
-            "judges": "rules",
-            "limit": "3",
-            "out": "runs/p",
-            "seeds": "0,1",
-            "defense": "input",
-            "max_queries": "2",
-            "max_turns": "2",
-        },
-    )
+    status, _, body = app.handle("POST", "/build", {
+        "mode": "attestation_probe", "corpora": "a,b",
+        "api": "x,y", "attackers": "replay,crescendo", "judges": "rules",
+        "limit": "3", "out": "runs/p", "seeds": "0,1", "defense": "input",
+        "max_queries": "2", "max_turns": "2",
+    })
     text = body.decode("utf-8")
     assert status == 200 and len(app.jobs) == started
     for message in (
-        "exactly one target",
-        "exactly one corpus",
-        "exactly the replay attacker",
-        "exactly one seed",
-        "defense none",
-        "--limit 1 or 2",
+        "exactly one target", "exactly one corpus",
+        "exactly the replay attacker", "exactly one seed",
+        "defense none", "--limit 1 or 2",
     ):
         assert message in text, message
 
     # A dry canary is composed as offline-synthetic (corpora synth, targets
     # dropped) rather than rejected, so a submission with an arm/target still
     # selected validates and starts a job.  A too-large limit is still caught.
-    status, _, body = app.handle(
-        "POST",
-        "/build",
-        {
-            "mode": "diagnostic_canary",
-            "canary_dry": "on",
-            "corpora": "strongreject_official",
-            "api": "anthropic:claude-opus-5",
-            "attackers": "replay",
-            "judges": "rules",
-            "limit": "8",
-            "out": "runs/c",
-            "seeds": "0",
-        },
-    )
+    status, _, body = app.handle("POST", "/build", {
+        "mode": "diagnostic_canary", "canary_dry": "on",
+        "corpora": "strongreject_official", "api": "anthropic:claude-opus-5",
+        "attackers": "replay", "judges": "rules", "limit": "8",
+        "out": "runs/c", "seeds": "0",
+    })
     text = body.decode("utf-8")
     assert status == 200 and len(app.jobs) == started
     assert "exactly --limit 1" in text
 
     # Measured execution requires receipts, scope, age, attestations, caps.
-    status, _, body = app.handle(
-        "POST",
-        "/build",
-        {
-            "mode": "measured",
-            "corpora": "synth",
-            "api": "anthropic:claude-opus-5",
-            "attackers": "replay",
-            "judges": "rules",
-            "out": "runs/m",
-            "seeds": "0",
-        },
-    )
+    status, _, body = app.handle("POST", "/build", {
+        "mode": "measured", "corpora": "synth",
+        "api": "anthropic:claude-opus-5", "attackers": "replay",
+        "judges": "rules", "out": "runs/m", "seeds": "0",
+    })
     text = body.decode("utf-8")
     assert status == 200 and len(app.jobs) == started
-    for field in (
-        "scope",
-        "max_age",
-        "att",
-        "cap_target",
-        "cap_judge",
-        "cap_http",
-        "deadline",
-        "limit",
-        "project_revision",
-    ):
+    for field in ("scope", "max_age", "att", "cap_target", "cap_judge",
+                  "cap_http", "deadline", "limit", "project_revision"):
         assert f"<strong>{field}</strong>" in text, field
 
 
@@ -3181,18 +2774,11 @@ def test_builder_dry_run_composes_and_starts(tmp_path: Path) -> None:
     # The ordinary synthetic dry run and the typed synthetic diagnostic
     # canary both compose a valid no-provider command and start directly.
     app = _app(tmp_path)
-    command, values, params = app._compose_from_builder(
-        {
-            "mode": "dry_run",
-            "corpora": "synth",
-            "attackers": "replay",
-            "judges": "rules,llm",
-            "judge_model": "mock",
-            "out": "runs/dry",
-            "seeds": "0",
-            "limit": "2",
-        }
-    )
+    command, values, params = app._compose_from_builder({
+        "mode": "dry_run", "corpora": "synth", "attackers": "replay",
+        "judges": "rules,llm", "judge_model": "mock", "out": "runs/dry",
+        "seeds": "0", "limit": "2",
+    })
     assert command == "run_matrix"
     assert values["--dry-run"] == "on"
     assert values["--judge-model"] == "mock"
@@ -3203,45 +2789,31 @@ def test_builder_dry_run_composes_and_starts(tmp_path: Path) -> None:
     parsed = run_matrix.build_parser().parse_args(argv[3:])
     assert parsed.dry_run is True and parsed.corpora == "synth"
 
-    command, values, _params = app._compose_from_builder(
-        {
-            "mode": "diagnostic_canary",
-            "canary_dry": "on",
-            "corpora": "synth",
-            "attackers": "replay",
-            "judges": "rules",
-            "limit": "1",
-            "out": "runs/c",
-            "seeds": "0",
-        }
-    )
+    command, values, _params = app._compose_from_builder({
+        "mode": "diagnostic_canary", "canary_dry": "on", "corpora": "synth",
+        "attackers": "replay", "judges": "rules", "limit": "1",
+        "out": "runs/c", "seeds": "0",
+    })
     assert values["--diagnostic-canary"] == "on"
     assert values["--dry-run"] == "on"
-    parsed = run_matrix.build_parser().parse_args(build_argv(command, values)[3:])
+    parsed = run_matrix.build_parser().parse_args(
+        build_argv(command, values)[3:]
+    )
     assert parsed.diagnostic_canary is True and parsed.dry_run is True
     # Dry composition never leaks env receipts into the offline command.
     assert "--project-revision" not in build_argv(command, values)
 
-    status, location, _ = app.handle(
-        "POST",
-        "/build",
-        {
-            "mode": "dry_run",
-            "corpora": "synth",
-            "attackers": "replay",
-            "judges": "rules",
-            "out": "runs/dry",
-            "seeds": "0",
-        },
-    )
+    status, location, _ = app.handle("POST", "/build", {
+        "mode": "dry_run", "corpora": "synth", "attackers": "replay",
+        "judges": "rules", "out": "runs/dry", "seeds": "0",
+    })
     assert status == 303 and location.startswith("/jobs/")
     app.stop_job(location.rsplit("/", 1)[1])
     app.close()
 
 
 def test_builder_paid_modes_preview_exact_argv_then_confirm(
-    tmp_path: Path,
-    monkeypatch,
+    tmp_path: Path, monkeypatch,
 ) -> None:
     # Final prepared review shows exact argv and call ceilings before a paid
     # start. Initial Build submission's automatic preparation is tested apart.
@@ -3252,27 +2824,17 @@ def test_builder_paid_modes_preview_exact_argv_then_confirm(
     monkeypatch.setenv("URA_PROJECT_REVISION_SHA256", project_sha)
     app = _app(tmp_path)
     monkeypatch.setattr(
-        app,
-        "_read_lane_projection",
-        lambda _params: ({"target_calls": 4, "judge_calls": 4, "http_attempts": 12}, ""),
+        app, "_read_lane_projection",
+        lambda _params: ({"target_calls": 4, "judge_calls": 4,
+                          "http_attempts": 12}, ""),
     )
     form = {
-        "mode": "attestation_probe",
-        "corpora": "synth",
-        "api": "anthropic:claude-opus-5",
-        "attackers": "replay",
-        "judges": "rules",
-        "limit": "1",
-        "seeds": "0",
-        "sample_seed": "0",
-        "scope": "acct-scope-1",
-        "max_queries": "1",
-        "max_turns": "1",
-        "cap_target": "4",
-        "cap_judge": "4",
-        "cap_http": "12",
-        "deadline": "600",
-        "out": "runs/probe",
+        "mode": "attestation_probe", "corpora": "synth",
+        "api": "anthropic:claude-opus-5", "attackers": "replay",
+        "judges": "rules", "limit": "1", "seeds": "0", "sample_seed": "0",
+        "scope": "acct-scope-1", "max_queries": "1", "max_turns": "1",
+        "cap_target": "4", "cap_judge": "4", "cap_http": "12",
+        "deadline": "600", "out": "runs/probe",
     }
     started = len(app.jobs)
     command, values, params = app._compose_from_builder(form)
@@ -3287,14 +2849,10 @@ def test_builder_paid_modes_preview_exact_argv_then_confirm(
     assert "name='confirm' value='yes'" in text
     ticket_match = re.search(r"name='launch_ticket' value='([^']+)'", text)
     assert ticket_match is not None
-    status, location, _ = app.handle(
-        "POST",
-        "/build",
-        {
-            "confirm": "yes",
-            "launch_ticket": ticket_match.group(1),
-        },
-    )
+    status, location, _ = app.handle("POST", "/build", {
+        "confirm": "yes",
+        "launch_ticket": ticket_match.group(1),
+    })
     assert status == 303 and len(app.jobs) == started + 1
     assert location.startswith("/operations/")
     operation = app._operations[location.rsplit("/", 1)[1]]
@@ -3377,16 +2935,10 @@ def test_paid_launch_ticket_is_atomic_one_shot_under_concurrent_replay(
 
     def replay() -> None:
         barrier.wait()
-        responses.append(
-            app.handle(
-                "POST",
-                "/build",
-                {
-                    "confirm": "yes",
-                    "launch_ticket": ticket,
-                },
-            )
-        )
+        responses.append(app.handle("POST", "/build", {
+            "confirm": "yes",
+            "launch_ticket": ticket,
+        }))
 
     threads = [threading.Thread(target=replay) for _ in range(2)]
     for thread in threads:
@@ -3405,23 +2957,15 @@ def test_paid_launch_ticket_is_atomic_one_shot_under_concurrent_replay(
         # A changed POST consumes its capability before it is rejected, so a
         # later clean replay cannot recover or launch it.
         changed_ticket = app._new_launch_ticket(params)
-        changed = app.handle(
-            "POST",
-            "/build",
-            {
-                "confirm": "yes",
-                "launch_ticket": changed_ticket,
-                "mode": "dry_run",
-            },
-        )
-        replayed = app.handle(
-            "POST",
-            "/build",
-            {
-                "confirm": "yes",
-                "launch_ticket": changed_ticket,
-            },
-        )
+        changed = app.handle("POST", "/build", {
+            "confirm": "yes",
+            "launch_ticket": changed_ticket,
+            "mode": "dry_run",
+        })
+        replayed = app.handle("POST", "/build", {
+            "confirm": "yes",
+            "launch_ticket": changed_ticket,
+        })
         assert changed[0] == replayed[0] == 200
         assert b"confirmation expired or was changed" in changed[2]
         assert b"confirmation expired or was changed" in replayed[2]
@@ -3473,16 +3017,11 @@ def test_builder_targets_split_hosted_and_local_vllm_roster(tmp_path: Path) -> N
     app._local_entry_catalog = lambda: (catalog, explicit)  # type: ignore[method-assign]
     # A build with a local target composes --local and binds --local-config
     # only when a local target is selected.
-    _cmd, values, _params = app._compose_from_builder(
-        {
-            "mode": "measured",
-            "corpora": "synth",
-            "local": spec,
-            "attackers": "replay",
-            "judges": "rules",
-            "out": "runs/x",
-        }
-    )
+    _cmd, values, _params = app._compose_from_builder({
+        "mode": "measured", "corpora": "synth",
+        "local": spec, "attackers": "replay",
+        "judges": "rules", "out": "runs/x",
+    })
     assert values["--local"] == spec
     assert "--api" not in values
     app.close()
@@ -3516,30 +3055,22 @@ def test_dashboard_and_builder_show_startup_system_and_gpu_hardware(
         "cpu_model": "AMD Ryzen Threadripper TEST",
         "logical_cpu_count": 64,
         "physical_cpu_count": 32,
-        "total_ram_bytes": 128 * 1024**3,
+        "total_ram_bytes": 128 * 1024 ** 3,
         "total_ram_gib": 128.0,
     }
     app = RigWebApp(
-        results_root=tmp_path / "runs",
-        state_dir=tmp_path / "state",
-        gpu_hardware=gpu_hardware,
-        system_hardware=system_hardware,
+        results_root=tmp_path / "runs", state_dir=tmp_path / "state",
+        gpu_hardware=gpu_hardware, system_hardware=system_hardware,
     )
     dashboard = app.handle("GET", "/")[2].decode("utf-8")
     builder = app.handle("GET", "/build")[2].decode("utf-8")
 
     assert "Rig hardware" in dashboard
     for expected in (
-        "Linux-6.8.0-x86_64",
-        "AMD Ryzen Threadripper TEST",
-        "32 physical / 64 logical",
-        "128.0 GiB",
-        "NVIDIA RTX 4090",
-        "23.99 GiB VRAM",
-        "SM 8.9",
-        "PCI 00000000:01:00.0",
-        "driver 610.57.04",
-        "47.98 GiB",
+        "Linux-6.8.0-x86_64", "AMD Ryzen Threadripper TEST",
+        "32 physical / 64 logical", "128.0 GiB", "NVIDIA RTX 4090",
+        "23.99 GiB VRAM", "SM 8.9", "PCI 00000000:01:00.0",
+        "driver 610.57.04", "47.98 GiB",
     ):
         assert expected in dashboard
     assert "Local hardware" in builder
@@ -3557,110 +3088,80 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
     repo = tmp_path / "repo"
     rig = repo / "experiments" / "rig"
     rig.mkdir(parents=True)
-    (rig / "api-targets.example.json").write_text(
-        json.dumps(
-            {
-                "anthropic:claude-test": {
-                    "modalities": ["text"],
-                    "max_tokens": 64,
-                    "temperature": 0.0,
-                },
-                "openai:gpt-test": {
-                    "modalities": ["text", "image"],
-                    "max_tokens": 64,
-                    "temperature": 0.0,
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
+    (rig / "api-targets.example.json").write_text(json.dumps({
+        "anthropic:claude-test": {
+            "modalities": ["text"], "max_tokens": 64, "temperature": 0.0,
+        },
+        "openai:gpt-test": {
+            "modalities": ["text", "image"],
+            "max_tokens": 64,
+            "temperature": 0.0,
+        },
+    }), encoding="utf-8")
     local_checkpoint = f"vllm:{(tmp_path / 'checkpoint').resolve()}"
     ollama_spec = "ollama:fixture:latest"
-    (rig / "local-targets.example.json").write_text(
-        json.dumps(
-            {
-                local_checkpoint: {
-                    "digest": "6" * 64,
-                    "modalities": ["text"],
-                    "parameter_count_b": 7,
-                },
-                ollama_spec: {
-                    "digest": "A" * 64,
-                    "modalities": ["text"],
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    (rig / "vllm-roster.example.json").write_text(
-        json.dumps(
-            {
-                "vllm_version": "0.test",
-                "models": {
-                    "vllm:org/Tiny-10M": {
-                        "revision": "A" * 40,
-                        "modalities": ["text"],
-                        "parameter_count_b": 0.01,
-                    },
-                    "vllm:org/Model-70B": {
-                        "revision": "2" * 40,
-                        "modalities": ["text"],
-                        "parameter_count_b": 70,
-                        "quantization": "bitsandbytes",
-                    },
-                    "vllm:org/Model-30B": {
-                        "revision": "7" * 40,
-                        "modalities": ["text"],
-                        "parameter_count_b": 30,
-                    },
-                    "vllm:org/Model-34B": {
-                        "revision": "9" * 40,
-                        "modalities": ["text"],
-                        "parameter_count_b": 34,
-                    },
-                    "vllm:org/Override-7B": {
-                        "revision": "8" * 40,
-                        "modalities": ["text"],
-                        "parameter_count_b": 7,
-                        "quantization": "gptq",
-                    },
-                    "vllm:org/Lower-7B": {
-                        "revision": "OPERATOR_TODO",
-                        "modalities": ["text"],
-                        "parameter_count_b": 7,
-                    },
-                    "vllm:org/Audio-7B": {
-                        "revision": "4" * 40,
-                        "modalities": ["text", "audio"],
-                        "parameter_count_b": 7,
-                    },
-                    "vllm:org/DigestOnly-7B": {
-                        "digest": "5" * 64,
-                        "modalities": ["text"],
-                        "parameter_count_b": 7,
-                    },
-                    "vllm:org/Huge-4T": {
-                        "revision": "3" * 40,
-                        "modalities": ["text"],
-                        "parameter_count_b": 4000,
-                    },
-                    "vllm:org/Unknown": {
-                        "revision": "4" * 40,
-                        "modalities": ["text"],
-                    },
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
+    (rig / "local-targets.example.json").write_text(json.dumps({
+        local_checkpoint: {
+            "digest": "6" * 64, "modalities": ["text"],
+            "parameter_count_b": 7,
+        },
+        ollama_spec: {
+            "digest": "A" * 64, "modalities": ["text"],
+        },
+    }), encoding="utf-8")
+    (rig / "vllm-roster.example.json").write_text(json.dumps({
+        "vllm_version": "0.test",
+        "models": {
+            "vllm:org/Tiny-10M": {
+                "revision": "A" * 40, "modalities": ["text"],
+                "parameter_count_b": 0.01,
+            },
+            "vllm:org/Model-70B": {
+                "revision": "2" * 40, "modalities": ["text"],
+                "parameter_count_b": 70,
+                "quantization": "bitsandbytes",
+            },
+            "vllm:org/Model-30B": {
+                "revision": "7" * 40, "modalities": ["text"],
+                "parameter_count_b": 30,
+            },
+            "vllm:org/Model-34B": {
+                "revision": "9" * 40, "modalities": ["text"],
+                "parameter_count_b": 34,
+            },
+            "vllm:org/Override-7B": {
+                "revision": "8" * 40, "modalities": ["text"],
+                "parameter_count_b": 7, "quantization": "gptq",
+            },
+            "vllm:org/Lower-7B": {
+                "revision": "OPERATOR_TODO", "modalities": ["text"],
+                "parameter_count_b": 7,
+            },
+            "vllm:org/Audio-7B": {
+                "revision": "4" * 40, "modalities": ["text", "audio"],
+                "parameter_count_b": 7,
+            },
+            "vllm:org/DigestOnly-7B": {
+                "digest": "5" * 64, "modalities": ["text"],
+                "parameter_count_b": 7,
+            },
+            "vllm:org/Huge-4T": {
+                "revision": "3" * 40, "modalities": ["text"],
+                "parameter_count_b": 4000,
+            },
+            "vllm:org/Unknown": {
+                "revision": "4" * 40, "modalities": ["text"],
+            },
+        },
+    }), encoding="utf-8")
     evidence = repo / "profile-readiness.json"
     evidence.write_text("{}\n", encoding="utf-8")
     configured_entries = json.loads(
         (rig / "local-targets.example.json").read_text(encoding="utf-8")
     )
-    roster_entries = json.loads((rig / "vllm-roster.example.json").read_text(encoding="utf-8"))[
-        "models"
-    ]
+    roster_entries = json.loads(
+        (rig / "vllm-roster.example.json").read_text(encoding="utf-8")
+    )["models"]
     profiles: dict[str, object] = {}
     for spec, entry in {**roster_entries, **configured_entries}.items():
         identity_key = "revision" if "revision" in entry else "digest"
@@ -3678,7 +3179,9 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
             "identity": {identity_key: identity.lower()},
             "local_execution": (
                 {
-                    "gpu_memory_utilization": entry.get("gpu_memory_utilization", 0.9),
+                    "gpu_memory_utilization": entry.get(
+                        "gpu_memory_utilization", 0.9
+                    ),
                     "max_model_len": -1,
                     "tensor_parallel_size": (
                         entry.get("tensor_parallel_size")
@@ -3698,45 +3201,28 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
             "request_timeout_seconds": 120.0,
         }
     (repo / "experiments" / "local-model-profiles.json").write_text(
-        json.dumps(
-            {
-                "schema": "ura-local-model-execution-profiles/3",
-                "models": profiles,
-            }
-        ),
+        json.dumps({
+            "schema": "ura-local-model-execution-profiles/3",
+            "models": profiles,
+        }),
         encoding="utf-8",
     )
     gpu_hardware = {
-        "available": True,
-        "source": "nvidia-smi",
-        "gpu_count": 2,
-        "aggregate_vram_gib": 47.98,
-        "max_gpu_vram_gib": 23.99,
+        "available": True, "source": "nvidia-smi", "gpu_count": 2,
+        "aggregate_vram_gib": 47.98, "max_gpu_vram_gib": 23.99,
         "gpus": [
-            {
-                "index": index,
-                "name": "RTX 4090",
-                "vram_gib": 23.99,
-                "memory_total_mib": 24564,
-                "compute_capability": "8.9",
-            }
+            {"index": index, "name": "RTX 4090", "vram_gib": 23.99,
+             "memory_total_mib": 24564, "compute_capability": "8.9"}
             for index in range(2)
         ],
     }
     app = RigWebApp(
-        results_root=tmp_path / "runs",
-        state_dir=tmp_path / "state",
-        repo_root=repo,
-        gpu_hardware=gpu_hardware,
-        system_hardware={
-            "available": False,
-            "platform": "test",
-            "cpu_model": "test",
-            "logical_cpu_count": None,
-            "physical_cpu_count": None,
-            "total_ram_bytes": None,
-            "total_ram_gib": None,
-        },
+        results_root=tmp_path / "runs", state_dir=tmp_path / "state",
+        repo_root=repo, gpu_hardware=gpu_hardware,
+        system_hardware={"available": False, "platform": "test",
+                         "cpu_model": "test", "logical_cpu_count": None,
+                         "physical_cpu_count": None, "total_ram_bytes": None,
+                         "total_ram_gib": None},
     )
     page = app.handle("GET", "/build")[2].decode("utf-8")
 
@@ -3751,7 +3237,7 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
     assert "id='local-unknown-filter'" in page
     unknown_filter_at = page.index("id='local-unknown-filter'")
     unknown_filter_tag = page[
-        page.rfind("<input", 0, unknown_filter_at) : page.find(">", unknown_filter_at)
+        page.rfind("<input", 0, unknown_filter_at):page.find(">", unknown_filter_at)
     ]
     assert "checked" not in unknown_filter_tag
     assert "Include unknown fit" in page
@@ -3784,23 +3270,29 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
     assert "A presentation filter never changes a selected target" in page
     unknown = "vllm:org/Unknown"
     unknown_at = page.index(f"data-model='{unknown}'")
-    unknown_input = page[page.rfind("<input", 0, unknown_at) : page.find(">", unknown_at)]
+    unknown_input = page[
+        page.rfind("<input", 0, unknown_at):page.find(">", unknown_at)
+    ]
     assert "disabled" not in unknown_input
-    assert (
-        "data-compatible='unknown'"
-        in page[page.rfind("<div class='modelrow'", 0, unknown_at) : unknown_at]
-    )
+    assert "data-compatible='unknown'" in page[
+        page.rfind("<div class='modelrow'", 0, unknown_at):unknown_at
+    ]
     unknown_row = page[
-        page.rfind("<div class='modelrow'", 0, unknown_at) : page.find("</div>", unknown_at)
+        page.rfind("<div class='modelrow'", 0, unknown_at):
+        page.find("</div>", unknown_at)
     ]
     assert "badge gray precision-badge precision-unknown" in unknown_row
     assert "<span class='precision-label'>fit unknown</span>" in unknown_row
-    unknown_tooltip = "The operator must choose a per-model precision before a live run."
+    unknown_tooltip = (
+        "The operator must choose a per-model precision before a live run."
+    )
     assert unknown_row.count(unknown_tooltip) == 1
     unknown_badge_at = unknown_row.index(
         "<span class='badge gray precision-badge precision-unknown tip'"
     )
-    unknown_badge_tag = unknown_row[unknown_badge_at : unknown_row.find(">", unknown_badge_at)]
+    unknown_badge_tag = unknown_row[
+        unknown_badge_at:unknown_row.find(">", unknown_badge_at)
+    ]
     assert "tabindex='0'" in unknown_badge_tag
     assert "title=" not in unknown_badge_tag
     assert "label.textContent=value==='auto'?\"fit unknown\"" in page
@@ -3810,8 +3302,8 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
     assert "Local Ollama (local daemon)" in page
     ollama_at = page.index(f"data-model='{ollama_spec}'")
     ollama_row = page[
-        page.rfind("<div class='modelrow'", 0, ollama_at) : page.find("</div>", ollama_at)
-        + len("</div>")
+        page.rfind("<div class='modelrow'", 0, ollama_at):
+        page.find("</div>", ollama_at) + len("</div>")
     ]
     assert "data-backend='ollama'" in ollama_row
     assert "digest pinned" in ollama_row
@@ -3852,8 +3344,12 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
             "excluded": [],
         },
     )
-    loaded_ollama, _artifact = run_matrix._load_local_config(str(ollama_config_path), [ollama_spec])
-    ollama_target = run_matrix.build_target(ollama_spec, local_identity=loaded_ollama[ollama_spec])
+    loaded_ollama, _artifact = run_matrix._load_local_config(
+        str(ollama_config_path), [ollama_spec]
+    )
+    ollama_target = run_matrix.build_target(
+        ollama_spec, local_identity=loaded_ollama[ollama_spec]
+    )
     assert ollama_target.__class__.__name__ == "OllamaTarget"
     assert ollama_target.num_ctx == "fit"
     assert "num_ctx" not in ollama_target._sampling_options()
@@ -3862,77 +3358,58 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
     # Rendering, validation, and generated execution config share one
     # precedence: per-model selection, then the submitted global default.
     model_34b = "vllm:org/Model-34B"
-    global_none_page = app._build_page(
-        prefill={
-            "quantization": "none",
-            f"quantization::{model_34b}": "auto",
-        }
-    ).decode("utf-8")
+    global_none_page = app._build_page(prefill={
+        "quantization": "none", f"quantization::{model_34b}": "auto",
+    }).decode("utf-8")
     model_34b_at = global_none_page.index(f"data-model='{model_34b}'")
     model_34b_row = global_none_page[
-        global_none_page.rfind("<div class='modelrow'", 0, model_34b_at) : global_none_page.find(
-            "<div class='modelrow'", model_34b_at
-        )
+        global_none_page.rfind("<div class='modelrow'", 0, model_34b_at):
+        global_none_page.find("<div class='modelrow'", model_34b_at)
     ]
     assert "data-compatible='false'" in model_34b_row
     assert "16-bit does not fit" in model_34b_row
 
     tiny = "vllm:org/Tiny-10M"
-    global_bnb_page = app._build_page(
-        prefill={
-            "quantization": "bitsandbytes",
-            f"quantization::{tiny}": "auto",
-        }
-    ).decode("utf-8")
+    global_bnb_page = app._build_page(prefill={
+        "quantization": "bitsandbytes", f"quantization::{tiny}": "auto",
+    }).decode("utf-8")
     tiny_at = global_bnb_page.index(f"data-model='{tiny}'")
     tiny_row = global_bnb_page[
-        global_bnb_page.rfind("<div class='modelrow'", 0, tiny_at) : global_bnb_page.find(
-            "<div class='modelrow'", tiny_at
-        )
+        global_bnb_page.rfind("<div class='modelrow'", 0, tiny_at):
+        global_bnb_page.find("<div class='modelrow'", tiny_at)
     ]
     assert "data-compatible='true'" in tiny_row
     assert "4-bit BitsAndBytes override" in tiny_row
 
-    per_model_page = app._build_page(
-        prefill={
-            "quantization": "bitsandbytes",
-            f"quantization::{tiny}": "none",
-        }
-    ).decode("utf-8")
+    per_model_page = app._build_page(prefill={
+        "quantization": "bitsandbytes", f"quantization::{tiny}": "none",
+    }).decode("utf-8")
     tiny_at = per_model_page.index(f"data-model='{tiny}'")
     tiny_row = per_model_page[
-        per_model_page.rfind("<div class='modelrow'", 0, tiny_at) : per_model_page.find(
-            "<div class='modelrow'", tiny_at
-        )
+        per_model_page.rfind("<div class='modelrow'", 0, tiny_at):
+        per_model_page.find("<div class='modelrow'", tiny_at)
     ]
     assert "16-bit override" in tiny_row
 
     incompatible = "vllm:org/Huge-4T"
     incompatible_at = page.index(f"data-model='{incompatible}'")
     incompatible_input = page[
-        page.rfind("<input", 0, incompatible_at) : page.find(">", incompatible_at)
+        page.rfind("<input", 0, incompatible_at):page.find(">", incompatible_at)
     ]
     assert "disabled" in incompatible_input
     audio = "vllm:org/Audio-7B"
     audio_at = page.index(f"data-name='{audio}'")
-    audio_row = page[
-        page.rfind("<div class='modelrow'", 0, audio_at) : page.find("</div>", audio_at)
-    ]
+    audio_row = page[page.rfind("<div class='modelrow'", 0, audio_at):
+                     page.find("</div>", audio_at)]
     assert "data-mods='text'" in audio_row and "data-mods='text,audio'" not in audio_row
     audio_config = json.loads(
         app._materialize_selected_local_config([audio]).read_text(encoding="utf-8")
     )
     assert audio_config[audio]["modalities"] == ["text"]
-    audio_errors = app._validate_builder(
-        {
-            "mode": "dry_run",
-            "corpora": "jalmbench_audio",
-            "local": audio,
-            "attackers": "replay",
-            "judges": "rules",
-            "out": "runs/audio",
-        }
-    )
+    audio_errors = app._validate_builder({
+        "mode": "dry_run", "corpora": "jalmbench_audio", "local": audio,
+        "attackers": "replay", "judges": "rules", "out": "runs/audio",
+    })
     assert "serves ['text']" in audio_errors["models"]
     assert "requires all of ['audio', 'text']" in audio_errors["models"]
     # An unpinned and therefore unprofiled roster row remains visible but is
@@ -3940,104 +3417,72 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
     lower = "vllm:org/Lower-7B"
     marker = f"data-model='{lower}'"
     at = page.index(marker)
-    input_tag = page[page.rfind("<input", 0, at) : page.find(">", at)]
+    input_tag = page[page.rfind("<input", 0, at):page.find(">", at)]
     assert "type='radio'" in input_tag and "name='local_choice'" in input_tag
     assert "disabled" in input_tag
-    assert (
-        "readiness required"
-        in page[page.rfind("<div class='modelrow'", 0, at) : page.find("</div>", at)]
-    )
+    assert "readiness required" in page[
+        page.rfind("<div class='modelrow'", 0, at):page.find("</div>", at)
+    ]
     id_start = input_tag.index("id='") + len("id='")
-    control_id = input_tag[id_start : input_tag.index("'", id_start)]
+    control_id = input_tag[id_start:input_tag.index("'", id_start)]
     row_start = page.rfind("<div class='modelrow'", 0, at)
     quant_at = page.index(f"name='quantization::{lower}'", at)
     assert f"for='{control_id}'" in page[row_start:at]
     assert "</label><div class='modelquant'>" in page[at:quant_at]
-    quant_tag = page[page.rfind("<select", at, quant_at) : page.find(">", quant_at)]
+    quant_tag = page[page.rfind("<select", at, quant_at):page.find(">", quant_at)]
     assert "disabled" in quant_tag
     # Filter controls have no server-side campaign fields. A submitted target
     # remains authoritative and composes through the normal validated path.
     assert "name='api-provider-filter'" not in page
-    _command, values, _params = app._compose_from_builder(
-        {
-            "mode": "measured",
-            "corpora": "synth",
-            "api": "openai:gpt-test",
-            "attackers": "replay",
-            "judges": "rules",
-            "out": "runs/filter-test",
-        }
-    )
+    _command, values, _params = app._compose_from_builder({
+        "mode": "measured", "corpora": "synth", "api": "openai:gpt-test",
+        "attackers": "replay", "judges": "rules", "out": "runs/filter-test",
+    })
     assert values["--api"] == "openai:gpt-test"
-    _command, values, _params = app._compose_from_builder(
-        {
-            "mode": "dry_run",
-            "corpora": "synth",
-            "local": lower,
-            "attackers": "replay",
-            "judges": "rules",
-            "limit": "1",
-            "seeds": "0",
-            "max_queries": "1",
-            "max_turns": "1",
-            "out": str(tmp_path / "lower-row"),
-        }
-    )
+    _command, values, _params = app._compose_from_builder({
+        "mode": "dry_run", "corpora": "synth", "local": lower,
+        "attackers": "replay", "judges": "rules",
+        "limit": "1", "seeds": "0", "max_queries": "1", "max_turns": "1",
+        "out": str(tmp_path / "lower-row"),
+    })
     assert "--local" not in values and "--local-config" not in values
     dry_errors = app._validate_builder(_params)
     assert "models" not in dry_errors
     assert run_matrix.main(build_argv("run_matrix", values)[3:]) == 0
-    live_errors = app._validate_builder(
-        {
-            **_params,
-            "mode": "measured",
-        }
-    )
+    live_errors = app._validate_builder({
+        **_params, "mode": "measured",
+    })
     assert "hub vLLM targets require a 40-64 hex revision" in live_errors["models"]
-    digest_only_errors = app._validate_builder(
-        {
-            **_params,
-            "mode": "measured",
-            "local": "vllm:org/DigestOnly-7B",
-        }
+    digest_only_errors = app._validate_builder({
+        **_params, "mode": "measured", "local": "vllm:org/DigestOnly-7B",
+    })
+    assert "hub vLLM targets require a 40-64 hex revision" in (
+        digest_only_errors["models"]
     )
-    assert "hub vLLM targets require a 40-64 hex revision" in (digest_only_errors["models"])
-    checkpoint_errors = app._validate_builder(
-        {
-            **_params,
-            "mode": "measured",
-            "local": local_checkpoint,
-        }
-    )
+    checkpoint_errors = app._validate_builder({
+        **_params, "mode": "measured", "local": local_checkpoint,
+    })
     assert "models" not in checkpoint_errors
-    unknown_errors = app._validate_builder(
-        {
-            **_params,
-            "mode": "measured",
-            "local": unknown,
-        }
-    )
+    unknown_errors = app._validate_builder({
+        **_params, "mode": "measured", "local": unknown,
+    })
     assert "explicit per-model precision" in unknown_errors["models"]
     explicit_unknown_params = {
-        **_params,
-        "mode": "measured",
-        "local": unknown,
+        **_params, "mode": "measured", "local": unknown,
         f"quantization::{unknown}": "fp8",
     }
     explicit_unknown_errors = app._validate_builder(explicit_unknown_params)
     assert "models" not in explicit_unknown_errors
     explicit_unknown_config = json.loads(
         app._materialize_selected_local_config(
-            [unknown],
-            quantization_overrides={unknown: "fp8"},
+            [unknown], quantization_overrides={unknown: "fp8"},
         ).read_text(encoding="utf-8")
     )
     assert explicit_unknown_config[unknown]["quantization"] == "fp8"
     assert explicit_unknown_config[unknown]["allow_unknown_fit"] is True
     auto_unknown_config = json.loads(
         app._materialize_selected_local_config(
-            [unknown],
-            quantization_overrides={unknown: "auto"},
+            [unknown], quantization_overrides={unknown: "auto"},
         ).read_text(encoding="utf-8")
     )
     assert "allow_unknown_fit" not in auto_unknown_config[unknown]
@@ -4049,46 +3494,38 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
         f"quantization::{tiny}": "bogus",
     }
     invalid_override_errors = app._validate_builder(invalid_override)
-    assert "per-model quantization must be auto, none, fp8" in (invalid_override_errors["models"])
+    assert "per-model quantization must be auto, none, fp8" in (
+        invalid_override_errors["models"]
+    )
     jobs_before = set(app.jobs)
     invalid_status, _, invalid_body = app.handle("POST", "/build", invalid_override)
     assert invalid_status == 200
-    assert "per-model quantization must be auto, none, fp8" in (invalid_body.decode("utf-8"))
+    assert "per-model quantization must be auto, none, fp8" in (
+        invalid_body.decode("utf-8")
+    )
     assert set(app.jobs) == jobs_before
 
-    global_none_errors = app._validate_builder(
-        {
-            **_params,
-            "mode": "measured",
-            "local": model_34b,
-            "quantization": "none",
-            f"quantization::{model_34b}": "auto",
-        }
-    )
+    global_none_errors = app._validate_builder({
+        **_params, "mode": "measured", "local": model_34b,
+        "quantization": "none", f"quantization::{model_34b}": "auto",
+    })
     assert "known incompatible" in global_none_errors["models"]
     global_none_config = json.loads(
         app._materialize_selected_local_config(
-            [model_34b],
-            default_quantization="none",
+            [model_34b], default_quantization="none",
             quantization_overrides={model_34b: "auto"},
         ).read_text(encoding="utf-8")
     )
     assert global_none_config[model_34b]["quantization"] == "none"
 
-    global_bnb_errors = app._validate_builder(
-        {
-            **_params,
-            "mode": "measured",
-            "local": tiny,
-            "quantization": "bitsandbytes",
-            f"quantization::{tiny}": "auto",
-        }
-    )
+    global_bnb_errors = app._validate_builder({
+        **_params, "mode": "measured", "local": tiny,
+        "quantization": "bitsandbytes", f"quantization::{tiny}": "auto",
+    })
     assert "models" not in global_bnb_errors
     global_bnb_config = json.loads(
         app._materialize_selected_local_config(
-            [tiny],
-            default_quantization="bitsandbytes",
+            [tiny], default_quantization="bitsandbytes",
             quantization_overrides={tiny: "auto"},
         ).read_text(encoding="utf-8")
     )
@@ -4096,19 +3533,14 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
     assert global_bnb_config[tiny]["revision"] == "a" * 40
     per_model_config = json.loads(
         app._materialize_selected_local_config(
-            [tiny],
-            default_quantization="bitsandbytes",
+            [tiny], default_quantization="bitsandbytes",
             quantization_overrides={tiny: "none"},
         ).read_text(encoding="utf-8")
     )
     assert per_model_config[tiny]["quantization"] == "none"
-    incompatible_errors = app._validate_builder(
-        {
-            **_params,
-            "mode": "measured",
-            "local": incompatible,
-        }
-    )
+    incompatible_errors = app._validate_builder({
+        **_params, "mode": "measured", "local": incompatible,
+    })
     assert "known incompatible" in incompatible_errors["models"]
     app.close()
 
@@ -4168,8 +3600,12 @@ def test_builder_rejects_malformed_local_runtime_config_before_job(
     rig = repo / "experiments" / "rig"
     rig.mkdir(parents=True)
     (rig / "api-targets.example.json").write_text("{}", encoding="utf-8")
-    (rig / "local-targets.example.json").write_text(json.dumps({spec: entry}), encoding="utf-8")
-    (rig / "vllm-roster.example.json").write_text(json.dumps({"models": {}}), encoding="utf-8")
+    (rig / "local-targets.example.json").write_text(
+        json.dumps({spec: entry}), encoding="utf-8"
+    )
+    (rig / "vllm-roster.example.json").write_text(
+        json.dumps({"models": {}}), encoding="utf-8"
+    )
     app = RigWebApp(
         results_root=tmp_path / "runs",
         state_dir=tmp_path / "state",
@@ -4200,22 +3636,15 @@ def test_builder_escapes_config_sourced_modalities(tmp_path: Path) -> None:
     # and there is a single control named 'local' (no duplicate free-text box).
     repo = tmp_path / "repo"
     (repo / "experiments" / "rig").mkdir(parents=True)
-    (repo / "experiments" / "api-targets.json").write_text(
-        json.dumps(
-            {
-                "evil:model": {"modalities": ["text' onmouseover='x"]},
-            }
-        ),
-        encoding="utf-8",
-    )
-    (repo / "experiments" / "rig" / "api-targets.example.json").write_text("{}", encoding="utf-8")
+    (repo / "experiments" / "api-targets.json").write_text(json.dumps({
+        "evil:model": {"modalities": ["text' onmouseover='x"]},
+    }), encoding="utf-8")
+    (repo / "experiments" / "rig" / "api-targets.example.json").write_text(
+        "{}", encoding="utf-8")
     (repo / "experiments" / "rig" / "vllm-roster.example.json").write_text(
-        json.dumps({"models": {}}), encoding="utf-8"
-    )
+        json.dumps({"models": {}}), encoding="utf-8")
     app = RigWebApp(
-        results_root=tmp_path / "r",
-        state_dir=tmp_path / "s",
-        repo_root=repo,
+        results_root=tmp_path / "r", state_dir=tmp_path / "s", repo_root=repo,
     )
     page = app.handle("GET", "/build")[2].decode("utf-8")
     assert "onmouseover='x" not in page  # escaped, no attribute breakout
@@ -4248,14 +3677,9 @@ def test_stats_page_renders_budget_and_tolerates_missing_results(tmp_path: Path)
     assert "Anthropic" not in text and "$100" not in text
     assert "No Level-1/Level-2 report" in text  # graceful empty state
     # A fake rows/asr table is NOT a Level-2 report and must not chart.
-    (app.results_root / "level2.json").write_text(
-        json.dumps(
-            {
-                "rows": [{"model": "fable", "asr": 0.12}],
-            }
-        ),
-        encoding="utf-8",
-    )
+    (app.results_root / "level2.json").write_text(json.dumps({
+        "rows": [{"model": "fable", "asr": 0.12}],
+    }), encoding="utf-8")
     status, _, body = app.handle("GET", "/stats?view=legacy")
     text = body.decode("utf-8")
     assert status == 200
@@ -4275,7 +3699,9 @@ def test_command_groups_partition_the_allowlist_exactly() -> None:
     internal = {"model_acquire", "ollama_pull", "run_matrix", "campaign_assess"}
     named = [name for _, _, _, names in COMMAND_GROUPS for name in names]
     assert len(named) == len(set(named)), "command grouped twice"
-    assert set(named) == set(COMMANDS) - internal, sorted(set(named) ^ (set(COMMANDS) - internal))
+    assert set(named) == set(COMMANDS) - internal, (
+        sorted(set(named) ^ (set(COMMANDS) - internal))
+    )
 
 
 def test_assessment_controller_has_no_raw_operator_launch(tmp_path: Path) -> None:
@@ -4300,10 +3726,12 @@ def test_dashboard_shows_presence_only_pipeline(tmp_path: Path) -> None:
     app = _app(tmp_path)
     receipts = app.results_root / "thesis" / "project-revision"
     (receipts / "superseded").mkdir(parents=True)
-    (receipts / "project-revision-abc.project-revision.json").write_text("{}", encoding="utf-8")
-    (receipts / "superseded" / "project-revision-old.project-revision.json").write_text(
+    (receipts / "project-revision-abc.project-revision.json").write_text(
         "{}", encoding="utf-8"
     )
+    (
+        receipts / "superseded" / "project-revision-old.project-revision.json"
+    ).write_text("{}", encoding="utf-8")
     status, _, body = app.handle("GET", "/")
     assert status == 200
     text = body.decode("utf-8")
@@ -4338,9 +3766,13 @@ def test_dashboard_shows_presence_only_pipeline(tmp_path: Path) -> None:
             assert f"name='command' value='{name}'" not in run_text
         elif name == "live_attestation":
             # A guided selector and an advanced form share the typed command.
-            assert run_text.count(f"<input type='hidden' name='command' value='{name}'>") == 2
+            assert run_text.count(
+                f"<input type='hidden' name='command' value='{name}'>"
+            ) == 2
         else:
-            assert run_text.count(f"<input type='hidden' name='command' value='{name}'>") == 1
+            assert run_text.count(
+                f"<input type='hidden' name='command' value='{name}'>"
+            ) == 1
     # The client-side filter is present and cards carry filterable names.
     assert "cmdfilter" in run_text
     assert "data-name='run_matrix'" not in run_text
@@ -4356,22 +3788,15 @@ def test_dashboard_notices_do_not_depend_on_campaign_policy(tmp_path: Path) -> N
     assert "Notices" not in text  # no warnings file -> no banner card
     assert "Campaign sampling policy" not in text
 
-    (app.results_root / "console-warnings.json").write_text(
-        json.dumps(
-            {
-                "warnings": [
-                    {
-                        "level": "warning",
-                        "title": "BIPIA qa constructed from external NewsQA",
-                        "detail": "MD5 not yet verified against the official md5.txt.",
-                    },
-                    {"level": "bogus-level", "title": "tolerated"},
-                    "not-a-dict",
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
+    (app.results_root / "console-warnings.json").write_text(json.dumps({
+        "warnings": [
+            {"level": "warning",
+             "title": "BIPIA qa constructed from external NewsQA",
+             "detail": "MD5 not yet verified against the official md5.txt."},
+            {"level": "bogus-level", "title": "tolerated"},
+            "not-a-dict",
+        ],
+    }), encoding="utf-8")
     status, _, body = app.handle("GET", "/")
     text = body.decode("utf-8")
     assert status == 200
@@ -4382,7 +3807,9 @@ def test_dashboard_notices_do_not_depend_on_campaign_policy(tmp_path: Path) -> N
     assert "never authorize" in text
 
     # A corrupt warnings file must never break the dashboard.
-    (app.results_root / "console-warnings.json").write_text("{not json", encoding="utf-8")
+    (app.results_root / "console-warnings.json").write_text(
+        "{not json", encoding="utf-8"
+    )
     status, _, _ = app.handle("GET", "/")
     assert status == 200
 
@@ -4392,14 +3819,9 @@ def test_notices_are_dismissible_client_side(tmp_path: Path) -> None:
     # close control, and localStorage-backed script hides dismissed ids. The
     # warnings file (server truth) is never mutated by the console.
     app = _app(tmp_path)
-    (app.results_root / "console-warnings.json").write_text(
-        json.dumps(
-            {
-                "warnings": [{"level": "warning", "title": "constructed set"}],
-            }
-        ),
-        encoding="utf-8",
-    )
+    (app.results_root / "console-warnings.json").write_text(json.dumps({
+        "warnings": [{"level": "warning", "title": "constructed set"}],
+    }), encoding="utf-8")
     before = (app.results_root / "console-warnings.json").read_bytes()
     status, _, body = app.handle("GET", "/")
     text = body.decode("utf-8")
@@ -4491,7 +3913,7 @@ def test_jobs_truthfully_labels_no_call_and_preparation_modes(tmp_path: Path) ->
 
     def row(job_id: str) -> str:
         start = text.index(f"/jobs/{job_id}")
-        return text[text.rfind("<tr", 0, start) : text.find("</tr>", start)]
+        return text[text.rfind("<tr", 0, start):text.find("</tr>", start)]
 
     assert "preflight" in row("preflight-only")
     assert "no model call" in row("preflight-only")
@@ -4582,61 +4004,31 @@ def _write_external_engineering_campaign(results: Path) -> Path:
     campaign = results / "engineering" / "local-only-20260817T000000Z"
     campaign.mkdir(parents=True)
     started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    (campaign / "ENGINEERING_ONLY.json").write_text(
-        json.dumps(
-            {
-                "schema": "ura-engineering-campaign/1",
-                "campaign_id": "local-only-20260817T000000Z",
-                "release_commit": "a" * 40,
-                "evidence_class": "engineering_stress",
-                "thesis_empirical_evidence": False,
-                "hosted_calls_allowed": False,
-                "target_call_cap": 10,
-                "hard_stop_hours": 23,
-                "started_at": started_at,
-            }
-        ),
-        encoding="utf-8",
-    )
-    (campaign / "task-log.jsonl").write_text(
-        "\n".join(
-            (
-                json.dumps(
-                    {
-                        "at": "2026-08-17T00:00:00Z",
-                        "event": "campaign_start",
-                        "task": "bootstrap",
-                        "status": "running",
-                        "detail": "local-only",
-                    }
-                ),
-                json.dumps(
-                    {
-                        "at": "2026-08-17T00:00:01Z",
-                        "event": "task_start",
-                        "task": "download-model",
-                        "status": "running",
-                        "detail": "download",
-                    }
-                ),
-            )
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    (campaign / "stage2-task-log.jsonl").write_text(
-        json.dumps(
-            {
-                "at": "2026-08-17T00:00:02Z",
-                "event": "campaign_start",
-                "task": "stage2",
-                "status": "running",
-                "detail": "waiting_for_bootstrap",
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    (campaign / "ENGINEERING_ONLY.json").write_text(json.dumps({
+        "schema": "ura-engineering-campaign/1",
+        "campaign_id": "local-only-20260817T000000Z",
+        "release_commit": "a" * 40,
+        "evidence_class": "engineering_stress",
+        "thesis_empirical_evidence": False,
+        "hosted_calls_allowed": False,
+        "target_call_cap": 10,
+        "hard_stop_hours": 23,
+        "started_at": started_at,
+    }), encoding="utf-8")
+    (campaign / "task-log.jsonl").write_text("\n".join((
+        json.dumps({
+            "at": "2026-08-17T00:00:00Z", "event": "campaign_start",
+            "task": "bootstrap", "status": "running", "detail": "local-only",
+        }),
+        json.dumps({
+            "at": "2026-08-17T00:00:01Z", "event": "task_start",
+            "task": "download-model", "status": "running", "detail": "download",
+        }),
+    )) + "\n", encoding="utf-8")
+    (campaign / "stage2-task-log.jsonl").write_text(json.dumps({
+        "at": "2026-08-17T00:00:02Z", "event": "campaign_start",
+        "task": "stage2", "status": "running", "detail": "waiting_for_bootstrap",
+    }) + "\n", encoding="utf-8")
     return campaign
 
 
@@ -4650,33 +4042,32 @@ def test_jobs_date_window_filters_campaign_markers_before_recent_cap(
         campaign_id = f"campaign-{index:02d}"
         directory = engineering / campaign_id
         directory.mkdir()
-        started_at = "2000-01-01T00:00:00Z" if index == 0 else f"2026-08-17T00:00:{index:02d}Z"
+        started_at = (
+            "2000-01-01T00:00:00Z"
+            if index == 0
+            else f"2026-08-17T00:00:{index:02d}Z"
+        )
         (directory / "ENGINEERING_ONLY.json").write_text(
-            json.dumps(
-                {
-                    "schema": "ura-engineering-campaign/1",
-                    "campaign_id": campaign_id,
-                    "release_commit": "a" * 40,
-                    "evidence_class": "engineering_stress",
-                    "thesis_empirical_evidence": False,
-                    "hosted_calls_allowed": False,
-                    "target_call_cap": 1,
-                    "started_at": started_at,
-                }
-            ),
+            json.dumps({
+                "schema": "ura-engineering-campaign/1",
+                "campaign_id": campaign_id,
+                "release_commit": "a" * 40,
+                "evidence_class": "engineering_stress",
+                "thesis_empirical_evidence": False,
+                "hosted_calls_allowed": False,
+                "target_call_cap": 1,
+                "started_at": started_at,
+            }),
             encoding="utf-8",
         )
         (directory / "task-log.jsonl").write_text(
-            json.dumps(
-                {
-                    "at": started_at,
-                    "event": "campaign_start",
-                    "task": "bootstrap",
-                    "status": "running",
-                    "detail": campaign_id,
-                }
-            )
-            + "\n",
+            json.dumps({
+                "at": started_at,
+                "event": "campaign_start",
+                "task": "bootstrap",
+                "status": "running",
+                "detail": campaign_id,
+            }) + "\n",
             encoding="utf-8",
         )
         os.utime(directory, (1_700_000_000 + index, 1_700_000_000 + index))
@@ -4737,31 +4128,26 @@ def test_stats_campaign_cap_ignores_newer_non_campaign_directories(
         directory.mkdir()
         started_at = f"2026-08-17T00:00:{index:02d}Z"
         (directory / "ENGINEERING_ONLY.json").write_text(
-            json.dumps(
-                {
-                    "schema": "ura-engineering-campaign/1",
-                    "campaign_id": campaign_id,
-                    "release_commit": "a" * 40,
-                    "evidence_class": "engineering_stress",
-                    "thesis_empirical_evidence": False,
-                    "hosted_calls_allowed": False,
-                    "target_call_cap": 1,
-                    "started_at": started_at,
-                }
-            ),
+            json.dumps({
+                "schema": "ura-engineering-campaign/1",
+                "campaign_id": campaign_id,
+                "release_commit": "a" * 40,
+                "evidence_class": "engineering_stress",
+                "thesis_empirical_evidence": False,
+                "hosted_calls_allowed": False,
+                "target_call_cap": 1,
+                "started_at": started_at,
+            }),
             encoding="utf-8",
         )
         (directory / "task-log.jsonl").write_text(
-            json.dumps(
-                {
-                    "at": started_at,
-                    "event": "campaign_start",
-                    "task": "bootstrap",
-                    "status": "running",
-                    "detail": campaign_id,
-                }
-            )
-            + "\n",
+            json.dumps({
+                "at": started_at,
+                "event": "campaign_start",
+                "task": "bootstrap",
+                "status": "running",
+                "detail": campaign_id,
+            }) + "\n",
             encoding="utf-8",
         )
         os.utime(directory, (1_700_000_000 + index, 1_700_000_000 + index))
@@ -4785,18 +4171,10 @@ def test_jobs_lists_external_engineering_campaign_read_only(tmp_path: Path) -> N
     with (campaign / "task-log.jsonl").open("a", encoding="utf-8") as handle:
         # A retried task is one task in progress, not two completed tasks.
         for status in ("failed", "passed"):
-            handle.write(
-                json.dumps(
-                    {
-                        "at": "2026-08-17T00:00:01Z",
-                        "event": "task_end",
-                        "task": "download-model",
-                        "status": status,
-                        "detail": status,
-                    }
-                )
-                + "\n"
-            )
+            handle.write(json.dumps({
+                "at": "2026-08-17T00:00:01Z", "event": "task_end",
+                "task": "download-model", "status": status, "detail": status,
+            }) + "\n")
 
     status, _, body = app.handle("GET", "/jobs")
     text = body.decode("utf-8")
@@ -4820,7 +4198,9 @@ def test_jobs_lists_external_engineering_campaign_read_only(tmp_path: Path) -> N
     assert app.db.health()["counts"]["jobs"] == 0
     assert app.db.list_runs() == []
 
-    status, _, detail = app.handle("GET", "/jobs/campaign/local-only-20260817T000000Z")
+    status, _, detail = app.handle(
+        "GET", "/jobs/campaign/local-only-20260817T000000Z"
+    )
     detail_text = detail.decode("utf-8")
     assert status == 200
     assert "Externally managed engineering work" in detail_text
@@ -4836,7 +4216,9 @@ def test_jobs_lists_external_engineering_campaign_read_only(tmp_path: Path) -> N
     )
     assert status == 200 and content_type.startswith("text/plain")
     assert b"waiting_for_bootstrap" in log
-    status, _, message = app.handle("POST", "/jobs/campaign/local-only-20260817T000000Z/stop")
+    status, _, message = app.handle(
+        "POST", "/jobs/campaign/local-only-20260817T000000Z/stop"
+    )
     assert status == 405 and b"read-only" in message
     assert campaign.is_dir()
     app.close()
@@ -4859,31 +4241,20 @@ def test_external_campaign_task_failures_do_not_override_passing_terminal(
     with (campaign / "stage2-task-log.jsonl").open("a", encoding="utf-8") as handle:
         for event in (
             {
-                "at": "2026-08-17T00:00:03Z",
-                "event": "task_end",
-                "task": "download-model",
-                "status": "passed",
-                "detail": "done",
+                "at": "2026-08-17T00:00:03Z", "event": "task_end",
+                "task": "download-model", "status": "passed", "detail": "done",
             },
             {
-                "at": "2026-08-17T00:00:04Z",
-                "event": "task_start",
-                "task": "optional-probe",
-                "status": "running",
-                "detail": "probe",
+                "at": "2026-08-17T00:00:04Z", "event": "task_start",
+                "task": "optional-probe", "status": "running", "detail": "probe",
             },
             {
-                "at": "2026-08-17T00:00:05Z",
-                "event": "task_end",
-                "task": "optional-probe",
-                "status": "failed",
-                "detail": "optional",
+                "at": "2026-08-17T00:00:05Z", "event": "task_end",
+                "task": "optional-probe", "status": "failed", "detail": "optional",
             },
             {
-                "at": "2026-08-17T00:00:06Z",
-                "event": "campaign_end",
-                "task": "stage2",
-                "status": terminal_status,
+                "at": "2026-08-17T00:00:06Z", "event": "campaign_end",
+                "task": "stage2", "status": terminal_status,
                 "detail": "optional_probe_failed",
             },
         ):
@@ -4982,7 +4353,9 @@ def test_external_campaign_reports_skipped_tasks_separately(
     )
 
     jobs = app.handle("GET", "/jobs")[2].decode("utf-8")
-    detail = app.handle("GET", "/jobs/campaign/local-only-20260817T000000Z")[2].decode("utf-8")
+    detail = app.handle(
+        "GET", "/jobs/campaign/local-only-20260817T000000Z"
+    )[2].decode("utf-8")
     expected = "task processes: 1 succeeded; 1 failed; 1 skipped; 0 active; pending: 1"
     assert expected in jobs
     assert expected in detail
@@ -5000,48 +4373,41 @@ def test_external_campaign_separates_process_results_from_model_execution(
     marker["model_tasks"] = ["model-probe"]
     marker_path.write_text(json.dumps(marker), encoding="utf-8")
     (campaign / "task-log.jsonl").write_text(
-        json.dumps(
-            {
-                "at": "2026-08-17T00:00:00Z",
-                "event": "campaign_start",
-                "task": "bootstrap",
-                "status": "running",
-            }
-        )
-        + "\n",
+        json.dumps({
+            "at": "2026-08-17T00:00:00Z",
+            "event": "campaign_start",
+            "task": "bootstrap",
+            "status": "running",
+        }) + "\n",
         encoding="utf-8",
     )
     (campaign / "stage2-task-log.jsonl").write_text(
-        "\n".join(
-            json.dumps(event)
-            for event in (
-                {
-                    "at": "2026-08-17T00:00:01Z",
-                    "event": "campaign_start",
-                    "task": "stage2",
-                    "status": "running",
-                },
-                {
-                    "at": "2026-08-17T00:00:02Z",
-                    "event": "task_end",
-                    "task": "setup",
-                    "status": "passed",
-                },
-                {
-                    "at": "2026-08-17T00:00:03Z",
-                    "event": "task_end",
-                    "task": "model-probe",
-                    "status": "passed",
-                },
-                {
-                    "at": "2026-08-17T00:00:04Z",
-                    "event": "campaign_end",
-                    "task": "stage2",
-                    "status": "passed",
-                },
-            )
-        )
-        + "\n",
+        "\n".join(json.dumps(event) for event in (
+            {
+                "at": "2026-08-17T00:00:01Z",
+                "event": "campaign_start",
+                "task": "stage2",
+                "status": "running",
+            },
+            {
+                "at": "2026-08-17T00:00:02Z",
+                "event": "task_end",
+                "task": "setup",
+                "status": "passed",
+            },
+            {
+                "at": "2026-08-17T00:00:03Z",
+                "event": "task_end",
+                "task": "model-probe",
+                "status": "passed",
+            },
+            {
+                "at": "2026-08-17T00:00:04Z",
+                "event": "campaign_end",
+                "task": "stage2",
+                "status": "passed",
+            },
+        )) + "\n",
         encoding="utf-8",
     )
 
@@ -5055,7 +4421,9 @@ def test_external_campaign_separates_process_results_from_model_execution(
     assert observed.model_succeeded_tasks == 1
     assert observed.model_attempted_calls is None
     jobs = app.handle("GET", "/jobs")[2].decode("utf-8")
-    detail = app.handle("GET", "/jobs/campaign/local-only-20260817T000000Z")[2].decode("utf-8")
+    detail = app.handle(
+        "GET", "/jobs/campaign/local-only-20260817T000000Z"
+    )[2].decode("utf-8")
     assert "model + support" in jobs and "not reported" in jobs
     assert "model execution: not reported" in jobs
     assert "A passed support task proves only that its command exited successfully" in detail
@@ -5063,15 +4431,12 @@ def test_external_campaign_separates_process_results_from_model_execution(
     assert "<td>model</td><td>passed</td>" in detail
 
     (campaign / "model-execution.jsonl").write_text(
-        json.dumps(
-            {
-                "event": "model_execution",
-                "task": "model-probe",
-                "attempted_calls": 1,
-                "successful_generations": 1,
-            }
-        )
-        + "\n",
+        json.dumps({
+            "event": "model_execution",
+            "task": "model-probe",
+            "attempted_calls": 1,
+            "successful_generations": 1,
+        }) + "\n",
         encoding="utf-8",
     )
     confirmed = app._engineering_campaign("local-only-20260817T000000Z")
@@ -5095,42 +4460,32 @@ def test_external_campaign_duplicate_status_and_execution_counts_fail_closed(
     marker["model_tasks"] = ["model-probe"]
     marker_path.write_text(json.dumps(marker), encoding="utf-8")
     (campaign / "task-log.jsonl").write_text(
-        json.dumps(
-            {
-                "at": "2026-08-17T00:00:00Z",
-                "event": "campaign_start",
-                "task": "bootstrap",
-                "status": "running",
-            }
-        )
-        + "\n",
+        json.dumps({
+            "at": "2026-08-17T00:00:00Z",
+            "event": "campaign_start",
+            "task": "bootstrap",
+            "status": "running",
+        }) + "\n",
         encoding="utf-8",
     )
     (campaign / "stage2-task-log.jsonl").write_text(
-        "\n".join(
-            (
-                json.dumps(
-                    {
-                        "at": "2026-08-17T00:00:01Z",
-                        "event": "campaign_start",
-                        "task": "stage2",
-                        "status": "running",
-                    }
-                ),
-                json.dumps(
-                    {
-                        "at": "2026-08-17T00:00:02Z",
-                        "event": "task_end",
-                        "task": "model-probe",
-                        "status": "passed",
-                    }
-                ),
-                # A last-wins decoder would call this a passed campaign.
-                '{"at":"2026-08-17T00:00:03Z","event":"campaign_end",'
-                '"task":"stage2","status":"failed","status":"passed"}',
-            )
-        )
-        + "\n",
+        "\n".join((
+            json.dumps({
+                "at": "2026-08-17T00:00:01Z",
+                "event": "campaign_start",
+                "task": "stage2",
+                "status": "running",
+            }),
+            json.dumps({
+                "at": "2026-08-17T00:00:02Z",
+                "event": "task_end",
+                "task": "model-probe",
+                "status": "passed",
+            }),
+            # A last-wins decoder would call this a passed campaign.
+            '{"at":"2026-08-17T00:00:03Z","event":"campaign_end",'
+            '"task":"stage2","status":"failed","status":"passed"}',
+        )) + "\n",
         encoding="utf-8",
     )
 
@@ -5138,35 +4493,33 @@ def test_external_campaign_duplicate_status_and_execution_counts_fail_closed(
     assert ambiguous_status is not None
     assert ambiguous_status.state == "unknown"
     assert ambiguous_status.status_tag == "unknown"
-    assert "activity status unavailable: malformed JSON event" in (ambiguous_status.progress)
+    assert "activity status unavailable: malformed JSON event" in (
+        ambiguous_status.progress
+    )
 
     # Restore an unambiguous terminal process record, then make the separate
     # execution-evidence stream ambiguous. It must not become a 1/1 claim.
     (campaign / "stage2-task-log.jsonl").write_text(
-        "\n".join(
-            json.dumps(event)
-            for event in (
-                {
-                    "at": "2026-08-17T00:00:01Z",
-                    "event": "campaign_start",
-                    "task": "stage2",
-                    "status": "running",
-                },
-                {
-                    "at": "2026-08-17T00:00:02Z",
-                    "event": "task_end",
-                    "task": "model-probe",
-                    "status": "passed",
-                },
-                {
-                    "at": "2026-08-17T00:00:03Z",
-                    "event": "campaign_end",
-                    "task": "stage2",
-                    "status": "passed",
-                },
-            )
-        )
-        + "\n",
+        "\n".join(json.dumps(event) for event in (
+            {
+                "at": "2026-08-17T00:00:01Z",
+                "event": "campaign_start",
+                "task": "stage2",
+                "status": "running",
+            },
+            {
+                "at": "2026-08-17T00:00:02Z",
+                "event": "task_end",
+                "task": "model-probe",
+                "status": "passed",
+            },
+            {
+                "at": "2026-08-17T00:00:03Z",
+                "event": "campaign_end",
+                "task": "stage2",
+                "status": "passed",
+            },
+        )) + "\n",
         encoding="utf-8",
     )
     (campaign / "model-execution.jsonl").write_text(
@@ -5175,7 +4528,9 @@ def test_external_campaign_duplicate_status_and_execution_counts_fail_closed(
         '"successful_generations":1}\n',
         encoding="utf-8",
     )
-    ambiguous_execution = app._engineering_campaign("local-only-20260817T000000Z")
+    ambiguous_execution = app._engineering_campaign(
+        "local-only-20260817T000000Z"
+    )
     assert ambiguous_execution is not None
     assert ambiguous_execution.model_attempted_calls is None
     assert ambiguous_execution.model_successful_generations is None
@@ -5217,15 +4572,12 @@ def test_external_campaign_rejects_invalid_model_execution_claims(
     marker["model_tasks"] = ["undeclared-task"]
     marker_path.write_text(json.dumps(marker), encoding="utf-8")
     (campaign / "model-execution.jsonl").write_text(
-        json.dumps(
-            {
-                "event": "model_execution",
-                "task": "setup",
-                "attempted_calls": 1,
-                "successful_generations": 1,
-            }
-        )
-        + "\n",
+        json.dumps({
+            "event": "model_execution",
+            "task": "setup",
+            "attempted_calls": 1,
+            "successful_generations": 1,
+        }) + "\n",
         encoding="utf-8",
     )
 
@@ -5253,48 +4605,37 @@ def test_external_campaign_rejects_model_calls_for_unexecuted_tasks(
     marker["model_tasks"] = ["model-probe"]
     marker_path.write_text(json.dumps(marker), encoding="utf-8")
     (campaign / "task-log.jsonl").write_text(
-        json.dumps(
-            {
-                "at": "2026-08-17T00:00:00Z",
-                "event": "campaign_start",
-                "task": "bootstrap",
-                "status": "running",
-            }
-        )
-        + "\n",
+        json.dumps({
+            "at": "2026-08-17T00:00:00Z",
+            "event": "campaign_start",
+            "task": "bootstrap",
+            "status": "running",
+        }) + "\n",
         encoding="utf-8",
     )
-    events = [
-        {
-            "at": "2026-08-17T00:00:03Z",
-            "event": "campaign_end",
-            "task": "stage2",
-            "status": "passed",
-        }
-    ]
+    events = [{
+        "at": "2026-08-17T00:00:03Z",
+        "event": "campaign_end",
+        "task": "stage2",
+        "status": "passed",
+    }]
     if task_status is not None:
-        events.insert(
-            0,
-            {
-                "at": "2026-08-17T00:00:02Z",
-                "event": "task_skip",
-                "task": "model-probe",
-                "status": task_status,
-            },
-        )
+        events.insert(0, {
+            "at": "2026-08-17T00:00:02Z",
+            "event": "task_skip",
+            "task": "model-probe",
+            "status": task_status,
+        })
     with (campaign / "stage2-task-log.jsonl").open("a", encoding="utf-8") as handle:
         for event in events:
             handle.write(json.dumps(event) + "\n")
     (campaign / "model-execution.jsonl").write_text(
-        json.dumps(
-            {
-                "event": "model_execution",
-                "task": "model-probe",
-                "attempted_calls": 1,
-                "successful_generations": 1,
-            }
-        )
-        + "\n",
+        json.dumps({
+            "event": "model_execution",
+            "task": "model-probe",
+            "attempted_calls": 1,
+            "successful_generations": 1,
+        }) + "\n",
         encoding="utf-8",
     )
 
@@ -5307,15 +4648,12 @@ def test_external_campaign_rejects_model_calls_for_unexecuted_tasks(
     assert "contradicts a pending or skipped task" in observed.model_execution_error
 
     (campaign / "model-execution.jsonl").write_text(
-        json.dumps(
-            {
-                "event": "model_execution",
-                "task": "model-probe",
-                "attempted_calls": 0,
-                "successful_generations": 0,
-            }
-        )
-        + "\n",
+        json.dumps({
+            "event": "model_execution",
+            "task": "model-probe",
+            "attempted_calls": 0,
+            "successful_generations": 0,
+        }) + "\n",
         encoding="utf-8",
     )
     zero_report = app._engineering_campaign("local-only-20260817T000000Z")
@@ -5337,48 +4675,41 @@ def test_external_campaign_model_execution_report_requires_exact_task_coverage(
     marker["model_tasks"] = ["model-a", "model-b"]
     marker_path.write_text(json.dumps(marker), encoding="utf-8")
     (campaign / "task-log.jsonl").write_text(
-        json.dumps(
-            {
-                "at": "2026-08-17T00:00:00Z",
-                "event": "campaign_start",
-                "task": "bootstrap",
-                "status": "running",
-            }
-        )
-        + "\n",
+        json.dumps({
+            "at": "2026-08-17T00:00:00Z",
+            "event": "campaign_start",
+            "task": "bootstrap",
+            "status": "running",
+        }) + "\n",
         encoding="utf-8",
     )
     (campaign / "stage2-task-log.jsonl").write_text(
-        "\n".join(
-            json.dumps(event)
-            for event in (
-                {
-                    "at": "2026-08-17T00:00:01Z",
-                    "event": "campaign_start",
-                    "task": "stage2",
-                    "status": "running",
-                },
-                {
-                    "at": "2026-08-17T00:00:02Z",
-                    "event": "task_end",
-                    "task": "model-a",
-                    "status": "passed",
-                },
-                {
-                    "at": "2026-08-17T00:00:03Z",
-                    "event": "task_end",
-                    "task": "model-b",
-                    "status": "passed",
-                },
-                {
-                    "at": "2026-08-17T00:00:04Z",
-                    "event": "campaign_end",
-                    "task": "stage2",
-                    "status": "passed",
-                },
-            )
-        )
-        + "\n",
+        "\n".join(json.dumps(event) for event in (
+            {
+                "at": "2026-08-17T00:00:01Z",
+                "event": "campaign_start",
+                "task": "stage2",
+                "status": "running",
+            },
+            {
+                "at": "2026-08-17T00:00:02Z",
+                "event": "task_end",
+                "task": "model-a",
+                "status": "passed",
+            },
+            {
+                "at": "2026-08-17T00:00:03Z",
+                "event": "task_end",
+                "task": "model-b",
+                "status": "passed",
+            },
+            {
+                "at": "2026-08-17T00:00:04Z",
+                "event": "campaign_end",
+                "task": "stage2",
+                "status": "passed",
+            },
+        )) + "\n",
         encoding="utf-8",
     )
     report = campaign / "model-execution.jsonl"
@@ -5406,7 +4737,9 @@ def test_external_campaign_model_execution_report_requires_exact_task_coverage(
     assert missing.model_attempted_calls is None
     assert "omits declared model task(s): model-b" in missing.model_execution_error
     assert "model only" in app.handle("GET", "/jobs")[2].decode("utf-8")
-    detail = app.handle("GET", "/jobs/campaign/local-only-20260817T000000Z")[2].decode("utf-8")
+    detail = app.handle(
+        "GET", "/jobs/campaign/local-only-20260817T000000Z"
+    )[2].decode("utf-8")
     assert "report invalid: terminal model execution report omits" in detail
     app.close()
 
@@ -5422,48 +4755,41 @@ def test_external_campaign_surfaces_unplanned_work_without_inventing_a_plan(
     marker["model_tasks"] = []
     marker_path.write_text(json.dumps(marker), encoding="utf-8")
     (campaign / "task-log.jsonl").write_text(
-        json.dumps(
-            {
-                "at": "2026-08-17T00:00:00Z",
-                "event": "campaign_start",
-                "task": "bootstrap",
-                "status": "running",
-            }
-        )
-        + "\n",
+        json.dumps({
+            "at": "2026-08-17T00:00:00Z",
+            "event": "campaign_start",
+            "task": "bootstrap",
+            "status": "running",
+        }) + "\n",
         encoding="utf-8",
     )
     (campaign / "stage2-task-log.jsonl").write_text(
-        "\n".join(
-            json.dumps(event)
-            for event in (
-                {
-                    "at": "2026-08-17T00:00:01Z",
-                    "event": "campaign_start",
-                    "task": "stage2",
-                    "status": "running",
-                },
-                {
-                    "at": "2026-08-17T00:00:02Z",
-                    "event": "task_end",
-                    "task": "setup",
-                    "status": "passed",
-                },
-                {
-                    "at": "2026-08-17T00:00:03Z",
-                    "event": "task_end",
-                    "task": "model-call-extra",
-                    "status": "passed",
-                },
-                {
-                    "at": "2026-08-17T00:00:04Z",
-                    "event": "campaign_end",
-                    "task": "stage2",
-                    "status": "passed",
-                },
-            )
-        )
-        + "\n",
+        "\n".join(json.dumps(event) for event in (
+            {
+                "at": "2026-08-17T00:00:01Z",
+                "event": "campaign_start",
+                "task": "stage2",
+                "status": "running",
+            },
+            {
+                "at": "2026-08-17T00:00:02Z",
+                "event": "task_end",
+                "task": "setup",
+                "status": "passed",
+            },
+            {
+                "at": "2026-08-17T00:00:03Z",
+                "event": "task_end",
+                "task": "model-call-extra",
+                "status": "passed",
+            },
+            {
+                "at": "2026-08-17T00:00:04Z",
+                "event": "campaign_end",
+                "task": "stage2",
+                "status": "passed",
+            },
+        )) + "\n",
         encoding="utf-8",
     )
 
@@ -5475,7 +4801,9 @@ def test_external_campaign_surfaces_unplanned_work_without_inventing_a_plan(
         ("setup", "passed", "support"),
         ("model-call-extra", "passed", "unplanned"),
     )
-    assert "support only + unplanned" in app.handle("GET", "/jobs")[2].decode("utf-8")
+    assert "support only + unplanned" in app.handle("GET", "/jobs")[2].decode(
+        "utf-8"
+    )
 
     marker.pop("planned_tasks")
     marker.pop("model_tasks")
@@ -5496,18 +4824,12 @@ def test_external_campaign_phase_ties_use_append_order(tmp_path: Path) -> None:
     with stage2.open("a", encoding="utf-8") as handle:
         for event in (
             {
-                "at": "2026-08-17T00:00:02Z",
-                "event": "campaign_stop",
-                "task": "stage2",
-                "status": "blocked",
-                "detail": "first_attempt",
+                "at": "2026-08-17T00:00:02Z", "event": "campaign_stop",
+                "task": "stage2", "status": "blocked", "detail": "first_attempt",
             },
             {
-                "at": "2026-08-17T00:00:02Z",
-                "event": "campaign_start",
-                "task": "stage2",
-                "status": "running",
-                "detail": "retry",
+                "at": "2026-08-17T00:00:02Z", "event": "campaign_start",
+                "task": "stage2", "status": "running", "detail": "retry",
             },
         ):
             handle.write(json.dumps(event) + "\n")
@@ -5521,18 +4843,10 @@ def test_external_campaign_phase_ties_use_append_order(tmp_path: Path) -> None:
 
     with stage2.open("a", encoding="utf-8") as handle:
         for status in ("failed", "passed"):
-            handle.write(
-                json.dumps(
-                    {
-                        "at": "2026-08-17T00:00:02Z",
-                        "event": "campaign_end",
-                        "task": "stage2",
-                        "status": status,
-                        "detail": status,
-                    }
-                )
-                + "\n"
-            )
+            handle.write(json.dumps({
+                "at": "2026-08-17T00:00:02Z", "event": "campaign_end",
+                "task": "stage2", "status": status, "detail": status,
+            }) + "\n")
 
     corrected = app._engineering_campaign("local-only-20260817T000000Z")
     assert corrected is not None
@@ -5551,21 +4865,12 @@ def test_external_campaign_survives_restart_and_reads_terminal_log(tmp_path: Pat
     app.close()
 
     with (campaign / "stage2-task-log.jsonl").open("a", encoding="utf-8") as handle:
-        handle.write(
-            json.dumps(
-                {
-                    "at": "2026-08-17T00:01:00Z",
-                    "event": "campaign_end",
-                    "task": "stage2",
-                    "status": "passed",
-                    "detail": "done",
-                }
-            )
-            + "\n"
-        )
+        handle.write(json.dumps({
+            "at": "2026-08-17T00:01:00Z", "event": "campaign_end",
+            "task": "stage2", "status": "passed", "detail": "done",
+        }) + "\n")
     restarted = RigWebApp(
-        results_root=tmp_path / "runs",
-        state_dir=tmp_path / "state",
+        results_root=tmp_path / "runs", state_dir=tmp_path / "state",
     )
     status, _, body = restarted.handle("GET", "/jobs")
     text = body.decode("utf-8")
@@ -5585,7 +4890,9 @@ def test_external_campaign_survives_restart_and_reads_terminal_log(tmp_path: Pat
         + observed.failed_tasks
         + observed.skipped_tasks
         + len(observed.active_tasks)
-        + (observed.pending_tasks or 0)
+        + (
+            observed.pending_tasks or 0
+        )
         == 2
     )
     assert restarted.jobs == {}
@@ -5642,22 +4949,13 @@ def test_external_campaign_log_endpoint_reads_only_bounded_tail(tmp_path: Path) 
     normal_results = tmp_path / "normal-runs"
     normal_results.mkdir()
     normal = _write_external_engineering_campaign(normal_results)
-    event = (
-        json.dumps(
-            {
-                "at": "2026-08-17T00:00:01Z",
-                "event": "task_start",
-                "task": "download-model",
-                "status": "running",
-                "detail": "x",
-            }
-        ).encode("utf-8")
-        + b"\n"
-    )
+    event = json.dumps({
+        "at": "2026-08-17T00:00:01Z", "event": "task_start",
+        "task": "download-model", "status": "running", "detail": "x",
+    }).encode("utf-8") + b"\n"
     (normal / "task-log.jsonl").write_bytes(event * 600)
     normal_app = RigWebApp(
-        results_root=normal_results,
-        state_dir=tmp_path / "normal-state",
+        results_root=normal_results, state_dir=tmp_path / "normal-state",
     )
     status, _, log = normal_app.handle(
         "GET", "/jobs/campaign/local-only-20260817T000000Z/log?stream=bootstrap"
@@ -5701,42 +4999,34 @@ def test_external_campaign_marker_scan_cap_is_visible(
         directory.mkdir()
         started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         (directory / "ENGINEERING_ONLY.json").write_text(
-            json.dumps(
-                {
-                    "schema": "ura-engineering-campaign/1",
-                    "campaign_id": campaign_id,
-                    "release_commit": "a" * 40,
-                    "evidence_class": "engineering_stress",
-                    "thesis_empirical_evidence": False,
-                    "hosted_calls_allowed": False,
-                    "started_at": started_at,
-                }
-            ),
+            json.dumps({
+                "schema": "ura-engineering-campaign/1",
+                "campaign_id": campaign_id,
+                "release_commit": "a" * 40,
+                "evidence_class": "engineering_stress",
+                "thesis_empirical_evidence": False,
+                "hosted_calls_allowed": False,
+                "started_at": started_at,
+            }),
             encoding="utf-8",
         )
         (directory / "task-log.jsonl").write_text(
-            "\n".join(
-                (
-                    json.dumps(
-                        {
-                            "at": started_at,
-                            "event": "campaign_start",
-                            "task": "bootstrap",
-                            "status": "running",
-                            "detail": campaign_id,
-                        }
-                    ),
-                    json.dumps(
-                        {
-                            "at": started_at,
-                            "event": "campaign_end",
-                            "task": "bootstrap",
-                            "status": "passed",
-                            "detail": campaign_id,
-                        }
-                    ),
-                )
-            )
+            "\n".join((
+                json.dumps({
+                    "at": started_at,
+                    "event": "campaign_start",
+                    "task": "bootstrap",
+                    "status": "running",
+                    "detail": campaign_id,
+                }),
+                json.dumps({
+                    "at": started_at,
+                    "event": "campaign_end",
+                    "task": "bootstrap",
+                    "status": "passed",
+                    "detail": campaign_id,
+                }),
+            ))
             + "\n",
             encoding="utf-8",
         )
@@ -5759,9 +5049,7 @@ def test_dashboard_lists_external_indeterminate_and_failed_campaigns(
     marker = json.loads(marker_path.read_text(encoding="utf-8"))
     marker["campaign_id"] = "<img src=x onerror=alert(1)>"
     marker["planned_tasks"] = [
-        "download-model",
-        "optional-probe",
-        "never-started",
+        "download-model", "optional-probe", "never-started",
     ]
     marker_path.write_text(json.dumps(marker), encoding="utf-8")
 
@@ -5769,8 +5057,12 @@ def test_dashboard_lists_external_indeterminate_and_failed_campaigns(
     running = body.decode("utf-8")
     assert status == 200
     assert "jobs (console + external)" in running
-    assert running.count("<span class='value'><span class='dot blue'></span>0</span>") == 2
-    assert running.count("<span class='value'><span class='dot red'></span>0</span>") == 2
+    assert running.count(
+        "<span class='value'><span class='dot blue'></span>0</span>"
+    ) == 2
+    assert running.count(
+        "<span class='value'><span class='dot red'></span>0</span>"
+    ) == 2
     assert "<span class='value'><span class='dot amber'></span>1</span>" in running
     assert "running (external task-log report)" in running
     assert "External running state is a task-log report" not in running
@@ -5782,25 +5074,16 @@ def test_dashboard_lists_external_indeterminate_and_failed_campaigns(
     with (campaign / "stage2-task-log.jsonl").open("a", encoding="utf-8") as handle:
         for event in (
             {
-                "at": "2026-08-17T00:00:03Z",
-                "event": "task_end",
-                "task": "download-model",
-                "status": "passed",
-                "detail": "done",
+                "at": "2026-08-17T00:00:03Z", "event": "task_end",
+                "task": "download-model", "status": "passed", "detail": "done",
             },
             {
-                "at": "2026-08-17T00:00:04Z",
-                "event": "task_end",
-                "task": "optional-probe",
-                "status": "failed",
-                "detail": "optional",
+                "at": "2026-08-17T00:00:04Z", "event": "task_end",
+                "task": "optional-probe", "status": "failed", "detail": "optional",
             },
             {
-                "at": "2026-08-17T00:01:00Z",
-                "event": "campaign_stop",
-                "task": "stage2",
-                "status": "blocked",
-                "detail": "wrong_release",
+                "at": "2026-08-17T00:01:00Z", "event": "campaign_stop",
+                "task": "stage2", "status": "blocked", "detail": "wrong_release",
             },
         ):
             handle.write(json.dumps(event) + "\n")
@@ -5941,8 +5224,7 @@ def test_jobs_and_runs_persist_across_console_restart(tmp_path: Path) -> None:
 
     # A fresh app over the same state dir = a console restart.
     restarted = RigWebApp(
-        results_root=app.results_root,
-        state_dir=app.state_dir,
+        results_root=app.results_root, state_dir=app.state_dir,
         job_id_factory=lambda: "job-new",
     )
     assert job.job_id in restarted.jobs
@@ -5952,15 +5234,15 @@ def test_jobs_and_runs_persist_across_console_restart(tmp_path: Path) -> None:
     status, _, body = restarted.handle("GET", "/jobs")
     assert status == 200 and job.job_id.encode() in body
     from experiments.rig_web import ConsoleDB
-
     assert run_kind("run_matrix", ["--attestation-probe"]) == "attestation_probe"
     assert run_kind("run_matrix", ["--dry-run"]) == "dry_run"
     assert run_kind("run_matrix", ["--preflight-only"]) == "preflight"
-    assert (
-        run_kind("run_matrix", ["--preflight-only", "--model-acquisition-plan-only"])
-        == "acquisition_plan"
-    )
-    assert run_kind("run_matrix", ["--diagnostic-canary", "--dry-run"]) == "dry_run"
+    assert run_kind(
+        "run_matrix", ["--preflight-only", "--model-acquisition-plan-only"]
+    ) == "acquisition_plan"
+    assert run_kind(
+        "run_matrix", ["--diagnostic-canary", "--dry-run"]
+    ) == "dry_run"
     assert run_kind("run_matrix", []) == "measured"
     assert run_kind("rig_check", []) == "preflight"
     assert run_kind("figures", []) is None
@@ -5972,15 +5254,12 @@ def test_stats_runs_card_records_lane_jobs(tmp_path: Path) -> None:
 
     app = _app(tmp_path)
     # A rig_check-shaped job is registered as a campaign run on finish.
-    job = app.start_job(
-        "level1_evidence",
-        {
-            "--eligibility": str(tmp_path / "missing.json"),
-            "--results": str(tmp_path / "missing"),
-            "--out-json": str(tmp_path / "o.json"),
-            "--out-csv": str(tmp_path / "o.csv"),
-        },
-    )
+    job = app.start_job("level1_evidence", {
+        "--eligibility": str(tmp_path / "missing.json"),
+        "--results": str(tmp_path / "missing"),
+        "--out-json": str(tmp_path / "o.json"),
+        "--out-csv": str(tmp_path / "o.csv"),
+    })
     deadline = _time.time() + 60
     while job.state() == "running" and _time.time() < deadline:
         _time.sleep(0.1)
@@ -6046,7 +5325,9 @@ def test_artifact_pages_render_breadcrumbs(tmp_path: Path) -> None:
     inner = app.results_root / "thesis" / "level1"
     inner.mkdir(parents=True)
     (inner / "evidence.json").write_text("{}", encoding="utf-8")
-    status, _, body = app.handle("GET", "/artifacts?path=thesis/level1/evidence.json")
+    status, _, body = app.handle(
+        "GET", "/artifacts?path=thesis/level1/evidence.json"
+    )
     assert status == 200
     text = body.decode("utf-8")
     assert "crumbs" in text
@@ -6103,9 +5384,7 @@ def test_matrix_params_match_real_run_matrix_parser_exactly() -> None:
     # Workspace/database locators are supplied by the owning console, never
     # operator-editable Runner controls.
     real = _parser_options(run_matrix.build_parser()) - {
-        "--help",
-        "--console-db",
-        "--workspace-id",
+        "--help", "--console-db", "--workspace-id",
     }
     ui = {param.flag for param in _MATRIX_PARAMS}
     assert ui - real == set(), f"UI flags absent from run_matrix: {ui - real}"
@@ -6127,493 +5406,285 @@ def test_every_ui_command_parses_with_its_real_module_parser() -> None:
     # module logic runs).
     forms: dict[str, list[dict[str, str]]] = {
         "response_svm": [
-            {
-                "--export": "on",
-                "--database": "/data/console.db",
-                "--candidates": "/data/inputs.json.gz",
-                "--campaign": "local",
-                "--campaign#1": "hosted",
-                "--matched-campaign": "hosted",
-                "--judge-condition": "haiku",
-                "--exclude-model": "retired:",
-                "--out": "/data/export",
-            },
-            {
-                "--evaluate": "on",
-                "--dataset": "/data/export/dataset.jsonl",
-                "--out": "/data/report",
-                "--seed": "0",
-                "--bootstrap": "1000",
-                "--max-feature-characters": "20000",
-                "--holdout-model": "model:",
-                "--holdout-corpus": "corpus",
-            },
-            {
-                "--package": "on",
-                "--dataset": "/data/export/dataset.jsonl",
-                "--study-result": "/data/report/result.json",
-                "--study-predictions": "/data/report/predictions.json",
-                "--out": "/data/fitted",
-            },
-            {
-                "--predict": "on",
-                "--dataset": "/data/new.jsonl",
-                "--models": "/data/fitted/models.joblib",
-                "--features": "response",
-                "--out": "/data/new-predictions",
-            },
+            {"--export": "on", "--database": "/data/console.db", "--candidates": "/data/inputs.json.gz",
+             "--campaign": "local", "--campaign#1": "hosted", "--matched-campaign": "hosted",
+             "--judge-condition": "haiku", "--exclude-model": "retired:", "--out": "/data/export"},
+            {"--evaluate": "on", "--dataset": "/data/export/dataset.jsonl", "--out": "/data/report",
+             "--seed": "0", "--bootstrap": "1000", "--max-feature-characters": "20000",
+             "--holdout-model": "model:", "--holdout-corpus": "corpus"},
+            {"--package": "on", "--dataset": "/data/export/dataset.jsonl", "--study-result": "/data/report/result.json",
+             "--study-predictions": "/data/report/predictions.json", "--out": "/data/fitted"},
+            {"--predict": "on", "--dataset": "/data/new.jsonl", "--models": "/data/fitted/models.joblib",
+             "--features": "response", "--out": "/data/new-predictions"},
         ],
         "project_revision": [
             {"--expected-revision": "a" * 40, "--out": "runs/pr"},
             {"--validate": "runs/pr/x.json", "--sha256": "b" * 64},
         ],
-        "source_conformance": [
-            {
-                "--scaffold": "on",
-                "--arm": "strongreject_official",
-                "--observation": "strongreject_official=runs/obs",
-                "--out": "runs/sc.json",
-                "--source-config": "experiments/s.json",
-            }
-        ],
-        "capture_t3mp3st": [
-            {
-                "--corpus": "strongreject_official",
-                "--source-config": "experiments/s.json",
-                "--limit": "1",
-                "--sample-seed": "0",
-                "--endpoint": "http://127.0.0.1:3333/api/general/plan",
-                "--upstream-revision": "a" * 40,
-                "--source-provider": "openai",
-                "--source-model": "source-model",
-                "--timeout-seconds": "120",
-                "--out": "runs/t3",
-            }
-        ],
-        "harmbench_capture": [
-            {
-                "--repo": "/data/HarmBench",
-                "--revision": "a" * 40,
-                "--source": "/data/harmbench.csv",
-                "--corpus-name": "harmbench_text",
-                "--method": "PEZ",
-                "--method#1": "PAP-top5",
-                "--experiment": "llama2_7b",
-                "--limit": "1",
-                "--sample-seed": "0",
-                "--cases-per-method": "1",
-                "--artifact-out": "runs/harm/capture.json",
-                "--attacker-config-out": "runs/harm/attackers.json",
-                "--python": "/usr/bin/python",
-                "--credential-env": "HF_TOKEN",
-                "--timeout-seconds": "600",
-            }
-        ],
+        "source_conformance": [{
+            "--scaffold": "on", "--arm": "strongreject_official",
+            "--observation": "strongreject_official=runs/obs",
+            "--out": "runs/sc.json", "--source-config": "experiments/s.json",
+        }],
+        "capture_t3mp3st": [{
+            "--corpus": "strongreject_official",
+            "--source-config": "experiments/s.json", "--limit": "1",
+            "--sample-seed": "0",
+            "--endpoint": "http://127.0.0.1:3333/api/general/plan",
+            "--upstream-revision": "a" * 40, "--source-provider": "openai",
+            "--source-model": "source-model", "--timeout-seconds": "120",
+            "--out": "runs/t3",
+        }],
+        "harmbench_capture": [{
+            "--repo": "/data/HarmBench", "--revision": "a" * 40,
+            "--source": "/data/harmbench.csv", "--corpus-name": "harmbench_text",
+            "--method": "PEZ", "--method#1": "PAP-top5",
+            "--experiment": "llama2_7b", "--limit": "1",
+            "--sample-seed": "0", "--cases-per-method": "1",
+            "--artifact-out": "runs/harm/capture.json",
+            "--attacker-config-out": "runs/harm/attackers.json",
+            "--python": "/usr/bin/python", "--credential-env": "HF_TOKEN",
+            "--timeout-seconds": "600",
+        }],
         "rig_check": [],  # forwards the valid preflight subset (asserted above)
-        "run_matrix": [
-            {
-                "--dry-run": "on",
-                "--corpora": "synth",
-                "--attackers": "replay",
-                "--judges": "rules",
-                "--judge-model": "mock",
-                "--limit": "2",
-                "--approximate-common-metrics": "on",
-                "--sample-seed": "0",
-                "--seeds": "0",
-                "--max-queries": "1",
-                "--max-turns": "1",
-                "--group": "model,source",
-                "--target-answer-retries": "1",
-                "--recovery-completed-prefix": "runs/recovery-prefix.json",
-                "--recovery-completed-prefix-sha256": "9" * 64,
-                "--defense": "both",
-                "--defense-guard": "guardrail",
-                "--guardrail-model": "m",
-                "--guardrail-revision": "c" * 40,
-                "--guardrail-device": "cpu",
-                "--defense-guardrail-model": "n",
-                "--defense-guardrail-revision": "d" * 40,
-                "--defense-guardrail-device": "cpu",
-                "--quantization": "awq",
-                "--dtype": "bfloat16",
-                "--max-total-target-calls": "10",
-                "--max-total-judge-calls": "10",
-                "--max-total-http-attempts": "30",
-                "--deadline-seconds": "600",
-                "--lock-stale-seconds": "60",
-                "--execution-scope-id": "scope-1",
-                "--live-attestation#1": "runs/a.json",
-                "--live-attestation-sha256#1": "e" * 64,
-                "--live-attestation#2": "runs/b.json",
-                "--live-attestation-sha256#2": "f" * 64,
-                "--live-attestation-max-age-hours": "24",
-                "--project-revision": "runs/pr.json",
-                "--project-revision-sha256": "a" * 64,
-                "--source-conformance": "runs/sc.json",
-                "--source-conformance-sha256": "b" * 64,
-                "--models": "claude",
-                "--api-config": "experiments/a.json",
-                "--local-config": "experiments/l.json",
-                "--source-config": "experiments/s.json",
-                "--attacker-config": "experiments/atk.json",
-                "--reset-open-circuits": "on",
-                "--preflight-only": "on",
-                "--out": "runs/exp",
-            }
-        ],
+        "run_matrix": [{
+            "--dry-run": "on", "--corpora": "synth", "--attackers": "replay",
+            "--judges": "rules", "--judge-model": "mock", "--limit": "2",
+            "--approximate-common-metrics": "on",
+            "--sample-seed": "0", "--seeds": "0", "--max-queries": "1",
+            "--max-turns": "1", "--group": "model,source",
+            "--target-answer-retries": "1",
+            "--recovery-completed-prefix": "runs/recovery-prefix.json",
+            "--recovery-completed-prefix-sha256": "9" * 64,
+            "--defense": "both", "--defense-guard": "guardrail",
+            "--guardrail-model": "m", "--guardrail-revision": "c" * 40,
+            "--guardrail-device": "cpu", "--defense-guardrail-model": "n",
+            "--defense-guardrail-revision": "d" * 40,
+            "--defense-guardrail-device": "cpu", "--quantization": "awq",
+            "--dtype": "bfloat16", "--max-total-target-calls": "10",
+            "--max-total-judge-calls": "10", "--max-total-http-attempts": "30",
+            "--deadline-seconds": "600", "--lock-stale-seconds": "60",
+            "--execution-scope-id": "scope-1",
+            "--live-attestation#1": "runs/a.json",
+            "--live-attestation-sha256#1": "e" * 64,
+            "--live-attestation#2": "runs/b.json",
+            "--live-attestation-sha256#2": "f" * 64,
+            "--live-attestation-max-age-hours": "24",
+            "--project-revision": "runs/pr.json",
+            "--project-revision-sha256": "a" * 64,
+            "--source-conformance": "runs/sc.json",
+            "--source-conformance-sha256": "b" * 64,
+            "--models": "claude", "--api-config": "experiments/a.json",
+            "--local-config": "experiments/l.json",
+            "--source-config": "experiments/s.json",
+            "--attacker-config": "experiments/atk.json",
+            "--reset-open-circuits": "on", "--preflight-only": "on",
+            "--out": "runs/exp",
+        }],
         "live_attestation": [
-            {"--probe-root": "runs/probe", "--execution-scope-id": "s", "--out": "runs/att.json"},
+            {"--probe-root": "runs/probe", "--execution-scope-id": "s",
+             "--out": "runs/att.json"},
             {"--validate": "runs/att.json", "--sha256": "a" * 64},
         ],
-        "lane_canary": [
-            {
-                "--results": "runs/c",
-                "--eligibility": "runs/c/e.json",
-                "--out-dir": "runs/c/out",
-            }
-        ],
-        "level1_evidence": [
-            {
-                "--eligibility": "runs/a/e.json",
-                "--eligibility#1": "runs/b/e.json",
-                "--results": "runs/a",
-                "--results#1": "runs/b",
-                "--live-attestation": "runs/att.json",
-                "--live-attestation-sha256": "a" * 64,
-                "--out-json": "runs/l1.json",
-                "--out-csv": "runs/l1.csv",
-            }
-        ],
-        "suite_summary": [
-            {
-                "--results": "runs/a",
-                "--native": "runs/n.json",
-                "--eligibility": "runs/a/e.json",
-                "--source-config": "experiments/s.json",
-                "--out": "runs/suite",
-            }
-        ],
-        "level2_report": [
-            {
-                "--results": "runs/a",
-                "--results#1": "runs/b",
-                "--native": "runs/n.json",
-                "--out-json": "runs/l2.json",
-                "--out-csv": "runs/l2.csv",
-                "--out-md": "runs/l2.md",
-            }
-        ],
+        "lane_canary": [{
+            "--results": "runs/c", "--eligibility": "runs/c/e.json",
+            "--out-dir": "runs/c/out",
+        }],
+        "level1_evidence": [{
+            "--eligibility": "runs/a/e.json", "--eligibility#1": "runs/b/e.json",
+            "--results": "runs/a", "--results#1": "runs/b",
+            "--live-attestation": "runs/att.json",
+            "--live-attestation-sha256": "a" * 64,
+            "--out-json": "runs/l1.json", "--out-csv": "runs/l1.csv",
+        }],
+        "suite_summary": [{
+            "--results": "runs/a", "--native": "runs/n.json",
+            "--eligibility": "runs/a/e.json",
+            "--source-config": "experiments/s.json", "--out": "runs/suite",
+        }],
+        "level2_report": [{
+            "--results": "runs/a", "--results#1": "runs/b",
+            "--native": "runs/n.json", "--out-json": "runs/l2.json",
+            "--out-csv": "runs/l2.csv", "--out-md": "runs/l2.md",
+        }],
         "human_audit": [
-            {"--results": "runs/a", "--prepare": "40", "--acknowledge-sensitive-content": "on"},
-            {
-                "--results": "runs/a",
-                "--labels": "runs/a/exploratory.csv",
-                "--allow-single-rater": "on",
-                "--output": "runs/analysis/exploratory.json",
-            },
-            {
-                "--results": "runs/a",
-                "--labels": "runs/a/labels.csv",
-                "--prepared-rating-form": "runs/prepared/common.csv",
-                "--prepared-rating-form-sha256": "a" * 64,
-                "--output": "runs/analysis/human_audit.json",
-                "--bootstrap-resamples": "100",
-                "--alpha": "0.05",
-                "--seed": "0",
-            },
-            {
-                "--results": "runs/a",
-                "--prepare-source-task": "10",
-                "--acknowledge-sensitive-content": "on",
-                "--output": "runs/a/source-task.csv",
-            },
-            {
-                "--results": "runs/a",
-                "--source-task-labels": "runs/a/s.csv",
-                "--prepared-rating-form": "runs/prepared/source.csv",
-                "--prepared-rating-form-sha256": "b" * 64,
-                "--output": "runs/analysis/source_task_audit.json",
-            },
+            {"--results": "runs/a", "--prepare": "40",
+             "--acknowledge-sensitive-content": "on"},
+            {"--results": "runs/a", "--labels": "runs/a/exploratory.csv",
+             "--allow-single-rater": "on",
+             "--output": "runs/analysis/exploratory.json"},
+            {"--results": "runs/a", "--labels": "runs/a/labels.csv",
+             "--prepared-rating-form": "runs/prepared/common.csv",
+             "--prepared-rating-form-sha256": "a" * 64,
+             "--output": "runs/analysis/human_audit.json",
+             "--bootstrap-resamples": "100", "--alpha": "0.05", "--seed": "0"},
+            {"--results": "runs/a", "--prepare-source-task": "10",
+             "--acknowledge-sensitive-content": "on",
+             "--output": "runs/a/source-task.csv"},
+            {"--results": "runs/a", "--source-task-labels": "runs/a/s.csv",
+             "--prepared-rating-form": "runs/prepared/source.csv",
+             "--prepared-rating-form-sha256": "b" * 64,
+             "--output": "runs/analysis/source_task_audit.json"},
         ],
         "figures": [
             {"--synth": "on", "--out": "runs/figs"},
-            {
-                "--results": "runs/a",
-                "--left-model": "l",
-                "--right-model": "r",
-                "--human-audit": "runs/a/h.json",
-                "--human-audit-sha256": "a" * 64,
-                "--strongreject-corpus": "strongreject_official",
-                "--mmsafety-corpus": "mmsafety_official",
-                "--mossbench-corpus": "mossbench_official",
-                "--bootstrap": "100",
-                "--seed": "0",
-                "--out": "runs/figs",
-            },
+            {"--results": "runs/a", "--left-model": "l", "--right-model": "r",
+             "--human-audit": "runs/a/h.json", "--human-audit-sha256": "a" * 64,
+             "--strongreject-corpus": "strongreject_official",
+             "--mmsafety-corpus": "mmsafety_official",
+             "--mossbench-corpus": "mossbench_official",
+             "--bootstrap": "100", "--seed": "0", "--out": "runs/figs"},
         ],
-        "paired_compare": [
-            {
-                "--results": "runs/a",
-                "--left-model": "l",
-                "--right-model": "l",
-                "--left-defense": "none",
-                "--right-defense": "none",
-                "--attacker": "replay",
-                "--right-attacker": "crescendo",
-                "--corpus": "strongreject_official",
-                "--mode": "auto",
-                "--bootstrap": "100",
-                "--seed": "0",
-                "--permutations": "100",
-                "--alpha": "0.05",
-                "--assume-exchangeable": "on",
-                "--output": "runs/pc.json",
-            }
-        ],
-        "judge_sensitivity": [
-            {
-                "--results": "runs/a",
-                "--attacker": "replay",
-                "--corpus": "strongreject_official",
-                "--output": "runs/js.json",
-            }
-        ],
-        "kappa": [
-            {
-                "--results": "runs/a",
-                "--attacker": "replay",
-                "--corpus": "strongreject_official",
-            }
-        ],
-        "transfer_matrix": [
-            {
-                "--results": "runs/a",
-                "--attacker": "replay",
-                "--corpus": "strongreject_official",
-                "--minimum-unique-clusters": "2",
-                "--bootstrap": "100",
-                "--seed": "0",
-                "--alpha": "0.05",
-            }
-        ],
-        "export_jalmbench": [
-            {
-                "--source": "runs/src",
-                "--max-records": "10",
-                "--max-total-bytes": "1000",
-                "--out": "runs/out",
-            }
-        ],
-        "export_vlsbench": [
-            {
-                "--source": "runs/src",
-                "--max-records": "10",
-                "--max-total-bytes": "1000",
-                "--out": "runs/out",
-            }
-        ],
+        "paired_compare": [{
+            "--results": "runs/a", "--left-model": "l", "--right-model": "l",
+            "--left-defense": "none", "--right-defense": "none",
+            "--attacker": "replay", "--right-attacker": "crescendo",
+            "--corpus": "strongreject_official", "--mode": "auto",
+            "--bootstrap": "100", "--seed": "0", "--permutations": "100",
+            "--alpha": "0.05", "--assume-exchangeable": "on",
+            "--output": "runs/pc.json",
+        }],
+        "judge_sensitivity": [{
+            "--results": "runs/a", "--attacker": "replay",
+            "--corpus": "strongreject_official", "--output": "runs/js.json",
+        }],
+        "kappa": [{
+            "--results": "runs/a", "--attacker": "replay",
+            "--corpus": "strongreject_official",
+        }],
+        "transfer_matrix": [{
+            "--results": "runs/a", "--attacker": "replay",
+            "--corpus": "strongreject_official",
+            "--minimum-unique-clusters": "2", "--bootstrap": "100",
+            "--seed": "0", "--alpha": "0.05",
+        }],
+        "export_jalmbench": [{
+            "--source": "runs/src", "--max-records": "10",
+            "--max-total-bytes": "1000", "--out": "runs/out",
+        }],
+        "export_vlsbench": [{
+            "--source": "runs/src", "--max-records": "10",
+            "--max-total-bytes": "1000", "--out": "runs/out",
+        }],
         "export_aggregators": [{"--source": "all", "--out-root": "runs/corpora"}],
         "native_import": [
             {"--config": "runs/cfg.json", "--out": "runs/out"},
             {"--validate": "runs/native.json"},
         ],
         "syn_compat": [
-            {
-                "--generate": "on",
-                "--out": "runs/syn",
-                "--seed": "0",
-                "--perturbations-per-template": "2",
-            },
-            {
-                "--check": "on",
-                "--cases": "runs/syn/cases.jsonl",
-                "--metadata": "runs/syn/meta.json",
-            },
-            {
-                "--evaluate": "on",
-                "--cases": "runs/syn/cases.jsonl",
-                "--metadata": "runs/syn/meta.json",
-                "--out": "runs/syn/out",
-            },
+            {"--generate": "on", "--out": "runs/syn", "--seed": "0",
+             "--perturbations-per-template": "2"},
+            {"--check": "on", "--cases": "runs/syn/cases.jsonl",
+             "--metadata": "runs/syn/meta.json"},
+            {"--evaluate": "on", "--cases": "runs/syn/cases.jsonl",
+             "--metadata": "runs/syn/meta.json", "--out": "runs/syn/out"},
         ],
         "local_targets": [{"--refresh": "on", "--vllm-version": "0.27.1"}],
-        "local_model_readiness": [
-            {
-                "--validate": "runs/readiness.json",
-                "--sha256": "a" * 64,
-                "--expected-spec": "vllm:org/model",
-            }
-        ],
-        "hosted_campaign_budget": [
-            {
-                "--api-config": "experiments/api.json",
-                "--api-config-sha256": "a" * 64,
-                "--pricing-config": "experiments/pricing.json",
-                "--pricing-config-sha256": "b" * 64,
-                "--budgets": "runs/budgets.json",
-                "--budgets-sha256": "c" * 64,
-                "--pricing-as-of": "2026-09-04",
-                "--out": "runs/hosted-budget.json",
-            }
-        ],
-        "retained_local_sources": [
-            {
-                "--source-root": "/data/local",
-                "--run-id": "run-1",
-                "--out": "/data/inputs.json",
-            }
-        ],
-        "hosted_retained_inputs": [
-            {
-                "--local-inventory": "/data/inputs.json",
-                "--local-inventory-sha256": "a" * 64,
-                "--budget": "/data/budget.json",
-                "--budget-sha256": "b" * 64,
-                "--api-config": "/data/api.json",
-                "--api-config-sha256": "c" * 64,
-                "--target": "openai:model",
-                "--out": "/data/replay",
-            }
-        ],
-        "hosted_selected_replays": [
-            {
-                "--local-inventory": "/data/inputs.json",
-                "--local-inventory-sha256": "a" * 64,
-                "--budget": "/data/budget.json",
-                "--budget-sha256": "b" * 64,
-                "--api-config": "/data/api.json",
-                "--api-config-sha256": "c" * 64,
-                "--out-root": "/data/replays",
-            }
-        ],
-        "hosted_campaign_prepare": [
-            {
-                "--request": "/data/request.json",
-                "--request-sha256": "a" * 64,
-                "--out-root": "/data/prepared",
-                "--count-cache": "/data/counts",
-            }
-        ],
-        "hosted_program_runtime": [
-            {
-                "--program": "/data/program.json",
-                "--program-sha256": "a" * 64,
-                "--budget-root": "/data/budget",
-                "--budget-plan-sha256": "b" * 64,
-                "--project-root": "/data/repo",
-                "--expected-commit": "c" * 40,
-                "--out": "/data/runtime",
-            }
-        ],
-        "hosted_campaign_execute": [
-            {
-                "--program": "/data/program.json",
-                "--program-sha256": "a" * 64,
-                "--budget-root": "/data/budget",
-                "--budget-plan-sha256": "b" * 64,
-                "--project-root": "/data/repo",
-                "--expected-commit": "c" * 40,
-                "--workers-per-provider": "2",
-                "--out": "/data/collection",
-            }
-        ],
-        "retained_native_judge_prepare": [
-            {
-                "--program": "/data/program.json",
-                "--program-sha256": "a" * 64,
-                "--job": "job-1",
-                "--include-incomplete": "on",
-                "--out": "/data/local-prepared",
-            }
-        ],
-        "retained_native_judge_execute": [
-            {
-                "--preparation": "/data/preparation.json",
-                "--preparation-sha256": "a" * 64,
-                "--out": "/data/local-judged",
-            }
-        ],
-        "retained_judge_inventory": [
-            {
-                "--local-view": "/data/local",
-                "--hosted-view": "/data/hosted",
-                "--input-limit": "0",
-                "--sample-seed": "0",
-                "--out": "/data/inventory",
-            }
-        ],
-        "retained_inventory_judge_items": [
-            {
-                "--inventory": "/data/inventory.json",
-                "--local-view": "/data/local",
-                "--hosted-view": "/data/hosted",
-                "--budget-root": "/data/budget",
-                "--budget-plan-sha256": "a" * 64,
-                "--out": "/data/items",
-            }
-        ],
+        "local_model_readiness": [{
+            "--validate": "runs/readiness.json",
+            "--sha256": "a" * 64,
+            "--expected-spec": "vllm:org/model",
+        }],
+        "hosted_campaign_budget": [{
+            "--api-config": "experiments/api.json",
+            "--api-config-sha256": "a" * 64,
+            "--pricing-config": "experiments/pricing.json",
+            "--pricing-config-sha256": "b" * 64,
+            "--budgets": "runs/budgets.json",
+            "--budgets-sha256": "c" * 64,
+            "--pricing-as-of": "2026-09-04",
+            "--out": "runs/hosted-budget.json",
+        }],
+        "retained_local_sources": [{
+            "--source-root": "/data/local", "--run-id": "run-1", "--out": "/data/inputs.json",
+        }],
+        "hosted_retained_inputs": [{
+            "--local-inventory": "/data/inputs.json", "--local-inventory-sha256": "a" * 64,
+            "--budget": "/data/budget.json", "--budget-sha256": "b" * 64,
+            "--api-config": "/data/api.json", "--api-config-sha256": "c" * 64,
+            "--target": "openai:model", "--out": "/data/replay",
+        }],
+        "hosted_selected_replays": [{
+            "--local-inventory": "/data/inputs.json", "--local-inventory-sha256": "a" * 64,
+            "--budget": "/data/budget.json", "--budget-sha256": "b" * 64,
+            "--api-config": "/data/api.json", "--api-config-sha256": "c" * 64,
+            "--out-root": "/data/replays",
+        }],
+        "hosted_campaign_prepare": [{
+            "--request": "/data/request.json", "--request-sha256": "a" * 64,
+            "--out-root": "/data/prepared", "--count-cache": "/data/counts",
+        }],
+        "hosted_program_runtime": [{
+            "--program": "/data/program.json", "--program-sha256": "a" * 64,
+            "--budget-root": "/data/budget", "--budget-plan-sha256": "b" * 64,
+            "--project-root": "/data/repo", "--expected-commit": "c" * 40, "--out": "/data/runtime",
+        }],
+        "hosted_campaign_execute": [{
+            "--program": "/data/program.json", "--program-sha256": "a" * 64,
+            "--budget-root": "/data/budget", "--budget-plan-sha256": "b" * 64,
+            "--project-root": "/data/repo", "--expected-commit": "c" * 40,
+            "--workers-per-provider": "2", "--out": "/data/collection",
+        }],
+        "retained_native_judge_prepare": [{
+            "--program": "/data/program.json", "--program-sha256": "a" * 64,
+            "--job": "job-1", "--include-incomplete": "on", "--out": "/data/local-prepared",
+        }],
+        "retained_native_judge_execute": [{
+            "--preparation": "/data/preparation.json", "--preparation-sha256": "a" * 64,
+            "--out": "/data/local-judged",
+        }],
+        "retained_judge_inventory": [{
+            "--local-view": "/data/local", "--hosted-view": "/data/hosted",
+            "--input-limit": "0", "--sample-seed": "0", "--out": "/data/inventory",
+        }],
+        "retained_inventory_judge_items": [{
+            "--inventory": "/data/inventory.json", "--local-view": "/data/local",
+            "--hosted-view": "/data/hosted", "--budget-root": "/data/budget",
+            "--budget-plan-sha256": "a" * 64, "--out": "/data/items",
+        }],
         "retained_inventory_judging": [
-            {
-                "--items-root": "/data/items",
-                "--judge-model": "anthropic:haiku",
-                "--api-config": "/data/api.json",
-                "--pricing-config": "/data/pricing.json",
-                "--pricing-as-of": "2026-09-13",
-                "--out": "/data/prepared",
-            },
-            {
-                "--preparation": "/data/prepared",
-                "--execute": "on",
-                "--ack-paid-execution": "on",
-                "--workers": "2",
-                "--matching-workspace-id": "local",
-                "--out": "/data/judged",
-            },
+            {"--items-root": "/data/items", "--judge-model": "anthropic:haiku", "--api-config": "/data/api.json",
+             "--pricing-config": "/data/pricing.json", "--pricing-as-of": "2026-09-13", "--out": "/data/prepared"},
+            {"--preparation": "/data/prepared", "--execute": "on", "--ack-paid-execution": "on",
+             "--workers": "2", "--matching-workspace-id": "local", "--out": "/data/judged"},
         ],
-        "retained_hosted_judge_items": [
-            {
-                "--preparation": "/data/preparation.json",
-                "--budget-root": "/data/budget",
-                "--budget-plan-sha256": "a" * 64,
-                "--out": "/data/hosted-items",
-            }
-        ],
-        "retained_response_judge_pair": [
-            {
-                "--local-runner-view": "runs/local",
-                "--hosted-runner-view": "runs/hosted",
-                "--source-receipt": "runs/source.json",
-                "--source-receipt-sha256": "a" * 64,
-                "--judge-model": "anthropic:claude-haiku-fixture",
-                "--api-config-sha256": "b" * 64,
-                "--pricing-config": "experiments/pricing.json",
-                "--pricing-config-sha256": "c" * 64,
-                "--pricing-as-of": "2026-09-04",
-                "--pair-limit": "10",
-                "--sample-seed": "0",
-                "--max-cost-microusd": "1000000",
-                "--ack-hosted-judge-data-transfer": "on",
-                "--out": "runs/judge-pair-plan.json",
-            }
-        ],
-        "retained_response_judge_pair_execute": [
-            {
-                "--plan": "runs/judge-pair-plan.json",
-                "--local-runner-view": "runs/local",
-                "--hosted-runner-view": "runs/hosted",
-                "--source-receipt": "runs/source.json",
-                "--api-config": "experiments/api.json",
-                "--pricing-config": "experiments/pricing.json",
-                "--out": "runs/judge-pair-results",
-                "--ack-paid-execution": "on",
-            }
-        ],
+        "retained_hosted_judge_items": [{
+            "--preparation": "/data/preparation.json", "--budget-root": "/data/budget",
+            "--budget-plan-sha256": "a" * 64, "--out": "/data/hosted-items",
+        }],
+        "retained_response_judge_pair": [{
+            "--local-runner-view": "runs/local",
+            "--hosted-runner-view": "runs/hosted",
+            "--source-receipt": "runs/source.json",
+            "--source-receipt-sha256": "a" * 64,
+            "--judge-model": "anthropic:claude-haiku-fixture",
+            "--api-config-sha256": "b" * 64,
+            "--pricing-config": "experiments/pricing.json",
+            "--pricing-config-sha256": "c" * 64,
+            "--pricing-as-of": "2026-09-04",
+            "--pair-limit": "10",
+            "--sample-seed": "0",
+            "--max-cost-microusd": "1000000",
+            "--ack-hosted-judge-data-transfer": "on",
+            "--out": "runs/judge-pair-plan.json",
+        }],
+        "retained_response_judge_pair_execute": [{
+            "--plan": "runs/judge-pair-plan.json",
+            "--local-runner-view": "runs/local",
+            "--hosted-runner-view": "runs/hosted",
+            "--source-receipt": "runs/source.json",
+            "--api-config": "experiments/api.json",
+            "--pricing-config": "experiments/pricing.json",
+            "--out": "runs/judge-pair-results",
+            "--ack-paid-execution": "on",
+        }],
         "webui_selftest": [{"--selftest-sleep": "0"}],
     }
     # Typed controller commands with dedicated workflows; never generic forms.
     internal = {"model_acquire", "ollama_pull", "campaign_assess", "human_review_campaign"}
-    assert set(forms) == set(COMMANDS) - internal, sorted(set(forms) ^ (set(COMMANDS) - internal))
+    assert set(forms) == set(COMMANDS) - internal, (
+        sorted(set(forms) ^ (set(COMMANDS) - internal))
+    )
     for name, entry in COMMANDS.items():
         if name in internal:
             continue
@@ -6627,7 +5698,8 @@ def test_every_ui_command_parses_with_its_real_module_parser() -> None:
         real_options = _parser_options(parser)
         for param in entry.params:
             assert param.flag in real_options, (
-                f"{name}: UI offers {param.flag} but {entry.module} does not define it"
+                f"{name}: UI offers {param.flag} but "
+                f"{entry.module} does not define it"
             )
         for form in forms[name]:
             argv = build_argv(name, form)
@@ -6637,52 +5709,41 @@ def test_every_ui_command_parses_with_its_real_module_parser() -> None:
 
 
 def test_paired_comparison_ui_exposes_historical_reader(tmp_path: Path) -> None:
-    values = {
-        "--results": "runs/comparison-inputs",
-        "--left-model": "qwen",
-        "--right-model": "qwen",
-        "--right-attacker": "crescendo",
-        "--historical-code-repository": "/home/ura/MLLMRiskBench",
-    }
-    argv = build_argv("paired_compare", values)
-    assert argv[argv.index("--historical-code-repository") + 1] == "/home/ura/MLLMRiskBench"
+    values = {'--results': 'runs/comparison-inputs', '--left-model': 'qwen',
+        '--right-model': 'qwen', '--right-attacker': 'crescendo',
+        '--historical-code-repository': '/home/ura/MLLMRiskBench'}
+    argv = build_argv('paired_compare', values)
+    assert argv[argv.index('--historical-code-repository') + 1] == '/home/ura/MLLMRiskBench'
     app = _app(tmp_path)
     try:
-        card = app._command_card("paired_compare")
+        card = app._command_card('paired_compare')
         assert "name='--historical-code-repository'" in card
-        assert "original source revisions" in card
+        assert 'original source revisions' in card
     finally:
         app.close()
 
 
 def test_level2_ui_preserves_historical_reader_and_multiple_roots(tmp_path: Path) -> None:
-    values = {
-        "--results": "runs/first",
-        "--results#1": "runs/second",
-        "--historical-code-repository": "/home/ura/MLLMRiskBench",
-        "--out-json": "runs/report.json",
-        "--out-csv": "runs/report.csv",
-        "--out-md": "runs/report.md",
-    }
-    argv = build_argv("level2_report", values)
-    assert argv[argv.index("--historical-code-repository") + 1] == "/home/ura/MLLMRiskBench"
-    assert [argv[index + 1] for index, value in enumerate(argv) if value == "--results"] == [
-        "runs/first",
-        "runs/second",
-    ]
+    values = {'--results': 'runs/first', '--results#1': 'runs/second',
+        '--historical-code-repository': '/home/ura/MLLMRiskBench',
+        '--out-json': 'runs/report.json', '--out-csv': 'runs/report.csv',
+        '--out-md': 'runs/report.md'}
+    argv = build_argv('level2_report', values)
+    assert argv[argv.index('--historical-code-repository') + 1] == '/home/ura/MLLMRiskBench'
+    assert [argv[index + 1] for index, value in enumerate(argv) if value == '--results'] == [
+        'runs/first', 'runs/second']
     app = _app(tmp_path)
     try:
-        card = app._command_card("level2_report")
+        card = app._command_card('level2_report')
         assert "name='--historical-code-repository'" in card
-        assert "original source revisions" in card
+        assert 'original source revisions' in card
     finally:
         app.close()
 
 
 def test_human_audit_ui_preserves_historical_configuration_selector() -> None:
     values = {
-        "--results": "runs/runner-view",
-        "--prepare": "2",
+        "--results": "runs/runner-view", "--prepare": "2",
         "--historical-code-repository": "/home/ura/MLLMRiskBench",
         "--judge-configuration-sha256": "a" * 64,
         "--acknowledge-sensitive-content": "on",
@@ -6707,7 +5768,9 @@ def test_human_audit_ui_matches_exploratory_and_bound_analysis_contract() -> Non
         "--labels": "runs/labels/common.csv",
         "--output": "runs/analysis/human_audit.json",
     }
-    exploratory = build_argv("human_audit", {**labels, "--allow-single-rater": "on"})
+    exploratory = build_argv(
+        "human_audit", {**labels, "--allow-single-rater": "on"}
+    )
     assert "--allow-single-rater" in exploratory
     assert "--prepared-rating-form" not in exploratory
     with pytest.raises(ValueError, match="64 lowercase hex"):
@@ -6779,7 +5842,7 @@ def test_human_audit_command_form_hides_analysis_controls_during_preparation(
         app.close()
     marker = "<input type='hidden' name='command' value='human_audit'>"
     marker_at = page.index(marker)
-    card = page[page.rfind("<details", 0, marker_at) : page.index("</details>", marker_at)]
+    card = page[page.rfind("<details", 0, marker_at):page.index("</details>", marker_at)]
     for flag in (
         "--prepared-rating-form",
         "--prepared-rating-form-sha256",
@@ -6790,7 +5853,7 @@ def test_human_audit_command_form_hides_analysis_controls_during_preparation(
     ):
         opening = _opening_tag(card, f"name='{flag}'")
         input_at = card.index(opening)
-        field = card[card.rfind("<label", 0, input_at) : input_at + len(opening)]
+        field = card[card.rfind("<label", 0, input_at):input_at + len(opening)]
         assert "data-human-audit-scope='analysis'" in field
     assert "function syncHumanAudit(form)" in page
     assert "control.disabled=!visible" in page
@@ -6800,27 +5863,16 @@ def test_models_flag_resolves_registries_and_rejects_unknown(
     tmp_path: Path,
 ) -> None:
     api_cfg = tmp_path / "api.json"
-    api_cfg.write_text(
-        json.dumps(
-            {
-                "anthropic:claude-haiku-4-5-20251001": {"modalities": ["text"]},
-            }
-        ),
-        encoding="utf-8",
-    )
+    api_cfg.write_text(json.dumps({
+        "anthropic:claude-haiku-4-5-20251001": {"modalities": ["text"]},
+    }), encoding="utf-8")
     local_cfg = tmp_path / "local.json"
-    local_cfg.write_text(
-        json.dumps(
-            {
-                "vllm:org/model": {"revision": "a" * 40, "modalities": ["text"]},
-            }
-        ),
-        encoding="utf-8",
-    )
+    local_cfg.write_text(json.dumps({
+        "vllm:org/model": {"revision": "a" * 40, "modalities": ["text"]},
+    }), encoding="utf-8")
     api, local = run_matrix._resolve_model_selection(
         ["anthropic:claude-haiku-4-5-20251001", "vllm:org/model"],
-        api_cfg,
-        local_cfg,
+        api_cfg, local_cfg,
     )
     assert api == ["anthropic:claude-haiku-4-5-20251001"]
     assert local == ["vllm:org/model"]
@@ -6828,65 +5880,33 @@ def test_models_flag_resolves_registries_and_rejects_unknown(
         run_matrix._resolve_model_selection(["nope"], api_cfg, local_cfg)
     with pytest.raises(ValueError, match="closest registry entries"):
         run_matrix._resolve_model_selection(
-            ["anthropic:claude-haiku"],
-            api_cfg,
-            local_cfg,
+            ["anthropic:claude-haiku"], api_cfg, local_cfg,
         )
-    local_cfg.write_text(
-        json.dumps(
-            {
-                "anthropic:claude-haiku-4-5-20251001": {},
-            }
-        ),
-        encoding="utf-8",
-    )
+    local_cfg.write_text(json.dumps({
+        "anthropic:claude-haiku-4-5-20251001": {},
+    }), encoding="utf-8")
     with pytest.raises(ValueError, match="ambiguous model"):
         run_matrix._resolve_model_selection(
-            ["anthropic:claude-haiku-4-5-20251001"],
-            api_cfg,
-            local_cfg,
+            ["anthropic:claude-haiku-4-5-20251001"], api_cfg, local_cfg,
         )
     # Mutual exclusion with explicit --api/--local is a parse-time error.
     with pytest.raises(SystemExit):
-        run_matrix.main(
-            [
-                "--dry-run",
-                "--models",
-                "x",
-                "--api",
-                "y",
-                "--api-config",
-                str(api_cfg),
-                "--out",
-                str(tmp_path / "o"),
-            ]
-        )
+        run_matrix.main([
+            "--dry-run", "--models", "x", "--api", "y",
+            "--api-config", str(api_cfg), "--out", str(tmp_path / "o"),
+        ])
     # An unknown name is rejected before anything runs.
     with pytest.raises(SystemExit):
-        run_matrix.main(
-            [
-                "--dry-run",
-                "--models",
-                "nope",
-                "--api-config",
-                str(api_cfg),
-                "--out",
-                str(tmp_path / "o"),
-            ]
-        )
+        run_matrix.main([
+            "--dry-run", "--models", "nope", "--api-config", str(api_cfg),
+            "--out", str(tmp_path / "o"),
+        ])
     # rig_check forwards the same surface, so --models works there too.
     with pytest.raises(SystemExit):
-        rig_check.main(
-            [
-                "--dry-run",
-                "--models",
-                "nope",
-                "--api-config",
-                str(api_cfg),
-                "--out",
-                str(tmp_path / "rc"),
-            ]
-        )
+        rig_check.main([
+            "--dry-run", "--models", "nope", "--api-config", str(api_cfg),
+            "--out", str(tmp_path / "rc"),
+        ])
 
 
 def test_models_flag_runs_an_offline_dry_lane(tmp_path: Path) -> None:
@@ -6894,44 +5914,17 @@ def test_models_flag_runs_an_offline_dry_lane(tmp_path: Path) -> None:
     # lane completes offline (dry-run swaps in MockTarget; resolution and
     # every gate still ran).
     api_cfg = tmp_path / "api.json"
-    api_cfg.write_text(
-        json.dumps(
-            {
-                "anthropic:claude-haiku-4-5-20251001": {"modalities": ["text"]},
-            }
-        ),
-        encoding="utf-8",
-    )
-    assert (
-        run_matrix.main(
-            [
-                "--dry-run",
-                "--models",
-                "anthropic:claude-haiku-4-5-20251001",
-                "--api-config",
-                str(api_cfg),
-                "--corpora",
-                "synth",
-                "--limit",
-                "1",
-                "--seeds",
-                "0",
-                "--attackers",
-                "replay",
-                "--judges",
-                "rules",
-                "--max-queries",
-                "1",
-                "--max-turns",
-                "1",
-                "--target-answer-retries",
-                "0",
-                "--out",
-                str(tmp_path / "dry"),
-            ]
-        )
-        == 0
-    )
+    api_cfg.write_text(json.dumps({
+        "anthropic:claude-haiku-4-5-20251001": {"modalities": ["text"]},
+    }), encoding="utf-8")
+    assert run_matrix.main([
+        "--dry-run", "--models", "anthropic:claude-haiku-4-5-20251001",
+            "--api-config", str(api_cfg), "--corpora", "synth", "--limit", "1",
+            "--seeds", "0", "--attackers", "replay", "--judges", "rules",
+            "--max-queries", "1", "--max-turns", "1",
+            "--target-answer-retries", "0",
+            "--out", str(tmp_path / "dry"),
+    ]) == 0
 
 
 def _sealed_web_model_acquisition_args(
@@ -6942,17 +5935,12 @@ def _sealed_web_model_acquisition_args(
 
     plan_directory = (tmp_path / "plans").resolve()
     plan_directory.mkdir(parents=True)
-    assert (
-        run_matrix.main(
-            [
-                *planned_args,
-                "--model-acquisition-plan-only",
-                "--model-acquisition-plan-dir",
-                str(plan_directory),
-            ]
-        )
-        == 0
-    )
+    assert run_matrix.main([
+        *planned_args,
+        "--model-acquisition-plan-only",
+        "--model-acquisition-plan-dir",
+        str(plan_directory),
+    ]) == 0
     plan_path = next(plan_directory.glob("*.plan.json"))
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     store = (tmp_path / "store").resolve()
@@ -6981,14 +5969,12 @@ def _sealed_web_model_acquisition_args(
         manifest = build_upstream_manifest(
             resource["repo_id"],
             resource["revision"],
-            [
-                {
-                    "path": "config.json",
-                    "size": len(content),
-                    "blob_id": blob_id,
-                    "lfs_sha256": None,
-                }
-            ],
+            [{
+                "path": "config.json",
+                "size": len(content),
+                "blob_id": blob_id,
+                "lfs_sha256": None,
+            }],
         )
         write_document_create_only(
             resource_root.resolve(),
@@ -7024,9 +6010,7 @@ def _sealed_web_model_acquisition_args(
 
 
 def _probe_receipt(
-    tmp_path: Path,
-    monkeypatch,
-    project_revision_args,
+    tmp_path: Path, monkeypatch, project_revision_args,
 ) -> tuple[Path, str]:
     """A REAL ura-live-attestation/2 receipt from an offline probe run."""
 
@@ -7053,83 +6037,48 @@ def _probe_receipt(
             )
 
     local_config = tmp_path / "local-targets.json"
-    local_config.write_text(
-        json.dumps(
-            {
-                spec: {
-                    "revision": local_revision,
-                    "modalities": ["text"],
-                    "tensor_parallel_size": 1,
-                    "gpu_memory_utilization": 0.5,
-                    "max_tokens": 64,
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
+    local_config.write_text(json.dumps({spec: {
+        "revision": local_revision, "modalities": ["text"],
+        "tensor_parallel_size": 1, "gpu_memory_utilization": 0.5,
+        "max_tokens": 64,
+    }}), encoding="utf-8")
     readiness = tmp_path / "fixture.readiness.json"
     readiness.write_text("{}\n", encoding="utf-8")
     profile_registry = tmp_path / "local-model-profiles.json"
-    profile_registry.write_text(
-        json.dumps(
-            {
-                "schema": "ura-local-model-execution-profiles/3",
-                "models": {
-                    spec: {
-                        "generation_tokens": 64,
-                        "identity": {"revision": local_revision},
-                        "local_execution": {
-                            "gpu_memory_utilization": 0.5,
-                            "max_model_len": -1,
-                            "tensor_parallel_size": 1,
-                        },
-                        "modalities": ["text"],
-                        "readiness": {
-                            "path": str(readiness.resolve()),
-                            "sha256": "c" * 64,
-                            "readiness_id": "d" * 64,
-                        },
-                        "request_timeout_seconds": 120.0,
-                    }
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
+    profile_registry.write_text(json.dumps({
+        "schema": "ura-local-model-execution-profiles/3",
+        "models": {spec: {
+            "generation_tokens": 64,
+            "identity": {"revision": local_revision},
+            "local_execution": {
+                "gpu_memory_utilization": 0.5,
+                "max_model_len": -1,
+                "tensor_parallel_size": 1,
+            },
+            "modalities": ["text"],
+            "readiness": {
+                "path": str(readiness.resolve()),
+                "sha256": "c" * 64,
+                "readiness_id": "d" * 64,
+            },
+            "request_timeout_seconds": 120.0,
+        }},
+    }), encoding="utf-8")
     monkeypatch.setenv("URA_LOCAL_MODEL_PROFILE_REGISTRY", str(profile_registry))
-    monkeypatch.setattr(run_matrix, "build_target", lambda *_a, **_kw: _StableLocalTarget())
+    monkeypatch.setattr(
+        run_matrix, "build_target", lambda *_a, **_kw: _StableLocalTarget()
+    )
     probe_root = tmp_path / "probe"
     probe_args = [
-        "--local",
-        spec,
-        "--local-config",
-        str(local_config),
-        "--attackers",
-        "replay",
-        "--judges",
-        "rules",
-        "--corpora",
-        "synth",
-        "--limit",
-        "1",
-        "--max-queries",
-        "1",
-        "--max-turns",
-        "1",
-        "--max-total-target-calls",
-        "100000",
-        "--max-total-judge-calls",
-        "100000",
-        "--max-total-http-attempts",
-        "100000",
-        "--deadline-seconds",
-        "3600",
+        "--local", spec, "--local-config", str(local_config),
+        "--attackers", "replay", "--judges", "rules", "--corpora", "synth",
+        "--limit", "1", "--max-queries", "1", "--max-turns", "1",
+        "--max-total-target-calls", "100000",
+        "--max-total-judge-calls", "100000",
+        "--max-total-http-attempts", "100000", "--deadline-seconds", "3600",
         *project_revision_args,
-        "--attestation-probe",
-        "--execution-scope-id",
-        "webtest-scope",
-        "--out",
-        str(probe_root),
+        "--attestation-probe", "--execution-scope-id", "webtest-scope",
+        "--out", str(probe_root),
     ]
     acquisition_args = _sealed_web_model_acquisition_args(
         tmp_path / "probe-model-acquisition",
@@ -7137,55 +6086,27 @@ def _probe_receipt(
     )
     assert run_matrix.main([*probe_args, *acquisition_args]) == 0
     receipt = tmp_path / "receipt.live-attestation.json"
-    assert (
-        live_attestation_cli.main(
-            [
-                "--probe-root",
-                str(probe_root),
-                "--execution-scope-id",
-                "webtest-scope",
-                "--out",
-                str(receipt),
-            ]
-        )
-        == 0
-    )
+    assert live_attestation_cli.main([
+        "--probe-root", str(probe_root),
+        "--execution-scope-id", "webtest-scope", "--out", str(receipt),
+    ]) == 0
     return receipt, hashlib.sha256(receipt.read_bytes()).hexdigest()
 
 
 def test_live_attestation_validate_revalidates_and_fails_closed(
-    tmp_path: Path,
-    monkeypatch,
-    project_revision_args,
-    capsys,
+    tmp_path: Path, monkeypatch, project_revision_args, capsys,
 ) -> None:
     receipt, sha = _probe_receipt(tmp_path, monkeypatch, project_revision_args)
-    assert (
-        live_attestation_cli.main(
-            [
-                "--validate",
-                str(receipt),
-                "--sha256",
-                sha,
-            ]
-        )
-        == 0
-    )
+    assert live_attestation_cli.main([
+        "--validate", str(receipt), "--sha256", sha,
+    ]) == 0
     out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert out["status"] == "attestation_validated"
     assert out["records"] >= 1 and out["sha256"] == sha
     # A wrong digest fails closed.
-    assert (
-        live_attestation_cli.main(
-            [
-                "--validate",
-                str(receipt),
-                "--sha256",
-                "0" * 64,
-            ]
-        )
-        == 1
-    )
+    assert live_attestation_cli.main([
+        "--validate", str(receipt), "--sha256", "0" * 64,
+    ]) == 1
     # Tampered bytes fail closed even with a recomputed digest (the strict
     # loader revalidates the manifest content, not just the hash).
     tampered = tmp_path / "tampered.json"
@@ -7193,38 +6114,27 @@ def test_live_attestation_validate_revalidates_and_fails_closed(
     doc["status"] = "definitely-not-complete"
     tampered.write_text(json.dumps(doc), encoding="utf-8")
     bad_sha = hashlib.sha256(tampered.read_bytes()).hexdigest()
-    assert (
-        live_attestation_cli.main(
-            [
-                "--validate",
-                str(tampered),
-                "--sha256",
-                bad_sha,
-            ]
-        )
-        == 1
-    )
+    assert live_attestation_cli.main([
+        "--validate", str(tampered), "--sha256", bad_sha,
+    ]) == 1
     # Mode mixing is rejected.
     with pytest.raises(SystemExit):
         live_attestation_cli.main(["--validate", str(receipt)])
     with pytest.raises(SystemExit):
-        live_attestation_cli.main(
-            [
-                "--validate",
-                str(receipt),
-                "--sha256",
-                sha,
-                "--probe-root",
-                str(tmp_path),
-            ]
-        )
+        live_attestation_cli.main([
+            "--validate", str(receipt), "--sha256", sha,
+            "--probe-root", str(tmp_path),
+        ])
 
 
 # -- recorded usage and calculated cost -------------------------------------
 
 
 def _artifact_descriptor(path: Path) -> dict[str, object]:
-    lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    lines = [
+        line for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     return {
         "file": path.name,
         "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
@@ -7236,104 +6146,62 @@ def _artifact_descriptor(path: Path) -> dict[str, object]:
 def _write_marker_fixture(cell_dir: Path, stem: str = "cell-a") -> Path:
     cell_dir.mkdir(parents=True, exist_ok=True)
     responses = cell_dir / f"{stem}.responses.jsonl"
-    responses.write_text(
-        "\n".join(
-            [
-                json.dumps(
-                    {
-                        "target": "anthropic-fable:claude-fable-5",
-                        "tokens": {
-                            "input": 1200,
-                            "output": 300,
-                            "total": 1500,
-                            "uncached_input": 1000,
-                            "cached_input": 150,
-                            "cache_write_input": 50,
-                        },
-                        "raw": {
-                            "provider": "anthropic",
-                            "resolved_model": "claude-fable-5",
-                            "provider_usage": {
-                                "input_tokens": 1000,
-                                "output_tokens": 300,
-                                "cache_read_input_tokens": 150,
-                                "cache_creation_input_tokens": 50,
-                                "output_tokens_details": {"thinking_tokens": 120},
-                            },
-                        },
-                    }
-                ),
-                # A local response with prompt/completion keys and no provider.
-                json.dumps(
-                    {
-                        "target": "vllm:org/model",
-                        "tokens": {"prompt": 70, "completion": 30, "total": 100},
-                        "raw": {},
-                    }
-                ),
-                # A response that recorded no token usage at all -> missing, not 0.
-                json.dumps(
-                    {
-                        "target": "anthropic-fable:claude-fable-5",
-                        "raw": {"provider": "anthropic", "resolved_model": "claude-fable-5"},
-                    }
-                ),
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    trails = cell_dir / f"{stem}.trails.jsonl"
-    trails.write_text(
-        "\n".join(
-            [
-                json.dumps(
-                    {
-                        "raw": {
-                            "judge_model": "anthropic:claude-haiku-4-5-20251001",
-                            "judge_call": {
-                                "provider": "anthropic",
-                                "provider_resolved_model": "claude-haiku-4-5-20251001",
-                                "tokens": {"input": 500, "output": 20, "total": 520},
-                                "sampling_control": "seeded",
-                            },
-                        }
-                    }
-                ),
-                # Provider refusal: no call was made or billed -> excluded.
-                json.dumps(
-                    {
-                        "raw": {
-                            "judge_call": {
-                                "provider": "anthropic",
-                                "tokens": {"input": None, "output": None},
-                                "sampling_control": "not_queried_provider_refusal",
-                            }
-                        }
-                    }
-                ),
-                # A rules-only stage with no judge call at all.
-                json.dumps({"raw": {}}),
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    marker = cell_dir / f"{stem}.complete.json"
-    marker.write_text(
-        json.dumps(
-            {
-                "status": "complete",
-                "format_version": 2,
-                "run_id": f"run-{stem}",
-                "artifacts": {
-                    "responses": _artifact_descriptor(responses),
-                    "trails": _artifact_descriptor(trails),
+    responses.write_text("\n".join([
+        json.dumps({
+            "target": "anthropic-fable:claude-fable-5",
+            "tokens": {"input": 1200, "output": 300, "total": 1500,
+                       "uncached_input": 1000, "cached_input": 150,
+                       "cache_write_input": 50},
+            "raw": {
+                "provider": "anthropic",
+                "resolved_model": "claude-fable-5",
+                "provider_usage": {
+                    "input_tokens": 1000, "output_tokens": 300,
+                    "cache_read_input_tokens": 150,
+                    "cache_creation_input_tokens": 50,
+                    "output_tokens_details": {"thinking_tokens": 120},
                 },
-            }
-        ),
-        encoding="utf-8",
-    )
+            },
+        }),
+        # A local response with prompt/completion keys and no provider.
+        json.dumps({
+            "target": "vllm:org/model",
+            "tokens": {"prompt": 70, "completion": 30, "total": 100},
+            "raw": {},
+        }),
+        # A response that recorded no token usage at all -> missing, not 0.
+        json.dumps({"target": "anthropic-fable:claude-fable-5",
+                    "raw": {"provider": "anthropic",
+                            "resolved_model": "claude-fable-5"}}),
+    ]) + "\n", encoding="utf-8")
+    trails = cell_dir / f"{stem}.trails.jsonl"
+    trails.write_text("\n".join([
+        json.dumps({"raw": {
+            "judge_model": "anthropic:claude-haiku-4-5-20251001",
+            "judge_call": {
+                "provider": "anthropic",
+                "provider_resolved_model": "claude-haiku-4-5-20251001",
+                "tokens": {"input": 500, "output": 20, "total": 520},
+                "sampling_control": "seeded",
+            },
+        }}),
+        # Provider refusal: no call was made or billed -> excluded.
+        json.dumps({"raw": {"judge_call": {
+            "provider": "anthropic",
+            "tokens": {"input": None, "output": None},
+            "sampling_control": "not_queried_provider_refusal",
+        }}}),
+        # A rules-only stage with no judge call at all.
+        json.dumps({"raw": {}}),
+    ]) + "\n", encoding="utf-8")
+    marker = cell_dir / f"{stem}.complete.json"
+    marker.write_text(json.dumps({
+        "status": "complete", "format_version": 2, "run_id": f"run-{stem}",
+        "artifacts": {
+            "responses": _artifact_descriptor(responses),
+            "trails": _artifact_descriptor(trails),
+        },
+    }), encoding="utf-8")
     return marker
 
 
@@ -7357,7 +6225,9 @@ def test_usage_index_rejects_duplicate_marker_and_response_fields(
     assert stats["markers"] == 0
     assert stats["skipped_invalid"] == 1
 
-    duplicate_response = _write_marker_fixture(tmp_path / "response", stem="ambiguous")
+    duplicate_response = _write_marker_fixture(
+        tmp_path / "response", stem="ambiguous"
+    )
     response_path = duplicate_response.parent / "ambiguous.responses.jsonl"
     response_raw = response_path.read_text(encoding="utf-8")
     response_field = '"resolved_model": "claude-fable-5"'
@@ -7390,76 +6260,41 @@ def test_failed_cell_usage_accounted_operationally_not_scientifically(
     cell.mkdir(parents=True)
     # Durable partial responses/trails a failed cell leaves behind.
     (cell / "cell-f.responses.jsonl").write_text(
-        json.dumps(
-            {
-                "target": "anthropic:claude-opus-5",
-                "tokens": {"input": 1000, "output": 200},
-                "raw": {"provider": "anthropic", "resolved_model": "claude-opus-5"},
-            }
-        )
-        + "\n",
-        encoding="utf-8",
+        json.dumps({
+            "target": "anthropic:claude-opus-5",
+            "tokens": {"input": 1000, "output": 200},
+            "raw": {"provider": "anthropic", "resolved_model": "claude-opus-5"},
+        }) + "\n", encoding="utf-8",
     )
     (cell / "cell-f.trails.jsonl").write_text(
-        json.dumps(
-            {
-                "raw": {
-                    "judge_call": {
-                        "provider": "anthropic",
-                        "provider_resolved_model": "claude-haiku-4-5-20251001",
-                        "tokens": {"input": 300, "output": 10},
-                        "sampling_control": "seeded",
-                    }
-                }
-            }
-        )
-        + "\n",
-        encoding="utf-8",
+        json.dumps({"raw": {"judge_call": {
+            "provider": "anthropic",
+            "provider_resolved_model": "claude-haiku-4-5-20251001",
+            "tokens": {"input": 300, "output": 10},
+            "sampling_control": "seeded",
+        }}}) + "\n", encoding="utf-8",
     )
-    (cell / "cell-f.error.json").write_text(
-        json.dumps(
-            {
-                "status": "error",
-                "run_id": "run-f",
-                "completed_attempts": 3,
-            }
-        ),
-        encoding="utf-8",
-    )
+    (cell / "cell-f.error.json").write_text(json.dumps({
+        "status": "error", "run_id": "run-f", "completed_attempts": 3,
+    }), encoding="utf-8")
     # A second failed provider call with no token detail retains its exact,
     # bounded logical-call audit.  completed_attempts is a different unit and
     # must never be relabelled as a provider-call count.
     reserved = root / "reserved"
     reserved.mkdir()
-    (reserved / "cell-r.error.json").write_text(
-        json.dumps(
-            {
-                "status": "error",
-                "run_id": "run-r",
-                "completed_attempts": 5,
-                "target": "anthropic:claude-opus-5",
-                "call_audit": {
-                    "logical_call_count": 1,
-                    "transport_attempt_count": 1,
-                    "provider": "anthropic",
-                    "operation": "generate",
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
+    (reserved / "cell-r.error.json").write_text(json.dumps({
+        "status": "error", "run_id": "run-r", "completed_attempts": 5,
+        "target": "anthropic:claude-opus-5",
+        "call_audit": {
+            "logical_call_count": 1, "transport_attempt_count": 1,
+            "provider": "anthropic", "operation": "generate",
+        },
+    }), encoding="utf-8")
     unaudited = root / "unaudited"
     unaudited.mkdir()
-    (unaudited / "cell-u.error.json").write_text(
-        json.dumps(
-            {
-                "status": "error",
-                "run_id": "run-u",
-                "completed_attempts": 9,
-            }
-        ),
-        encoding="utf-8",
-    )
+    (unaudited / "cell-u.error.json").write_text(json.dumps({
+        "status": "error", "run_id": "run-u", "completed_attempts": 9,
+    }), encoding="utf-8")
 
     rows = failed_cell_usage_rows(root)
     by_role_cat = {(r["role"], r["provider"], r["category"]): r["amount"] for r in rows}
@@ -7471,7 +6306,9 @@ def test_failed_cell_usage_accounted_operationally_not_scientifically(
     # The token-less failed cell surfaces reserved-call exposure, never zero.
     assert by_role_cat[("reserved", "anthropic", "calls")] == 1
     assert by_role_cat[("reserved", "anthropic", "missing_tokens")] == 1
-    assert not any(row["role"] == "reserved" and row["amount"] == 9 for row in rows)
+    assert not any(
+        row["role"] == "reserved" and row["amount"] == 9 for row in rows
+    )
 
 
 def test_spend_card_fresh_index_shows_unknown_not_zero(tmp_path: Path) -> None:
@@ -7496,7 +6333,8 @@ def test_usage_accounting_follows_completion_marker_lineage(
     # An orphan responses file (no marker) is never counted.
     (root / "orphan").mkdir(parents=True)
     (root / "orphan" / "cell-x.responses.jsonl").write_text(
-        json.dumps({"target": "anthropic:m", "tokens": {"input": 999999, "output": 999999}}) + "\n",
+        json.dumps({"target": "anthropic:m",
+                    "tokens": {"input": 999999, "output": 999999}}) + "\n",
         encoding="utf-8",
     )
     # An errored cell is skipped even though its marker exists.
@@ -7505,8 +6343,7 @@ def test_usage_accounting_follows_completion_marker_lineage(
     (err_dir / "cell-e.error.json").write_text("{}", encoding="utf-8")
     # Checkpoints are transient and never counted.
     (root / "lane" / "cell-a.responses.checkpoint.jsonl").write_text(
-        json.dumps({"tokens": {"input": 5}}) + "\n",
-        encoding="utf-8",
+        json.dumps({"tokens": {"input": 5}}) + "\n", encoding="utf-8",
     )
 
     rows, stats = collect_usage(root, verify_sha=True)
@@ -7517,7 +6354,9 @@ def test_usage_accounting_follows_completion_marker_lineage(
     # responses are not completion-bound either).
     assert stats["orphan_responses"] == 2
     tally = {
-        (row["role"], row["provider"], row["model"], row["category"]): row["amount"] for row in rows
+        (row["role"], row["provider"], row["model"], row["category"]):
+            row["amount"]
+        for row in rows
     }
     # Target usage: provider_usage detail wins (input excludes cache).
     assert tally[("target", "anthropic", "claude-fable-5", "input")] == 1000
@@ -7533,109 +6372,67 @@ def test_usage_accounting_follows_completion_marker_lineage(
     # Judge usage from trails; the provider-refusal row is excluded.
     judge_key = ("judge", "anthropic", "claude-haiku-4-5-20251001", "calls")
     assert tally[judge_key] == 1
-    assert tally[("judge", "anthropic", "claude-haiku-4-5-20251001", "input")] == 500
+    assert tally[("judge", "anthropic", "claude-haiku-4-5-20251001",
+                  "input")] == 500
     # Lineage is enforced: a size change after completion fails closed.
     responses = marker.parent / "cell-a.responses.jsonl"
-    responses.write_text(responses.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    responses.write_text(
+        responses.read_text(encoding="utf-8") + "\n", encoding="utf-8"
+    )
     doc = json.loads(marker.read_text(encoding="utf-8"))
     with pytest.raises(ValueError, match="byte size changed"):
         usage_rows_from_marker(marker, doc)
 
 
 def test_costs_from_pricing_are_exact_or_na_never_zero() -> None:
-    pricing = {
-        "providers": {
-            "anthropic": {
-                "models": {
-                    "claude-haiku-4-5-20251001": {
-                        "rates": [
-                            {
-                                "effective_date": "2026-01-01",
-                                "currency": "USD",
-                                "per_million_tokens": {"input": 1.0, "output": 5.0},
-                            },
-                            {
-                                "effective_date": "2026-08-01",
-                                "currency": "USD",
-                                "per_million_tokens": {
-                                    "input": 2.0,
-                                    "output": 10.0,
-                                    "cache_read": 0.2,
-                                },
-                            },
-                            {
-                                "effective_date": "2099-01-01",
-                                "currency": "USD",
-                                "per_million_tokens": {"input": 99.0, "output": 99.0},
-                            },
-                        ]
-                    },
-                }
-            }
-        }
-    }
+    pricing = {"providers": {"anthropic": {"models": {
+        "claude-haiku-4-5-20251001": {"rates": [
+            {"effective_date": "2026-01-01", "currency": "USD",
+             "per_million_tokens": {"input": 1.0, "output": 5.0}},
+            {"effective_date": "2026-08-01", "currency": "USD",
+             "per_million_tokens": {"input": 2.0, "output": 10.0,
+                                    "cache_read": 0.2}},
+            {"effective_date": "2099-01-01", "currency": "USD",
+             "per_million_tokens": {"input": 99.0, "output": 99.0}},
+        ]},
+    }}}}
     # The newest effective rate on-or-before the run date wins (never future).
     rate, _ = rate_for(
-        pricing,
-        "anthropic",
-        "claude-haiku-4-5-20251001",
-        on_date="2026-08-16",
+        pricing, "anthropic", "claude-haiku-4-5-20251001", on_date="2026-08-16",
     )
     assert rate["effective_date"] == "2026-08-01"
-    rows = compute_costs(
-        {
-            ("judge", "anthropic", "claude-haiku-4-5-20251001", "2026-08-16"): {
-                "calls": 4,
-                "input": 1_000_000,
-                "output": 200_000,
-                "cache_read": 500_000,
-            },
+    rows = compute_costs({
+        ("judge", "anthropic", "claude-haiku-4-5-20251001", "2026-08-16"): {
+            "calls": 4, "input": 1_000_000, "output": 200_000,
+            "cache_read": 500_000,
         },
-        pricing,
-    )
+    }, pricing)
     assert rows[0]["cost"] == pytest.approx(2.0 + 2.0 + 0.1)
     assert rows[0]["effective_date"] == "2026-08-01"
     # HISTORICAL pricing: a run dated before the price change is priced at the
     # rate effective THEN (2026-01-01: input 1.0), not today's 2026-08-01 rate.
-    rows = compute_costs(
-        {
-            ("target", "anthropic", "claude-haiku-4-5-20251001", "2026-05-01"): {
-                "calls": 1,
-                "input": 1_000_000,
-                "output": 1_000_000,
-            },
+    rows = compute_costs({
+        ("target", "anthropic", "claude-haiku-4-5-20251001", "2026-05-01"): {
+            "calls": 1, "input": 1_000_000, "output": 1_000_000,
         },
-        pricing,
-    )
+    }, pricing)
     assert rows[0]["cost"] == pytest.approx(1.0 + 5.0)
     assert rows[0]["effective_date"] == "2026-01-01"
     # Reasoning tokens are a subset of output (billed as output by the
     # provider): they never void a row that input+output fully price.
-    rows = compute_costs(
-        {
-            ("target", "anthropic", "claude-haiku-4-5-20251001", "2026-08-16"): {
-                "calls": 1,
-                "input": 10,
-                "output": 5,
-                "reasoning": 7,
-            },
+    rows = compute_costs({
+        ("target", "anthropic", "claude-haiku-4-5-20251001", "2026-08-16"): {
+            "calls": 1, "input": 10, "output": 5, "reasoning": 7,
         },
-        pricing,
-    )
+    }, pricing)
     assert rows[0]["cost"] == pytest.approx(10 / 1e6 * 2 + 5 / 1e6 * 10)
     assert rows[0]["missing"] == []
     # A PRICED category (cache_write) with tokens but no rate -> N/A, never 0.
-    rows = compute_costs(
-        {
-            ("target", "anthropic", "claude-haiku-4-5-20251001", "2026-08-16"): {
-                "calls": 1,
-                "input": 10,
-                "output": 5,
-                "cache_write": 7,
-            },
+    rows = compute_costs({
+        ("target", "anthropic", "claude-haiku-4-5-20251001", "2026-08-16"): {
+            "calls": 1, "input": 10, "output": 5, "cache_write": 7,
         },
-        pricing,
-    )
+    }, pricing)
     assert rows[0]["cost"] is None
     assert any("cache_write" in item for item in rows[0]["missing"])
     # Unpriced model -> N/A with the missing entry named.
@@ -7651,17 +6448,11 @@ def test_costs_from_pricing_are_exact_or_na_never_zero() -> None:
     )
     assert rows[0]["billable"] is False and rows[0]["cost"] is None
     # Calls whose usage went unrecorded surface as missing, blocking a cost.
-    rows = compute_costs(
-        {
-            ("target", "anthropic", "claude-haiku-4-5-20251001", "2026-08-16"): {
-                "calls": 2,
-                "input": 10,
-                "output": 5,
-                "missing_tokens": 1,
-            },
+    rows = compute_costs({
+        ("target", "anthropic", "claude-haiku-4-5-20251001", "2026-08-16"): {
+            "calls": 2, "input": 10, "output": 5, "missing_tokens": 1,
         },
-        pricing,
-    )
+    }, pricing)
     assert rows[0]["cost"] is None
     assert any("incomplete token usage" in item for item in rows[0]["missing"])
 
@@ -7677,60 +6468,36 @@ def test_costs_from_pricing_are_exact_or_na_never_zero() -> None:
     ),
 )
 def test_provider_alias_usage_and_cost_are_canonicalized(
-    alias: str,
-    canonical: str,
+    alias: str, canonical: str,
 ) -> None:
-    pricing = {
-        "providers": {
-            canonical: {
-                "models": {
-                    "served-model": {
-                        "rates": [
-                            {
-                                "effective_date": "2026-01-01",
-                                "currency": "USD",
-                                "per_million_tokens": {"input": 1.0, "output": 2.0},
-                            }
-                        ]
-                    }
-                }
-            }
-        }
-    }
-    assert _response_identity(
-        {
-            "target": f"{alias}:requested",
-            "raw": {"provider": alias, "resolved_model": "served-model"},
-        }
-    ) == (canonical, "served-model")
-    judged = _judge_row_usage(
-        {
-            "raw": {
-                "judge_model": f"{alias}:requested",
-                "judge_call": {
-                    "provider": alias,
-                    "provider_resolved_model": "served-model",
-                    "tokens": {"input": 1_000_000, "output": 1_000_000},
-                },
-            },
-        }
-    )
-    assert judged is not None and judged[:2] == (canonical, "served-model")
-    rows = compute_costs(
-        {
-            ("target", alias, "served-model", "2026-08-18"): {
-                "calls": 1,
-                "input": 1_000_000,
-                "output": 1_000_000,
-            },
-            ("judge", alias, "served-model", "2026-08-18"): {
-                "calls": 1,
-                "input": 1_000_000,
-                "output": 1_000_000,
+    pricing = {"providers": {canonical: {"models": {"served-model": {"rates": [{
+        "effective_date": "2026-01-01",
+        "currency": "USD",
+        "per_million_tokens": {"input": 1.0, "output": 2.0},
+    }]}}}}}
+    assert _response_identity({
+        "target": f"{alias}:requested",
+        "raw": {"provider": alias, "resolved_model": "served-model"},
+    }) == (canonical, "served-model")
+    judged = _judge_row_usage({
+        "raw": {
+            "judge_model": f"{alias}:requested",
+            "judge_call": {
+                "provider": alias,
+                "provider_resolved_model": "served-model",
+                "tokens": {"input": 1_000_000, "output": 1_000_000},
             },
         },
-        pricing,
-    )
+    })
+    assert judged is not None and judged[:2] == (canonical, "served-model")
+    rows = compute_costs({
+        ("target", alias, "served-model", "2026-08-18"): {
+            "calls": 1, "input": 1_000_000, "output": 1_000_000,
+        },
+        ("judge", alias, "served-model", "2026-08-18"): {
+            "calls": 1, "input": 1_000_000, "output": 1_000_000,
+        },
+    }, pricing)
     assert {row["provider"] for row in rows} == {canonical}
     assert all(row["cost"] == pytest.approx(3.0) for row in rows)
 
@@ -7740,12 +6507,8 @@ def test_overview_never_fabricates_or_cross_sums_currency_spend(
 ) -> None:
     app = _app(tmp_path)
     base = {
-        "role": "target",
-        "provider": "fixture",
-        "model": "m",
-        "billable": True,
-        "missing": [],
-        "cost": 1.0,
+        "role": "target", "provider": "fixture", "model": "m",
+        "billable": True, "missing": [], "cost": 1.0,
     }
     try:
         app._usage_cost_rows = lambda: ([], "")
@@ -7753,28 +6516,18 @@ def test_overview_never_fabricates_or_cross_sums_currency_spend(
         assert "no recorded billable usage" in empty
         assert "$0.0000" not in empty
 
-        app._usage_cost_rows = lambda: (
-            [
-                {
-                    **base,
-                    "currency": "EUR",
-                    "by_currency": {"EUR": 2.0},
-                    "cost": 2.0,
-                }
-            ],
-            "",
-        )
+        app._usage_cost_rows = lambda: ([{
+            **base, "currency": "EUR", "by_currency": {"EUR": 2.0},
+            "cost": 2.0,
+        }], "")
         single = app._overview().decode("utf-8")
         assert "EUR 2.0000" in single
         assert "$2.0000" not in single
 
-        app._usage_cost_rows = lambda: (
-            [
-                {**base, "currency": "USD", "by_currency": {"USD": 1.0}},
-                {**base, "currency": "EUR", "by_currency": {"EUR": 2.0}, "cost": 2.0},
-            ],
-            "",
-        )
+        app._usage_cost_rows = lambda: ([
+            {**base, "currency": "USD", "by_currency": {"USD": 1.0}},
+            {**base, "currency": "EUR", "by_currency": {"EUR": 2.0}, "cost": 2.0},
+        ], "")
         mixed = app._overview().decode("utf-8")
         assert "mixed currencies; not summed" in mixed
         assert "$1.0000" in mixed and "EUR 2.0000" in mixed
@@ -7786,25 +6539,12 @@ def test_overview_never_fabricates_or_cross_sums_currency_spend(
 def test_compute_costs_rejects_invalid_pricing_values() -> None:
     # Booleans, NaN, infinity, and negatives are not valid prices -> N/A.
     for bad in (True, float("nan"), float("inf"), -1.0):
-        pricing = {
-            "providers": {
-                "anthropic": {
-                    "models": {
-                        "m": {
-                            "rates": [
-                                {
-                                    "effective_date": "2026-01-01",
-                                    "currency": "USD",
-                                    "per_million_tokens": {"input": bad, "output": 5.0},
-                                }
-                            ]
-                        }
-                    }
-                }
-            }
-        }
+        pricing = {"providers": {"anthropic": {"models": {"m": {"rates": [
+            {"effective_date": "2026-01-01", "currency": "USD",
+             "per_million_tokens": {"input": bad, "output": 5.0}}]}}}}}
         rows = compute_costs(
-            {("target", "anthropic", "m", "2026-08-16"): {"calls": 1, "input": 10, "output": 5}},
+            {("target", "anthropic", "m", "2026-08-16"): {"calls": 1, "input": 10,
+                                                          "output": 5}},
             pricing,
         )
         assert rows[0]["cost"] is None, bad
@@ -7812,30 +6552,14 @@ def test_compute_costs_rejects_invalid_pricing_values() -> None:
 
 
 def test_costs_fail_closed_on_partial_or_malformed_token_usage() -> None:
-    pricing = {
-        "providers": {
-            "anthropic": {
-                "models": {
-                    "m": {
-                        "rates": [
-                            {
-                                "effective_date": "2026-01-01",
-                                "currency": "USD",
-                                "per_million_tokens": {"input": 1.0, "output": 2.0},
-                            }
-                        ]
-                    }
-                }
-            }
-        }
-    }
+    pricing = {"providers": {"anthropic": {"models": {"m": {"rates": [{
+        "effective_date": "2026-01-01", "currency": "USD",
+        "per_million_tokens": {"input": 1.0, "output": 2.0},
+    }]}}}}}
     rows = compute_costs(
-        {
-            ("target", "anthropic", "m", "2026-08-16"): {
-                "calls": 1,
-                "input": 10,
-            }
-        },
+        {("target", "anthropic", "m", "2026-08-16"): {
+            "calls": 1, "input": 10,
+        }},
         pricing,
     )
     assert rows[0]["cost"] is None
@@ -7844,44 +6568,27 @@ def test_costs_fail_closed_on_partial_or_malformed_token_usage() -> None:
     # bool is not a token count, and an impossible cache > gross input must not
     # be clamped into a plausible-looking zero-cost ordinary-input category.
     assert "input" not in _tokens_by_category(
-        {"input": True, "output": 2},
-        None,
+        {"input": True, "output": 2}, None,
     )
     assert "input" not in _tokens_by_category(
-        {"input": 10, "output": 2, "cached_input": 11},
-        None,
+        {"input": 10, "output": 2, "cached_input": 11}, None,
     )
 
 
 def test_costs_require_historical_date_and_valid_currency() -> None:
-    pricing = {
-        "providers": {
-            "anthropic": {
-                "models": {
-                    "m": {
-                        "rates": [
-                            {
-                                "effective_date": "2026-01-01",
-                                "currency": "usd",
-                                "per_million_tokens": {"input": 1.0, "output": 2.0},
-                            }
-                        ]
-                    }
-                }
-            }
-        }
-    }
-    usage = {
-        ("target", "anthropic", "m", "2026-08-16"): {
-            "calls": 1,
-            "input": 10,
-            "output": 2,
-        }
-    }
+    pricing = {"providers": {"anthropic": {"models": {"m": {"rates": [{
+        "effective_date": "2026-01-01", "currency": "usd",
+        "per_million_tokens": {"input": 1.0, "output": 2.0},
+    }]}}}}}
+    usage = {("target", "anthropic", "m", "2026-08-16"): {
+        "calls": 1, "input": 10, "output": 2,
+    }}
     row = compute_costs(usage, pricing)[0]
     assert row["currency"] == "USD" and row["cost"] is not None
 
-    unknown_date = {("target", "anthropic", "m", ""): {"calls": 1, "input": 10, "output": 2}}
+    unknown_date = {
+        ("target", "anthropic", "m", ""): {"calls": 1, "input": 10, "output": 2}
+    }
     row = compute_costs(unknown_date, pricing)[0]
     assert row["cost"] is None
     assert any("historical usage" in why for why in row["missing"])
@@ -7895,43 +6602,18 @@ def test_costs_require_historical_date_and_valid_currency() -> None:
 def test_compute_costs_never_sums_mixed_currencies() -> None:
     # Two runs of the same model priced in different currencies must NOT be
     # summed into one USD figure: cost is N/A with per-currency subtotals.
-    pricing = {
-        "providers": {
-            "anthropic": {
-                "models": {
-                    "m": {
-                        "rates": [
-                            {
-                                "effective_date": "2026-01-01",
-                                "currency": "USD",
-                                "per_million_tokens": {"input": 1.0, "output": 1.0},
-                            },
-                            {
-                                "effective_date": "2026-06-01",
-                                "currency": "EUR",
-                                "per_million_tokens": {"input": 2.0, "output": 2.0},
-                            },
-                        ]
-                    }
-                }
-            }
-        }
-    }
-    rows = compute_costs(
-        {
-            ("target", "anthropic", "m", "2026-03-01"): {
-                "calls": 1,
-                "input": 1_000_000,
-                "output": 0,
-            },
-            ("target", "anthropic", "m", "2026-07-01"): {
-                "calls": 1,
-                "input": 1_000_000,
-                "output": 0,
-            },
-        },
-        pricing,
-    )
+    pricing = {"providers": {"anthropic": {"models": {"m": {"rates": [
+        {"effective_date": "2026-01-01", "currency": "USD",
+         "per_million_tokens": {"input": 1.0, "output": 1.0}},
+        {"effective_date": "2026-06-01", "currency": "EUR",
+         "per_million_tokens": {"input": 2.0, "output": 2.0}},
+    ]}}}}}
+    rows = compute_costs({
+        ("target", "anthropic", "m", "2026-03-01"): {"calls": 1, "input": 1_000_000,
+                                                     "output": 0},
+        ("target", "anthropic", "m", "2026-07-01"): {"calls": 1, "input": 1_000_000,
+                                                     "output": 0},
+    }, pricing)
     assert rows[0]["cost"] is None
     assert rows[0]["currency"] == "mixed"
     assert rows[0]["by_currency"] == {"EUR": 2.0, "USD": 1.0}
@@ -7952,48 +6634,26 @@ def test_reindex_rebuilds_usage_and_spend_card_renders(tmp_path: Path) -> None:
     )
     app.jobs[job.job_id] = job
     assert app.db.record_terminal(job, "a" * 40, [], state="complete", exit_code=0)
-    (app.repo_root / "experiments" / "pricing.json").write_text(
-        json.dumps(
-            {
-                "providers": {
-                    "anthropic": {
-                        "models": {
-                            "claude-fable-5": {
-                                "rates": [
-                                    {
-                                        "effective_date": "2026-01-01",
-                                        "currency": "USD",
-                                        "per_million_tokens": {
-                                            "input": 2.0,
-                                            "output": 10.0,
-                                            "cache_read": 0.2,
-                                            "cache_write": 2.5,
-                                            "reasoning": 10.0,
-                                        },
-                                    }
-                                ]
-                            },
-                            "claude-haiku-4-5-20251001": {
-                                "rates": [
-                                    {
-                                        "effective_date": "2026-01-01",
-                                        "currency": "USD",
-                                        "per_million_tokens": {"input": 1.0, "output": 5.0},
-                                    }
-                                ]
-                            },
-                        }
-                    }
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
+    (app.repo_root / "experiments" / "pricing.json").write_text(json.dumps({
+        "providers": {"anthropic": {"models": {
+            "claude-fable-5": {"rates": [{
+                "effective_date": "2026-01-01", "currency": "USD",
+                "per_million_tokens": {"input": 2.0, "output": 10.0,
+                                       "cache_read": 0.2, "cache_write": 2.5,
+                                       "reasoning": 10.0},
+            }]},
+            "claude-haiku-4-5-20251001": {"rates": [{
+                "effective_date": "2026-01-01", "currency": "USD",
+                "per_million_tokens": {"input": 1.0, "output": 5.0},
+            }]},
+        }}},
+    }), encoding="utf-8")
     status, location, _ = app.handle("POST", "/db/reindex", {})
     assert status == 303 and location.startswith("/?reindexed=")
     totals = app.db.usage_totals()
     assert totals is not None
-    fable = next(k for k in totals if k[:3] == ("target", "anthropic", "claude-fable-5"))
+    fable = next(k for k in totals
+                 if k[:3] == ("target", "anthropic", "claude-fable-5"))
     assert totals[fable]["input"] == 1000
     status, _, body = app.handle("GET", "/stats?view=legacy")
     text = body.decode("utf-8")
@@ -8021,54 +6681,26 @@ def test_budget_never_sums_or_mislabels_mixed_currencies(tmp_path: Path) -> None
     cell = app.results_root / "lane"
     cell.mkdir(parents=True, exist_ok=True)
     responses = cell / "cell.responses.jsonl"
-    responses.write_text(
-        json.dumps(
-            {
-                "target": "anthropic-fable:claude-fable-5",
-                "tokens": {"input": 1000, "output": 300, "total": 1300, "uncached_input": 1000},
-                "raw": {
-                    "provider": "anthropic",
-                    "resolved_model": "claude-fable-5",
-                    "provider_usage": {"input_tokens": 1000, "output_tokens": 300},
-                },
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    responses.write_text(json.dumps({
+        "target": "anthropic-fable:claude-fable-5",
+        "tokens": {"input": 1000, "output": 300, "total": 1300,
+                   "uncached_input": 1000},
+        "raw": {"provider": "anthropic", "resolved_model": "claude-fable-5",
+                "provider_usage": {"input_tokens": 1000, "output_tokens": 300}},
+    }) + "\n", encoding="utf-8")
     trails = cell / "cell.trails.jsonl"
-    trails.write_text(
-        json.dumps(
-            {
-                "raw": {
-                    "judge_model": "anthropic:claude-haiku-4-5-20251001",
-                    "judge_call": {
-                        "provider": "anthropic",
-                        "provider_resolved_model": "claude-haiku-4-5-20251001",
-                        "tokens": {"input": 500, "output": 20, "total": 520},
-                        "sampling_control": "seeded",
-                    },
-                }
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    trails.write_text(json.dumps({"raw": {
+        "judge_model": "anthropic:claude-haiku-4-5-20251001",
+        "judge_call": {"provider": "anthropic",
+                       "provider_resolved_model": "claude-haiku-4-5-20251001",
+                       "tokens": {"input": 500, "output": 20, "total": 520},
+                       "sampling_control": "seeded"}}}) + "\n", encoding="utf-8")
     marker = cell / "cell.complete.json"
-    marker.write_text(
-        json.dumps(
-            {
-                "status": "complete",
-                "format_version": 2,
-                "run_id": "run-cell",
-                "artifacts": {
-                    "responses": _artifact_descriptor(responses),
-                    "trails": _artifact_descriptor(trails),
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
+    marker.write_text(json.dumps({
+        "status": "complete", "format_version": 2, "run_id": "run-cell",
+        "artifacts": {"responses": _artifact_descriptor(responses),
+                      "trails": _artifact_descriptor(trails)},
+    }), encoding="utf-8")
     job = Job(
         job_id="job-owned-budget",
         command="run_matrix",
@@ -8081,54 +6713,24 @@ def test_budget_never_sums_or_mislabels_mixed_currencies(tmp_path: Path) -> None
     app.jobs[job.job_id] = job
     assert app.db.record_terminal(job, "a" * 40, [], state="complete", exit_code=0)
     # fable priced in EUR, haiku in USD - the SAME provider, two currencies.
-    (app.repo_root / "experiments" / "pricing.json").write_text(
-        json.dumps(
-            {
-                "providers": {
-                    "anthropic": {
-                        "models": {
-                            "claude-fable-5": {
-                                "rates": [
-                                    {
-                                        "effective_date": "2026-01-01",
-                                        "currency": "EUR",
-                                        "per_million_tokens": {"input": 2.0, "output": 10.0},
-                                    }
-                                ]
-                            },
-                            "claude-haiku-4-5-20251001": {
-                                "rates": [
-                                    {
-                                        "effective_date": "2026-01-01",
-                                        "currency": "USD",
-                                        "per_million_tokens": {"input": 1.0, "output": 5.0},
-                                    }
-                                ]
-                            },
-                        }
-                    }
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
+    (app.repo_root / "experiments" / "pricing.json").write_text(json.dumps({
+        "providers": {"anthropic": {"models": {
+            "claude-fable-5": {"rates": [{
+                "effective_date": "2026-01-01", "currency": "EUR",
+                "per_million_tokens": {"input": 2.0, "output": 10.0}}]},
+            "claude-haiku-4-5-20251001": {"rates": [{
+                "effective_date": "2026-01-01", "currency": "USD",
+                "per_million_tokens": {"input": 1.0, "output": 5.0}}]},
+        }}}}), encoding="utf-8")
     # Two budgets: Anthropic (has mixed-currency usage) and DeepSeek (none).
-    (app.repo_root / "experiments" / "budgets.json").write_text(
-        json.dumps(
-            {
-                "providers": [
-                    {
-                        "name": "Anthropic",
-                        "prepaid": "$100",
-                        "match": "anthropic",
-                        "funds": "prepaid",
-                    },
-                    {"name": "DeepSeek", "prepaid": "$50", "match": "deepseek", "funds": "prepaid"},
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
+    (app.repo_root / "experiments" / "budgets.json").write_text(json.dumps({
+        "providers": [
+            {"name": "Anthropic", "prepaid": "$100", "match": "anthropic",
+             "funds": "prepaid"},
+            {"name": "DeepSeek", "prepaid": "$50", "match": "deepseek",
+             "funds": "prepaid"},
+        ],
+    }), encoding="utf-8")
     app.handle("POST", "/db/reindex", {})
     _s, _c, body = app.handle("GET", "/stats?view=legacy")
     text = body.decode("utf-8")
@@ -8144,35 +6746,16 @@ def test_usd_prepaid_balance_is_not_subtracted_from_non_usd_spend(
     tmp_path: Path,
 ) -> None:
     app = _app(tmp_path)
-    app._usage_cost_rows = lambda: (
-        [
-            {
-                "role": "target",
-                "provider": "anthropic",
-                "model": "m",
-                "calls": 1,
-                "missing_tokens": 0,
-                "tokens": {
-                    name: 0
-                    for name in (
-                        "input",
-                        "output",
-                        "cache_read",
-                        "cache_write",
-                        "reasoning",
-                    )
-                },
-                "billable": True,
-                "cost": 10.0,
-                "currency": "EUR",
-                "by_currency": {"EUR": 10.0},
-                "missing": [],
-                "effective_date": "2026-01-01",
-                "auto_fetched": False,
-            }
-        ],
-        "",
-    )
+    app._usage_cost_rows = lambda: ([{
+        "role": "target", "provider": "anthropic", "model": "m",
+        "calls": 1, "missing_tokens": 0,
+        "tokens": {name: 0 for name in (
+            "input", "output", "cache_read", "cache_write", "reasoning",
+        )},
+        "billable": True, "cost": 10.0, "currency": "EUR",
+        "by_currency": {"EUR": 10.0}, "missing": [],
+        "effective_date": "2026-01-01", "auto_fetched": False,
+    }], "")
     app._budgets = lambda: [("Anthropic", "$100", "anthropic", "test")]
     try:
         card = app._spend_card()
@@ -8267,14 +6850,14 @@ def test_corrupt_database_is_visible_never_silent_empty(tmp_path: Path) -> None:
         status, _, body = app.handle("GET", path)
         text = body.decode("utf-8")
         assert status == 200, path
-        assert "Console database" in text or "Unavailable" in text or "unavailable" in text, path
+        assert "Console database" in text or "Unavailable" in text or \
+            "unavailable" in text, path
     # A launch without durable identity would orphan its process. Preserve the
     # corrupt file for recovery and refuse before starting a child.
     with pytest.raises(OSError, match="retain job identity before process launch"):
         app.start_job("webui_selftest", {"--selftest-sleep": "30"})
-    assert app.jobs and all(
-        job.process is None and job.state() == "failed" for job in app.jobs.values()
-    )
+    assert app.jobs and all(job.process is None and job.state() == "failed"
+                            for job in app.jobs.values())
     assert (state / "console.db").read_bytes() == b"not a sqlite file at all"
     app.close()
 
@@ -8287,50 +6870,20 @@ def test_stats_renders_real_level1_evidence(tmp_path: Path) -> None:
     # dry-run grid and the actual level1_evidence CLI, then render.
     app = _app(tmp_path)
     grid_root = app.results_root / "thesis" / "grid"
-    assert (
-        run_matrix.main(
-            [
-                "--dry-run",
-                "--corpora",
-                "synth",
-                "--limit",
-                "2",
-                "--seeds",
-                "0",
-                "--attackers",
-                "replay",
-                "--judges",
-                "rules,llm",
-                "--judge-model",
-                "mock",
-                "--max-queries",
-                "1",
-                "--max-turns",
-                "1",
-                "--out",
-                str(grid_root),
-            ]
-        )
-        == 0
-    )
+    assert run_matrix.main([
+        "--dry-run", "--corpora", "synth", "--limit", "2", "--seeds", "0",
+        "--attackers", "replay", "--judges", "rules,llm",
+        "--judge-model", "mock", "--max-queries", "1", "--max-turns", "1",
+        "--out", str(grid_root),
+    ]) == 0
     eligibility = next(grid_root.glob("eligibility-*.eligibility.json"))
     level1_dir = app.results_root / "thesis" / "level1"
     level1_dir.mkdir(parents=True)
-    assert (
-        level1_cli.main(
-            [
-                "--eligibility",
-                str(eligibility),
-                "--results",
-                str(grid_root),
-                "--out-json",
-                str(level1_dir / "level1.json"),
-                "--out-csv",
-                str(level1_dir / "level1.csv"),
-            ]
-        )
-        == 0
-    )
+    assert level1_cli.main([
+        "--eligibility", str(eligibility), "--results", str(grid_root),
+        "--out-json", str(level1_dir / "level1.json"),
+        "--out-csv", str(level1_dir / "level1.csv"),
+    ]) == 0
     run_job = Job(
         job_id="job-level1-grid",
         command="run_matrix",
@@ -8342,20 +6895,14 @@ def test_stats_renders_real_level1_evidence(tmp_path: Path) -> None:
     )
     app.jobs[run_job.job_id] = run_job
     assert app.db.record_terminal(
-        run_job,
-        "a" * 40,
-        [],
-        state="complete",
-        exit_code=0,
+        run_job, "a" * 40, [], state="complete", exit_code=0,
     )
     analysis_job = Job(
         job_id="job-level1-analysis",
         command="level1_evidence",
         argv=[
-            "--results",
-            str(grid_root),
-            "--out-json",
-            str(level1_dir / "level1.json"),
+            "--results", str(grid_root),
+            "--out-json", str(level1_dir / "level1.json"),
         ],
         directory=tmp_path / "job-level1-analysis",
         process=None,
@@ -8365,8 +6912,7 @@ def test_stats_renders_real_level1_evidence(tmp_path: Path) -> None:
     app.jobs[analysis_job.job_id] = analysis_job
     assert app.db.upsert_job(analysis_job, state="complete", exit_code=0)
     status, _, body = app.handle(
-        "GET",
-        "/stats/job/job-level1-grid?fragment=1",
+        "GET", "/stats/job/job-level1-grid?fragment=1",
     )
     text = body.decode("utf-8")
     assert status == 200
@@ -8383,18 +6929,14 @@ def test_stats_page_survives_malformed_level1_count(tmp_path: Path) -> None:
     app = _app(tmp_path)
     bad = app.results_root / "thesis" / "level1"
     bad.mkdir(parents=True)
-    (bad / "level1.json").write_text(
-        json.dumps(
-            {
-                "schema_version": "ura-level1-evidence/2",
-                "scope": {"evidence_kind": "measured_run"},
-                "counts": {
-                    "execution_units": {"unit": "cells", "attempted": {"weird": "nested-object"}},
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
+    (bad / "level1.json").write_text(json.dumps({
+        "schema_version": "ura-level1-evidence/2",
+        "scope": {"evidence_kind": "measured_run"},
+        "counts": {
+            "execution_units": {"unit": "cells",
+                                "attempted": {"weird": "nested-object"}},
+        },
+    }), encoding="utf-8")
     status, _, body = app.handle("GET", "/stats?view=legacy")
     assert status == 200  # the page did not crash
     text = body.decode("utf-8")
@@ -8535,34 +7077,32 @@ def test_stats_never_indexes_last_wins_duplicate_report_authority(
     _validate_report_document("level1", json.loads(raw_level1))
 
     row = {field: None for field in _LEVEL2_ROW_FIELDS}
-    row.update(
-        {
-            "run_id": "run-1",
-            "corpus_arm": "arm",
-            "model_spec": "api:model",
-            "resolved_model": "model",
-            "source": "source",
-            "risk_category": "risk",
-            "effective_modality": "text",
-            "expected_behavior": "refuse",
-            "attacker": "replay",
-            "defense": "none",
-            "semantic_family": "safety",
-            "metric": "ASR",
-            "metric_authority": "authoritative_or_source_native",
-            "value": 0.5,
-            "ci_low": 0.25,
-            "ci_high": 0.75,
-            "n_records": 1,
-            "n_clusters": 1,
-            "judgments_completed": 1,
-            "judgments_evaluable": 1,
-            "judgments_decided": 1,
-            "judgments_abstained": 0,
-            "judgments_non_evaluable": 0,
-            "cross_stratum_pooling_permitted": False,
-        }
-    )
+    row.update({
+        "run_id": "run-1",
+        "corpus_arm": "arm",
+        "model_spec": "api:model",
+        "resolved_model": "model",
+        "source": "source",
+        "risk_category": "risk",
+        "effective_modality": "text",
+        "expected_behavior": "refuse",
+        "attacker": "replay",
+        "defense": "none",
+        "semantic_family": "safety",
+        "metric": "ASR",
+        "metric_authority": "authoritative_or_source_native",
+        "value": 0.5,
+        "ci_low": 0.25,
+        "ci_high": 0.75,
+        "n_records": 1,
+        "n_clusters": 1,
+        "judgments_completed": 1,
+        "judgments_evaluable": 1,
+        "judgments_decided": 1,
+        "judgments_abstained": 0,
+        "judgments_non_evaluable": 0,
+        "cross_stratum_pooling_permitted": False,
+    })
     level2: dict[str, object] = {
         "schema_version": "ura-level2-report/1",
         "status": "deterministic_compatible_stratum_export",
@@ -8587,7 +7127,8 @@ def test_stats_never_indexes_last_wins_duplicate_report_authority(
     assert raw_level2.count(authority_field) == 1
     raw_level2 = raw_level2.replace(
         authority_field,
-        '"metric_authority": "supplementary_non_authoritative",\n        ' + authority_field,
+        '"metric_authority": "supplementary_non_authoritative",\n        '
+        + authority_field,
         1,
     )
     _validate_report_document("level2", json.loads(raw_level2))
@@ -8611,13 +7152,8 @@ def test_stats_never_indexes_last_wins_duplicate_report_authority(
 
 def test_level1_validation_rejects_inconsistent_judgment_counts() -> None:
     base = {
-        "unit": "judgment_record",
-        "completed": 2,
-        "evaluable": 2,
-        "decided": 1,
-        "abstained": 1,
-        "non_evaluable": 0,
-        "included": None,
+        "unit": "judgment_record", "completed": 2, "evaluable": 2,
+        "decided": 1, "abstained": 1, "non_evaluable": 0, "included": None,
     }
 
     def document(judgments: dict[str, object]) -> dict[str, object]:
@@ -8635,16 +7171,12 @@ def test_level1_validation_rejects_inconsistent_judgment_counts() -> None:
                 "execution_units": {"unit": "execution_unit", "completed": 1},
                 "judgment_records": judgments,
                 "request_level_errors": {
-                    "unit": "request_error_artifact",
-                    "observed": 0,
+                    "unit": "request_error_artifact", "observed": 0,
                 },
             },
         }
         material = json.dumps(
-            result,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
+            result, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
             allow_nan=False,
         ).encode("utf-8")
         result["evidence_id"] = "level1-" + hashlib.sha256(material).hexdigest()[:24]
@@ -8652,9 +7184,13 @@ def test_level1_validation_rejects_inconsistent_judgment_counts() -> None:
 
     _validate_report_document("level1", document(dict(base)))
     with pytest.raises(ValueError, match="decision counts do not reconcile"):
-        _validate_report_document("level1", document({**base, "completed": 3}))
+        _validate_report_document(
+            "level1", document({**base, "completed": 3})
+        )
     with pytest.raises(ValueError, match="evaluable judgment counts do not reconcile"):
-        _validate_report_document("level1", document({**base, "evaluable": 1}))
+        _validate_report_document(
+            "level1", document({**base, "evaluable": 1})
+        )
 
 
 def test_level1_validation_separates_and_reconciles_proxy_counts() -> None:
@@ -8692,13 +7228,11 @@ def test_level1_validation_separates_and_reconciles_proxy_counts() -> None:
                     "observed": 0,
                 },
             },
-            "planning_strata": [
-                {
-                    "approximate_proxy_evaluable_judgment_records": 1,
-                    "approximate_proxy_decided_judgment_records": 1,
-                    "approximate_proxy_abstained_judgment_records": 0,
-                }
-            ],
+            "planning_strata": [{
+                "approximate_proxy_evaluable_judgment_records": 1,
+                "approximate_proxy_decided_judgment_records": 1,
+                "approximate_proxy_abstained_judgment_records": 0,
+            }],
         }
         material = json.dumps(
             result,
@@ -8716,9 +7250,7 @@ def test_level1_validation_separates_and_reconciles_proxy_counts() -> None:
 
 
 def test_stats_renders_real_level2_report(
-    tmp_path: Path,
-    monkeypatch,
-    project_revision_args,
+    tmp_path: Path, monkeypatch, project_revision_args,
 ) -> None:
     # The Level-2 card renders the REAL producer's document from a measured
     # cohort (offline stable local target + probe + receipt + measured grid).
@@ -8726,43 +7258,20 @@ def test_stats_renders_real_level2_report(
     app = _app(tmp_path)
     root = app.results_root / "thesis" / "measured"
     measured_args = [
-        "--local",
-        "vllm:fixture/local-model",
-        "--local-config",
-        str(tmp_path / "local-targets.json"),
-        "--attackers",
-        "replay",
-        "--judges",
-        "rules",
-        "--corpora",
-        "synth",
-        "--limit",
-        "1",
-        "--sample-seed",
-        "0",
-        "--max-queries",
-        "1",
-        "--max-turns",
-        "1",
-        "--max-total-target-calls",
-        "100000",
-        "--max-total-judge-calls",
-        "100000",
-        "--max-total-http-attempts",
-        "100000",
-        "--deadline-seconds",
-        "3600",
+        "--local", "vllm:fixture/local-model",
+        "--local-config", str(tmp_path / "local-targets.json"),
+        "--attackers", "replay", "--judges", "rules", "--corpora", "synth",
+        "--limit", "1", "--sample-seed", "0",
+        "--max-queries", "1", "--max-turns", "1",
+        "--max-total-target-calls", "100000",
+        "--max-total-judge-calls", "100000",
+        "--max-total-http-attempts", "100000", "--deadline-seconds", "3600",
         *project_revision_args,
-        "--execution-scope-id",
-        "webtest-scope",
-        "--live-attestation",
-        str(receipt),
-        "--live-attestation-sha256",
-        sha,
-        "--live-attestation-max-age-hours",
-        "1",
-        "--out",
-        str(root),
+        "--execution-scope-id", "webtest-scope",
+        "--live-attestation", str(receipt),
+        "--live-attestation-sha256", sha,
+        "--live-attestation-max-age-hours", "1",
+        "--out", str(root),
     ]
     acquisition_args = _sealed_web_model_acquisition_args(
         tmp_path / "measured-model-acquisition",
@@ -8771,34 +7280,24 @@ def test_stats_renders_real_level2_report(
     assert run_matrix.main([*measured_args, *acquisition_args]) == 0
     level2_dir = app.results_root / "thesis" / "level2"
     level2_dir.mkdir(parents=True)
-    assert (
-        level2_cli.main(
-            [
-                "--results",
-                str(root),
-                "--out-json",
-                str(level2_dir / "level2.json"),
-                "--out-csv",
-                str(level2_dir / "level2.csv"),
-                "--out-md",
-                str(level2_dir / "level2.md"),
-            ]
-        )
-        == 0
+    assert level2_cli.main([
+        "--results", str(root),
+        "--out-json", str(level2_dir / "level2.json"),
+        "--out-csv", str(level2_dir / "level2.csv"),
+        "--out-md", str(level2_dir / "level2.md"),
+    ]) == 0
+    report = json.loads(
+        (level2_dir / "level2.json").read_text(encoding="utf-8")
     )
-    report = json.loads((level2_dir / "level2.json").read_text(encoding="utf-8"))
     assert report["schema_version"] == "ura-level2-report/2"
     metrics = {row["metric"] for row in report["common"]["estimates"]}
     run_job = Job(
         job_id="job-level2-grid",
         command="run_matrix",
         argv=[
-            "--local",
-            "vllm:fixture/local-model",
-            "--corpora",
-            "synth",
-            "--out",
-            str(root),
+            "--local", "vllm:fixture/local-model",
+            "--corpora", "synth",
+            "--out", str(root),
         ],
         directory=tmp_path / "job-level2-grid",
         process=None,
@@ -8807,20 +7306,14 @@ def test_stats_renders_real_level2_report(
     )
     app.jobs[run_job.job_id] = run_job
     assert app.db.record_terminal(
-        run_job,
-        "a" * 40,
-        [],
-        state="complete",
-        exit_code=0,
+        run_job, "a" * 40, [], state="complete", exit_code=0,
     )
     analysis_job = Job(
         job_id="job-level2-analysis",
         command="level2_report",
         argv=[
-            "--results",
-            str(root),
-            "--out-json",
-            str(level2_dir / "level2.json"),
+            "--results", str(root),
+            "--out-json", str(level2_dir / "level2.json"),
         ],
         directory=tmp_path / "job-level2-analysis",
         process=None,
@@ -8832,8 +7325,7 @@ def test_stats_renders_real_level2_report(
     index = app.handle("GET", "/stats?view=legacy")[2].decode("utf-8")
     assert "class='barchart'" not in index
     status, _, body = app.handle(
-        "GET",
-        "/stats/job/job-level2-grid?fragment=1",
+        "GET", "/stats/job/job-level2-grid?fragment=1",
     )
     text = body.decode("utf-8")
     assert status == 200
@@ -8862,38 +7354,21 @@ def test_stats_renders_real_level2_report(
     ],
 )
 def test_level2_validation_rejects_malformed_ci_and_sample_sizes(
-    mutation: dict[str, object],
-    message: str,
+    mutation: dict[str, object], message: str,
 ) -> None:
     row = {field: None for field in _LEVEL2_ROW_FIELDS}
-    row.update(
-        {
-            "run_id": "run-1",
-            "corpus_arm": "arm",
-            "model_spec": "api:model",
-            "resolved_model": "model",
-            "source": "source",
-            "risk_category": "risk",
-            "effective_modality": "text",
-            "expected_behavior": "refuse",
-            "attacker": "replay",
-            "defense": "none",
-            "semantic_family": "safety",
-            "metric": "ASR",
-            "value": 0.5,
-            "ci_low": 0.25,
-            "ci_high": 0.75,
-            "n_records": 1,
-            "n_clusters": 1,
-            "judgments_completed": 1,
-            "judgments_evaluable": 1,
-            "judgments_decided": 1,
-            "judgments_abstained": 0,
-            "judgments_non_evaluable": 0,
-            "metric_authority": "authoritative_or_source_native",
-            "cross_stratum_pooling_permitted": False,
-        }
-    )
+    row.update({
+        "run_id": "run-1", "corpus_arm": "arm", "model_spec": "api:model",
+        "resolved_model": "model", "source": "source", "risk_category": "risk",
+        "effective_modality": "text", "expected_behavior": "refuse",
+        "attacker": "replay", "defense": "none", "semantic_family": "safety",
+        "metric": "ASR", "value": 0.5, "ci_low": 0.25, "ci_high": 0.75,
+        "n_records": 1, "n_clusters": 1, "judgments_completed": 1,
+        "judgments_evaluable": 1, "judgments_decided": 1,
+        "judgments_abstained": 0, "judgments_non_evaluable": 0,
+        "metric_authority": "authoritative_or_source_native",
+        "cross_stratum_pooling_permitted": False,
+    })
 
     def document(estimate: dict[str, object]) -> dict[str, object]:
         result: dict[str, object] = {
@@ -8908,10 +7383,7 @@ def test_level2_validation_rejects_malformed_ci_and_sample_sizes(
             "common": {"n_estimate_rows": 1, "estimates": [estimate]},
         }
         material = json.dumps(
-            result,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
+            result, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
             allow_nan=False,
         ).encode("utf-8")
         result["report_id"] = "level2-" + hashlib.sha256(material).hexdigest()[:24]
@@ -8956,46 +7428,44 @@ def test_level2_approximate_contract_is_strict_and_visibly_warned(
         limitations=["fixture construct mismatch"],
     ).model_dump(mode="json")
     row = {field: None for field in _LEVEL2_ROW_FIELDS}
-    row.update(
-        {
-            "run_id": "run-1",
-            "corpus_arm": "arm",
-            "model_spec": "mock",
-            "resolved_model": "mock",
-            "source": "source",
-            "risk_category": "risk",
-            "effective_modality": "text",
-            "expected_behavior": "refuse",
-            "attacker": "replay",
-            "defense": "none",
-            "ordered_judges": ["rules"],
-            "seeds": [0],
-            "semantic_family": "approximate_unsafe_response_rate",
-            "metric": "approximate_ASR",
-            "endpoint_status": "approximate_common_proxy",
-            "metric_authority": "supplementary_non_authoritative",
-            "warning_tag": "warning_synthetic_approximate",
-            "evidence_class": "synthetic",
-            "reliability_score": 0.08,
-            "reliability_kind": "uncalibrated_heuristic_indicator_not_probability",
-            "approximate_provenance": proxy,
-            "approximate_model_query_count": 0,
-            "approximate_source_reference_use_count": 0,
-            "polarity": "higher_adverse",
-            "value": 0.5,
-            "ci_low": 0.25,
-            "ci_high": 0.75,
-            "n_records": 1,
-            "n_clusters": 1,
-            "execution_modes": ["direct_prompt"],
-            "judgments_completed": 1,
-            "judgments_evaluable": 1,
-            "judgments_decided": 1,
-            "judgments_abstained": 0,
-            "judgments_non_evaluable": 0,
-            "cross_stratum_pooling_permitted": False,
-        }
-    )
+    row.update({
+        "run_id": "run-1",
+        "corpus_arm": "arm",
+        "model_spec": "mock",
+        "resolved_model": "mock",
+        "source": "source",
+        "risk_category": "risk",
+        "effective_modality": "text",
+        "expected_behavior": "refuse",
+        "attacker": "replay",
+        "defense": "none",
+        "ordered_judges": ["rules"],
+        "seeds": [0],
+        "semantic_family": "approximate_unsafe_response_rate",
+        "metric": "approximate_ASR",
+        "endpoint_status": "approximate_common_proxy",
+        "metric_authority": "supplementary_non_authoritative",
+        "warning_tag": "warning_synthetic_approximate",
+        "evidence_class": "synthetic",
+        "reliability_score": 0.08,
+        "reliability_kind": "uncalibrated_heuristic_indicator_not_probability",
+        "approximate_provenance": proxy,
+        "approximate_model_query_count": 0,
+        "approximate_source_reference_use_count": 0,
+        "polarity": "higher_adverse",
+        "value": 0.5,
+        "ci_low": 0.25,
+        "ci_high": 0.75,
+        "n_records": 1,
+        "n_clusters": 1,
+        "execution_modes": ["direct_prompt"],
+        "judgments_completed": 1,
+        "judgments_evaluable": 1,
+        "judgments_decided": 1,
+        "judgments_abstained": 0,
+        "judgments_non_evaluable": 0,
+        "cross_stratum_pooling_permitted": False,
+    })
 
     def document(estimate: dict[str, object]) -> dict[str, object]:
         result: dict[str, object] = {
@@ -9098,11 +7568,11 @@ def test_stop_kills_the_complete_child_process_tree(tmp_path: Path) -> None:
     repo.mkdir()
     (repo / "spawner.py").write_text(
         "import subprocess, sys\n"
-        'code = ("import time, pathlib\\n"\n'
+        "code = (\"import time, pathlib\\n\"\n"
         "        \"p = pathlib.Path('heartbeat.txt')\\n\"\n"
-        '        "while True:\\n"\n'
-        '        "    p.write_text(str(time.time()))\\n"\n'
-        '        "    time.sleep(0.2)\\n")\n'
+        "        \"while True:\\n\"\n"
+        "        \"    p.write_text(str(time.time()))\\n\"\n"
+        "        \"    time.sleep(0.2)\\n\")\n"
         "child = subprocess.Popen([sys.executable, '-c', code])\n"
         "child.wait()\n",
         encoding="utf-8",
@@ -9111,10 +7581,8 @@ def test_stop_kills_the_complete_child_process_tree(tmp_path: Path) -> None:
     results.mkdir()
     commands = {"spawner": Command("spawner", "spawner", "tree test", ())}
     app = RigWebApp(
-        results_root=results,
-        state_dir=tmp_path / "state",
-        repo_root=repo,
-        commands=commands,
+        results_root=results, state_dir=tmp_path / "state",
+        repo_root=repo, commands=commands,
     )
     job = app.start_job("spawner", {})
     heartbeat = repo / "heartbeat.txt"
@@ -9141,11 +7609,11 @@ def test_stop_tree_repeatable_no_survivors(tmp_path: Path) -> None:
     repo.mkdir()
     (repo / "spawner.py").write_text(
         "import subprocess, sys\n"
-        'code = ("import time, pathlib\\n"\n'
+        "code = (\"import time, pathlib\\n\"\n"
         "        \"p = pathlib.Path('heartbeat.txt')\\n\"\n"
-        '        "while True:\\n"\n'
-        '        "    p.write_text(str(time.time()))\\n"\n'
-        '        "    time.sleep(0.2)\\n")\n'
+        "        \"while True:\\n\"\n"
+        "        \"    p.write_text(str(time.time()))\\n\"\n"
+        "        \"    time.sleep(0.2)\\n\")\n"
         "child = subprocess.Popen([sys.executable, '-c', code])\n"
         "child.wait()\n",
         encoding="utf-8",
@@ -9154,10 +7622,8 @@ def test_stop_tree_repeatable_no_survivors(tmp_path: Path) -> None:
     results.mkdir()
     commands = {"spawner": Command("spawner", "spawner", "tree test", ())}
     app = RigWebApp(
-        results_root=results,
-        state_dir=tmp_path / "state",
-        repo_root=repo,
-        commands=commands,
+        results_root=results, state_dir=tmp_path / "state",
+        repo_root=repo, commands=commands,
     )
     heartbeat = repo / "heartbeat.txt"
     try:
@@ -9182,8 +7648,7 @@ def test_stop_tree_repeatable_no_survivors(tmp_path: Path) -> None:
 
 
 def test_posix_stop_sigkills_group_even_if_driver_exits_gracefully(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # POSIX Stop must escalate SIGKILL to the whole process GROUP after the
     # grace period even when the driver exited gracefully within it (a child
@@ -9191,15 +7656,12 @@ def test_posix_stop_sigkills_group_even_if_driver_exits_gracefully(
     # captured while the driver is alive, so a reaped driver cannot orphan it.
     import os as _os
     import signal as _signal
-
     monkeypatch.setattr(_signal, "SIGKILL", 9, raising=False)  # absent on Windows
     app = _app(tmp_path)
     signals: list[tuple[int, int]] = []
     monkeypatch.setattr(_os, "getpgid", lambda pid: 4242, raising=False)
     monkeypatch.setattr(
-        _os,
-        "killpg",
-        lambda pgid, sig: signals.append((pgid, sig)),
+        _os, "killpg", lambda pgid, sig: signals.append((pgid, sig)),
         raising=False,
     )
 
@@ -9215,7 +7677,8 @@ def test_posix_stop_sigkills_group_even_if_driver_exits_gracefully(
         def send_signal(self, sig):
             signals.append((-1, sig))  # driver-only fallback marker
 
-    job = Job(job_id="grace", command="x", argv=[], directory=tmp_path, process=_GracefulDriver())
+    job = Job(job_id="grace", command="x", argv=[], directory=tmp_path,
+              process=_GracefulDriver())
     app._terminate_tree_posix(job, job.process)
     # SIGKILL reached the captured GROUP id, not merely the exited driver.
     assert (4242, _signal.SIGKILL) in signals
@@ -9238,7 +7701,6 @@ def test_stop_error_surfaced_when_tree_cannot_be_confirmed(tmp_path: Path) -> No
 
         def wait(self, timeout=None):
             import subprocess as _sp
-
             raise _sp.TimeoutExpired("cmd", timeout)
 
         def kill(self):
@@ -9248,10 +7710,7 @@ def test_stop_error_surfaced_when_tree_cannot_be_confirmed(tmp_path: Path) -> No
             pass
 
     job = Job(
-        job_id="stuck",
-        command="spawner",
-        argv=[],
-        directory=tmp_path,
+        job_id="stuck", command="spawner", argv=[], directory=tmp_path,
         process=_Undying(),
     )
     app._terminate_tree(job)
@@ -9262,18 +7721,11 @@ def test_stop_error_surfaced_when_tree_cannot_be_confirmed(tmp_path: Path) -> No
     app.close()
 
 
-@pytest.mark.parametrize(
-    "flag,suffix",
-    [
-        ("--out-json", "json"),
-        ("--out-csv", "csv"),
-        ("--out-md", "md"),
-    ],
-)
+@pytest.mark.parametrize("flag,suffix", [
+    ("--out-json", "json"), ("--out-csv", "csv"), ("--out-md", "md"),
+])
 def test_job_links_structured_report_outputs_within_results_root(
-    tmp_path: Path,
-    flag: str,
-    suffix: str,
+    tmp_path: Path, flag: str, suffix: str,
 ) -> None:
     app = _isolated_app(tmp_path)
     target = app.results_root / f"classification-report.{suffix}"
@@ -9281,13 +7733,8 @@ def test_job_links_structured_report_outputs_within_results_root(
     outside = tmp_path / f"private.{suffix}"
     outside.write_text("not a published output", encoding="utf-8")
     try:
-        job = Job(
-            job_id="source-report",
-            command="level2_report",
-            argv=[flag, str(target)],
-            directory=tmp_path,
-            process=None,
-        )
+        job = Job(job_id="source-report", command="level2_report",
+                  argv=[flag, str(target)], directory=tmp_path, process=None)
         page = app._job_page(job).decode("utf-8")
         assert f"href='/artifacts?path={target.name}'" in page
         assert f"{flag}: {target.name}</a>" in page
@@ -9310,14 +7757,9 @@ def test_http_post_body_limit_enforced(tmp_path: Path) -> None:
     try:
         connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
         oversized = "content=" + "x" * (3 * 1024 * 1024)
-        connection.request(
-            "POST",
-            "/config",
-            body=oversized,
-            headers={
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
-        )
+        connection.request("POST", "/config", body=oversized, headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+        })
         assert connection.getresponse().status == 413
         connection.close()
         connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
@@ -9381,17 +7823,11 @@ def test_dry_lane_never_composes_a_real_hosted_judge(tmp_path: Path) -> None:
         ("dry_run", {"corpora": "synth"}),
         ("diagnostic_canary", {"canary_dry": "on", "limit": "1"}),
     ):
-        _cmd, values, _params = app._compose_from_builder(
-            {
-                "mode": mode,
-                "attackers": "replay",
-                "judges": "rules,llm",
-                "judge_model": "anthropic:claude-haiku-4-5-20251001",
-                "out": "runs/d",
-                "seeds": "0",
-                **extra,
-            }
-        )
+        _cmd, values, _params = app._compose_from_builder({
+            "mode": mode, "attackers": "replay", "judges": "rules,llm",
+            "judge_model": "anthropic:claude-haiku-4-5-20251001",
+            "out": "runs/d", "seeds": "0", **extra,
+        })
         assert values["--dry-run"] == "on"
         assert values["--judge-model"] == "mock", (mode, values)
     app.close()
@@ -9415,9 +7851,7 @@ def test_dry_lane_child_env_scrubs_receipt_vars(tmp_path: Path, monkeypatch) -> 
 
     monkeypatch.setattr(_sp, "Popen", spy)
     job = app.start_job(
-        "webui_selftest",
-        {"--selftest-sleep": "0"},
-        scrub_receipt_env=True,
+        "webui_selftest", {"--selftest-sleep": "0"}, scrub_receipt_env=True,
     )
     env = captured["env"]
     assert env is not None
@@ -9435,34 +7869,14 @@ def test_openai_cached_input_not_double_billed() -> None:
     # the cache rate.
     cats = _tokens_by_category(
         {"input": 100000, "output": 5000, "total": 105000},
-        {
-            "input_tokens": 100000,
-            "output_tokens": 5000,
-            "input_tokens_details": {"cached_tokens": 80000},
-        },
+        {"input_tokens": 100000, "output_tokens": 5000,
+         "input_tokens_details": {"cached_tokens": 80000}},
     )
     assert cats["input"] == 20000 and cats["cache_read"] == 80000
-    pricing = {
-        "providers": {
-            "openai": {
-                "models": {
-                    "gpt-x": {
-                        "rates": [
-                            {
-                                "effective_date": "2026-01-01",
-                                "currency": "USD",
-                                "per_million_tokens": {
-                                    "input": 2.5,
-                                    "output": 10.0,
-                                    "cache_read": 1.25,
-                                },
-                            }
-                        ]
-                    }
-                }
-            }
-        }
-    }
+    pricing = {"providers": {"openai": {"models": {"gpt-x": {"rates": [{
+        "effective_date": "2026-01-01", "currency": "USD",
+        "per_million_tokens": {"input": 2.5, "output": 10.0, "cache_read": 1.25},
+    }]}}}}}
     rows = compute_costs(
         {("target", "openai", "gpt-x", "2026-08-16"): {"calls": 1, **cats}},
         pricing,
@@ -9471,19 +7885,10 @@ def test_openai_cached_input_not_double_billed() -> None:
     assert rows[0]["cost"] == pytest.approx(0.05 + 0.05 + 0.1)
     # Fable's uncached_input is already net and must not be re-subtracted.
     fable = _tokens_by_category(
-        {
-            "input": 1200,
-            "output": 300,
-            "uncached_input": 1000,
-            "cached_input": 150,
-            "cache_write_input": 50,
-        },
-        {
-            "input_tokens": 1000,
-            "output_tokens": 300,
-            "cache_read_input_tokens": 150,
-            "cache_creation_input_tokens": 50,
-        },
+        {"input": 1200, "output": 300, "uncached_input": 1000,
+         "cached_input": 150, "cache_write_input": 50},
+        {"input_tokens": 1000, "output_tokens": 300,
+         "cache_read_input_tokens": 150, "cache_creation_input_tokens": 50},
     )
     assert fable["input"] == 1000 and fable["cache_read"] == 150
 
@@ -9502,30 +7907,14 @@ def test_reasoning_tokens_are_displayed_not_separately_billed() -> None:
     # void the cost when unpriced, nor be billed a second time when priced.
     cats = _tokens_by_category(
         {"input": 1000, "output": 300},
-        {
-            "input_tokens": 1000,
-            "output_tokens": 300,
-            "output_tokens_details": {"thinking_tokens": 120},
-        },
+        {"input_tokens": 1000, "output_tokens": 300,
+         "output_tokens_details": {"thinking_tokens": 120}},
     )
     assert cats["reasoning"] == 120 and cats["output"] == 300
-    pricing = {
-        "providers": {
-            "anthropic": {
-                "models": {
-                    "m": {
-                        "rates": [
-                            {
-                                "effective_date": "2026-01-01",
-                                "currency": "USD",
-                                "per_million_tokens": {"input": 2.0, "output": 10.0},
-                            }
-                        ]
-                    }
-                }
-            }
-        }
-    }
+    pricing = {"providers": {"anthropic": {"models": {"m": {"rates": [{
+        "effective_date": "2026-01-01", "currency": "USD",
+        "per_million_tokens": {"input": 2.0, "output": 10.0},
+    }]}}}}}
     rows = compute_costs(
         {("target", "anthropic", "m", "2026-08-16"): {"calls": 1, **cats}},
         pricing,
@@ -9536,27 +7925,16 @@ def test_reasoning_tokens_are_displayed_not_separately_billed() -> None:
 
 
 def test_rate_for_rejects_non_iso_effective_date() -> None:
-    bad = {
-        "providers": {
-            "anthropic": {
-                "models": {
-                    "m": {
-                        "rates": [
-                            {
-                                "effective_date": "2026-8-1",
-                                "currency": "USD",
-                                "per_million_tokens": {"input": 1.0},
-                            }
-                        ]
-                    }
-                }
-            }
-        }
-    }
+    bad = {"providers": {"anthropic": {"models": {"m": {"rates": [{
+        "effective_date": "2026-8-1", "currency": "USD",
+        "per_million_tokens": {"input": 1.0},
+    }]}}}}}
     rate, why = rate_for(bad, "anthropic", "m")
     assert rate is None and "ISO" in why
 
-    bad["providers"]["anthropic"]["models"]["m"]["rates"][0]["effective_date"] = "2026-02-30"
+    bad["providers"]["anthropic"]["models"]["m"]["rates"][0][
+        "effective_date"
+    ] = "2026-02-30"
     rate, why = rate_for(bad, "anthropic", "m")
     assert rate is None and "ISO" in why
 
@@ -9566,19 +7944,12 @@ def test_builder_probe_auto_fixes_one_query_one_turn(tmp_path: Path) -> None:
     # composes them so the argv matches the shape run_matrix enforces (rather
     # than inheriting the driver default of 4 and dying at the CLI).
     app = _operator_registry_app(tmp_path)
-    _cmd, values, _params = app._compose_from_builder(
-        {
-            "mode": "attestation_probe",
-            "corpora": "strongreject_official",
-            "api": "anthropic:claude-opus-5",
-            "attackers": "replay",
-            "judges": "rules",
-            "limit": "1",
-            "seeds": "0",
-            "scope": "s",
-            "out": "runs/p",
-        }
-    )
+    _cmd, values, _params = app._compose_from_builder({
+        "mode": "attestation_probe", "corpora": "strongreject_official",
+        "api": "anthropic:claude-opus-5", "attackers": "replay",
+        "judges": "rules", "limit": "1", "seeds": "0", "scope": "s",
+        "out": "runs/p",
+    })
     assert values["--max-queries"] == "1" and values["--max-turns"] == "1"
     app.close()
 
@@ -9591,15 +7962,9 @@ def test_builder_dry_canary_composes_synth_and_validates(tmp_path: Path) -> None
     # offline LLM judge's planned/realized identity remains covered end to end.
     app = _operator_registry_app(tmp_path)
     form = {
-        "mode": "diagnostic_canary",
-        "canary_dry": "on",
-        "attackers": "replay",
-        "judges": "rules,llm",
-        "judge_model": "anthropic:claude-opus-5",
-        "limit": "1",
-        "seeds": "0",
-        "max_queries": "1",
-        "max_turns": "1",
+        "mode": "diagnostic_canary", "canary_dry": "on", "attackers": "replay",
+        "judges": "rules,llm", "judge_model": "anthropic:claude-opus-5",
+        "limit": "1", "seeds": "0", "max_queries": "1", "max_turns": "1",
         "out": str(app.results_root / "c"),
         "api": "anthropic:claude-opus-5",  # should be dropped for a dry canary
     }
@@ -9616,8 +7981,7 @@ def test_builder_dry_canary_composes_synth_and_validates(tmp_path: Path) -> None
 
 
 def test_builder_hosted_measured_requires_explicit_bounded_or_full_limit(
-    tmp_path: Path,
-    monkeypatch,
+    tmp_path: Path, monkeypatch,
 ) -> None:
     # A blank paid limit is never silently expanded. An explicit 0 selects the
     # complete arm, but still passes through projection, cap and approval gates.
@@ -9627,22 +7991,12 @@ def test_builder_hosted_measured_requires_explicit_bounded_or_full_limit(
     monkeypatch.setenv("URA_SOURCE_CONFORMANCE_SHA256", "b" * 64)
     app = _app(tmp_path)
     base = {
-        "mode": "measured",
-        "corpora": "strongreject_official",
-        "api": "anthropic:claude-opus-5",
-        "attackers": "replay",
-        "judges": "rules",
-        "out": "runs/m",
-        "seeds": "0",
-        "sample_seed": "0",
-        "scope": "sc",
-        "max_age": "24",
-        "att_path1": "a.json",
-        "att_sha1": "c" * 64,
-        "cap_target": "4",
-        "cap_judge": "4",
-        "cap_http": "12",
-        "deadline": "600",
+        "mode": "measured", "corpora": "strongreject_official",
+        "api": "anthropic:claude-opus-5", "attackers": "replay",
+        "judges": "rules", "out": "runs/m", "seeds": "0", "sample_seed": "0",
+        "scope": "sc", "max_age": "24", "att_path1": "a.json",
+        "att_sha1": "c" * 64, "cap_target": "4", "cap_judge": "4",
+        "cap_http": "12", "deadline": "600",
     }
     blank = dict(base)
     blank.pop("sample_seed")
@@ -9657,8 +8011,7 @@ def test_builder_hosted_measured_requires_explicit_bounded_or_full_limit(
 
 
 def test_builder_measured_argv_is_self_contained_from_env(
-    tmp_path: Path,
-    monkeypatch,
+    tmp_path: Path, monkeypatch,
 ) -> None:
     # MED: a measured lane admitted via campaign-env receipts must compose
     # those receipts into the argv, so the retained "Exact command" reproduces
@@ -9675,29 +8028,18 @@ def test_builder_measured_argv_is_self_contained_from_env(
     monkeypatch.setenv("URA_SOURCE_CONFORMANCE_SHA256", source_sha)
     app = _operator_registry_app(tmp_path)
     attestation_receipt = tmp_path / "a.json"
-    attestation_receipt.write_text('{"schema":"fixture-attestation"}\n', encoding="utf-8")
-    attestation_sha = hashlib.sha256(attestation_receipt.read_bytes()).hexdigest()
-    _cmd, values, _params = app._compose_from_builder(
-        {
-            "mode": "measured",
-            "corpora": "strongreject_official",
-            "api": "anthropic:claude-opus-5",
-            "attackers": "replay",
-            "judges": "rules",
-            "out": "runs/m",
-            "seeds": "0",
-            "sample_seed": "0",
-            "scope": "sc",
-            "max_age": "24",
-            "att_path1": str(attestation_receipt),
-            "att_sha1": attestation_sha,
-            "cap_target": "4",
-            "cap_judge": "4",
-            "cap_http": "12",
-            "deadline": "600",
-            "limit": "5",
-        }
+    attestation_receipt.write_text(
+        '{"schema":"fixture-attestation"}\n', encoding="utf-8"
     )
+    attestation_sha = hashlib.sha256(attestation_receipt.read_bytes()).hexdigest()
+    _cmd, values, _params = app._compose_from_builder({
+        "mode": "measured", "corpora": "strongreject_official",
+        "api": "anthropic:claude-opus-5", "attackers": "replay",
+        "judges": "rules", "out": "runs/m", "seeds": "0", "sample_seed": "0",
+        "scope": "sc", "max_age": "24", "att_path1": str(attestation_receipt),
+        "att_sha1": attestation_sha, "cap_target": "4", "cap_judge": "4",
+        "cap_http": "12", "deadline": "600", "limit": "5",
+    })
     private_project_receipt = Path(values["--project-revision"])
     assert private_project_receipt != project_receipt
     assert private_project_receipt.parent.name == ".private-project-revision"
@@ -9718,34 +8060,18 @@ def test_builder_measured_argv_is_self_contained_from_env(
 
 def test_builder_rejects_bad_seeds_and_whitespace_scope(tmp_path: Path) -> None:
     app = _app(tmp_path)
-    assert "seeds" in app._validate_builder(
-        {
-            "mode": "dry_run",
-            "corpora": "synth",
-            "attackers": "replay",
-            "out": "runs/d",
-            "seeds": "0,0",
-        }
-    )
-    assert "seeds" in app._validate_builder(
-        {
-            "mode": "dry_run",
-            "corpora": "synth",
-            "attackers": "replay",
-            "out": "runs/d",
-            "seeds": "abc",
-        }
-    )
-    assert "scope" in app._validate_builder(
-        {
-            "mode": "dry_run",
-            "corpora": "synth",
-            "attackers": "replay",
-            "out": "runs/d",
-            "seeds": "0",
-            "scope": "bad scope",
-        }
-    )
+    assert "seeds" in app._validate_builder({
+        "mode": "dry_run", "corpora": "synth", "attackers": "replay",
+        "out": "runs/d", "seeds": "0,0",
+    })
+    assert "seeds" in app._validate_builder({
+        "mode": "dry_run", "corpora": "synth", "attackers": "replay",
+        "out": "runs/d", "seeds": "abc",
+    })
+    assert "scope" in app._validate_builder({
+        "mode": "dry_run", "corpora": "synth", "attackers": "replay",
+        "out": "runs/d", "seeds": "0", "scope": "bad scope",
+    })
     app.close()
 
 
@@ -9753,16 +8079,10 @@ def test_reindexed_query_param_is_html_escaped(tmp_path: Path) -> None:
     # HIGH XSS: the reindexed summary comes from the URL query string and must
     # be html-escaped before entering the dashboard notice.
     app = _app(tmp_path)
-    payload = json.dumps(
-        {
-            "ok": True,
-            "usage_rows": 0,
-            "markers": 0,
-            "reports": 0,
-            "roots": 1,
-            "x": "<img src=x onerror=alert(1)>",
-        }
-    )
+    payload = json.dumps({
+        "ok": True, "usage_rows": 0, "markers": 0, "reports": 0, "roots": 1,
+        "x": "<img src=x onerror=alert(1)>",
+    })
     from urllib.parse import quote as _q
 
     status, _, body = app.handle("GET", f"/?reindexed={_q(payload)}")
@@ -9778,23 +8098,12 @@ def test_level2_render_escapes_artifact_numeric_fields(tmp_path: Path) -> None:
     app = _app(tmp_path)
     doc = {
         "schema_version": "ura-level2-report/1",
-        "common": {
-            "n_estimate_rows": 1,
-            "estimates": [
-                {
-                    "metric": "ASR",
-                    "model_spec": "m",
-                    "corpus_arm": "a",
-                    "attacker": "replay",
-                    "defense": "none",
-                    "value": 0.5,
-                    "n_records": "<b>10</b>",
-                    "n_clusters": "<i>3</i>",
-                    "semantic_family": "unsafe_response_rate",
-                    "polarity": "higher_adverse",
-                }
-            ],
-        },
+        "common": {"n_estimate_rows": 1, "estimates": [{
+            "metric": "ASR", "model_spec": "m", "corpus_arm": "a",
+            "attacker": "replay", "defense": "none", "value": 0.5,
+            "n_records": "<b>10</b>", "n_clusters": "<i>3</i>",
+            "semantic_family": "unsafe_response_rate", "polarity": "higher_adverse",
+        }]},
     }
     text = app._render_level2("l2.json", doc)
     assert "<b>10</b>" not in text and "&lt;b&gt;10&lt;/b&gt;" in text
@@ -9806,29 +8115,14 @@ def test_level2_incompatible_populations_charted_separately(tmp_path: Path) -> N
     # separate stratum sections, never pooled or labelled by the first row.
     app = _app(tmp_path)
     try:
-        doc = {
-            "schema_version": "ura-level2-report/1",
-            "common": {
-                "estimates": [
-                    {
-                        "metric": "ASR",
-                        "model_spec": "m",
-                        "value": 0.5,
-                        "semantic_family": "unsafe_response_rate",
-                        "population": "single_turn",
-                        "source": "s1",
-                    },
-                    {
-                        "metric": "ASR",
-                        "model_spec": "m",
-                        "value": 0.9,
-                        "semantic_family": "unsafe_response_rate",
-                        "population": "multi_turn",
-                        "source": "s1",
-                    },
-                ]
-            },
-        }
+        doc = {"schema_version": "ura-level2-report/1", "common": {"estimates": [
+            {"metric": "ASR", "model_spec": "m", "value": 0.5,
+             "semantic_family": "unsafe_response_rate",
+             "population": "single_turn", "source": "s1"},
+            {"metric": "ASR", "model_spec": "m", "value": 0.9,
+             "semantic_family": "unsafe_response_rate",
+             "population": "multi_turn", "source": "s1"},
+        ]}}
         html_out = app._render_level2("l2.json", doc)
         assert html_out.count("<h3>") == 2  # two separate stratum sections
         assert "population=single_turn" in html_out
@@ -9852,27 +8146,19 @@ def test_level2_incompatible_populations_charted_separately(tmp_path: Path) -> N
     ],
 )
 def test_level2_full_contract_axes_define_separate_charts(
-    tmp_path: Path,
-    field: str,
-    left: object,
-    right: object,
+    tmp_path: Path, field: str, left: object, right: object,
 ) -> None:
     app = _app(tmp_path)
     try:
         base = {
-            "metric": "ASR",
-            "semantic_family": "unsafe_response_rate",
-            "model_spec": "api:m",
-            "resolved_model": "m",
-            "source": "s",
-            "population": "single_turn",
-            "value": 0.5,
+            "metric": "ASR", "semantic_family": "unsafe_response_rate",
+            "model_spec": "api:m", "resolved_model": "m", "source": "s",
+            "population": "single_turn", "value": 0.5,
         }
         first = {**base, field: left}
         second = {**base, field: right}
         out = app._render_level2(
-            "l2.json",
-            {"common": {"estimates": [first, second]}},
+            "l2.json", {"common": {"estimates": [first, second]}},
         )
         assert out.count("<h3>") == 2, field
     finally:
@@ -9885,18 +8171,13 @@ def test_level2_no_silent_truncation(tmp_path: Path) -> None:
     app = _app(tmp_path)
     try:
         estimates = [
-            {
-                "metric": "ASR",
-                "model_spec": "m",
-                "value": 0.1,
-                "semantic_family": "unsafe_response_rate",
-                "population": "p",
-                "source": "s",
-                "n_records": i,
-            }
+            {"metric": "ASR", "model_spec": "m", "value": 0.1,
+             "semantic_family": "unsafe_response_rate", "population": "p",
+             "source": "s", "n_records": i}
             for i in range(50)
         ]
-        doc = {"schema_version": "ura-level2-report/1", "common": {"estimates": estimates}}
+        doc = {"schema_version": "ura-level2-report/1",
+               "common": {"estimates": estimates}}
         html_out = app._render_level2("l2.json", doc)
         assert "40 of 50" in html_out  # explicit "showing X of N" for the chart
         # One header plus all 50 data rows: the table is never truncated.
@@ -9915,8 +8196,7 @@ def test_level1_unknown_scope_is_not_measured(tmp_path: Path) -> None:
             assert ">measured<" not in out
         # The exact measured kind still maps to measured; diagnostic stays.
         measured = app._render_level1(
-            "l1.json",
-            {"scope": {"evidence_kind": "measured_run"}, "counts": {}},
+            "l1.json", {"scope": {"evidence_kind": "measured_run"}, "counts": {}},
         )
         assert "badge blue'>measured" in measured
         diag = app._render_level1(
@@ -9993,8 +8273,9 @@ def test_stranded_runs_v1_is_recovered_on_open(tmp_path: Path) -> None:
     runs = db.list_runs()
     assert runs is not None and runs[0]["job_id"] == "job-strand"
     tables = {
-        str(row[0])
-        for row in (db._query("SELECT name FROM sqlite_master WHERE type='table'") or [])
+        str(row[0]) for row in (db._query(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ) or [])
     }
     assert "runs_v1" not in tables
     db.close()
@@ -10085,39 +8366,18 @@ def test_headless_reindex_and_usage_report_cli(tmp_path: Path, capsys) -> None:
         restored_exit=0,
     )
     assert seeded.record_terminal(
-        owned,
-        "a" * 40,
-        [],
-        state="complete",
-        exit_code=0,
+        owned, "a" * 40, [], state="complete", exit_code=0,
     )
     seeded.close()
-    assert (
-        rig_web.main(
-            [
-                "--results-root",
-                str(results),
-                "--state-dir",
-                str(state),
-                "--reindex",
-            ]
-        )
-        == 0
-    )
+    assert rig_web.main([
+        "--results-root", str(results), "--state-dir", str(state), "--reindex",
+    ]) == 0
     reindex_out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert reindex_out["ok"] and reindex_out["usage_rows"] >= 1
-    assert (
-        rig_web.main(
-            [
-                "--results-root",
-                str(results),
-                "--state-dir",
-                str(state),
-                "--usage-report",
-            ]
-        )
-        == 0
-    )
+    assert rig_web.main([
+        "--results-root", str(results), "--state-dir", str(state),
+        "--usage-report",
+    ]) == 0
     report = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert report["schema"] == "ura-console-usage-report/1"
     assert any(row["provider"] == "anthropic" for row in report["rows"])
@@ -10126,18 +8386,15 @@ def test_headless_reindex_and_usage_report_cli(tmp_path: Path, capsys) -> None:
 def test_source_conformance_multi_arm_is_composable() -> None:
     # MED parity: --arm/--observation are action=append on the CLI, so the
     # console offers them as repeatable rows and can build a multi-arm scaffold.
-    argv = build_argv(
-        "source_conformance",
-        {
-            "--scaffold": "on",
-            "--arm": "strongreject_official",
-            "--arm#1": "advbench_harmful",
-            "--observation": "strongreject_official=runs/o1",
-            "--observation#1": "advbench_harmful=runs/o2",
-            "--source-config": "experiments/source-instances.json",
-            "--out": "runs/sc.json",
-        },
-    )
+    argv = build_argv("source_conformance", {
+        "--scaffold": "on",
+        "--arm": "strongreject_official",
+        "--arm#1": "advbench_harmful",
+        "--observation": "strongreject_official=runs/o1",
+        "--observation#1": "advbench_harmful=runs/o2",
+        "--source-config": "experiments/source-instances.json",
+        "--out": "runs/sc.json",
+    })
     assert argv.count("--arm") == 2 and argv.count("--observation") == 2
     assert argv.index("strongreject_official") < argv.index("advbench_harmful")
 
@@ -10179,8 +8436,7 @@ def _secrets_app(tmp_path: Path) -> RigWebApp:
 
 
 def test_set_secret_writes_file_and_environ_never_returns_value(
-    tmp_path: Path,
-    clean_secret_env,
+    tmp_path: Path, clean_secret_env,
 ) -> None:
     app = _secrets_app(tmp_path)
     secret = "sk-ant-THISVALUE-abcd1234"
@@ -10212,8 +8468,7 @@ def test_secret_status_masks_value(tmp_path: Path, clean_secret_env) -> None:
 
 
 def test_secrets_page_never_renders_the_value(
-    tmp_path: Path,
-    clean_secret_env,
+    tmp_path: Path, clean_secret_env,
 ) -> None:
     app = _secrets_app(tmp_path)
     app.set_secret("MOONSHOT_API_KEY", "sk-moon-RAWSECRET-lmno4321")
@@ -10250,8 +8505,7 @@ def test_set_secret_rejects_bad_input(tmp_path: Path, clean_secret_env) -> None:
 
 
 def test_set_secret_written_line_is_shell_safe(
-    tmp_path: Path,
-    clean_secret_env,
+    tmp_path: Path, clean_secret_env,
 ) -> None:
     # A stored key round-trips through the env file with exactly one token: the
     # sourced line must define only NAME=<value>, never a second command.
@@ -10264,8 +8518,7 @@ def test_set_secret_written_line_is_shell_safe(
 
 
 def test_set_secret_rotate_replaces_without_duplicate(
-    tmp_path: Path,
-    clean_secret_env,
+    tmp_path: Path, clean_secret_env,
 ) -> None:
     app = _secrets_app(tmp_path)
     app.set_secret("ANTHROPIC_API_KEY", "sk-ant-FIRST-0001")
@@ -10277,8 +8530,7 @@ def test_set_secret_rotate_replaces_without_duplicate(
 
 
 def test_clear_secret_removes_from_file_and_environ(
-    tmp_path: Path,
-    clean_secret_env,
+    tmp_path: Path, clean_secret_env,
 ) -> None:
     app = _secrets_app(tmp_path)
     app.set_secret("DEEPSEEK_API_KEY", "sk-deepseek-GONE-5555")
@@ -10291,20 +8543,13 @@ def test_clear_secret_removes_from_file_and_environ(
 
 
 def test_post_secrets_set_redirects_without_leaking_value(
-    tmp_path: Path,
-    clean_secret_env,
+    tmp_path: Path, clean_secret_env,
 ) -> None:
     app = _secrets_app(tmp_path)
     secret = "sk-ant-POSTED-9999"
-    status, location, _ = app.handle(
-        "POST",
-        "/config/secrets",
-        {
-            "name": "ANTHROPIC_API_KEY",
-            "action": "set",
-            "value": secret,
-        },
-    )
+    status, location, _ = app.handle("POST", "/config/secrets", {
+        "name": "ANTHROPIC_API_KEY", "action": "set", "value": secret,
+    })
     assert status == 303
     # The value must never appear in the redirect target.
     assert secret not in location
@@ -10314,45 +8559,30 @@ def test_post_secrets_set_redirects_without_leaking_value(
 
 
 def test_post_secrets_clear_removes_key(
-    tmp_path: Path,
-    clean_secret_env,
+    tmp_path: Path, clean_secret_env,
 ) -> None:
     app = _secrets_app(tmp_path)
     app.set_secret("OPENAI_API_KEY", "sk-openai-CLEARME-1111")
-    status, location, _ = app.handle(
-        "POST",
-        "/config/secrets",
-        {
-            "name": "OPENAI_API_KEY",
-            "action": "clear",
-        },
-    )
+    status, location, _ = app.handle("POST", "/config/secrets", {
+        "name": "OPENAI_API_KEY", "action": "clear",
+    })
     assert status == 303
     assert "OPENAI_API_KEY" not in os.environ
 
 
 def test_post_secrets_invalid_shows_error_not_500(
-    tmp_path: Path,
-    clean_secret_env,
+    tmp_path: Path, clean_secret_env,
 ) -> None:
     app = _secrets_app(tmp_path)
-    status, ctype, body = app.handle(
-        "POST",
-        "/config/secrets",
-        {
-            "name": "ANTHROPIC_API_KEY",
-            "action": "set",
-            "value": "",
-        },
-    )
+    status, ctype, body = app.handle("POST", "/config/secrets", {
+        "name": "ANTHROPIC_API_KEY", "action": "set", "value": "",
+    })
     assert status == 200  # rendered form with an inline error, not a crash
     assert "must not be empty" in body.decode("utf-8")
 
 
 def test_set_secret_write_fault_raises_valueerror(
-    tmp_path: Path,
-    clean_secret_env,
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, clean_secret_env, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app = _secrets_app(tmp_path)
 
@@ -10365,9 +8595,7 @@ def test_set_secret_write_fault_raises_valueerror(
 
 
 def test_post_secrets_write_fault_shows_error_not_500(
-    tmp_path: Path,
-    clean_secret_env,
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, clean_secret_env, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # A filesystem write fault must render the "Not saved" page, not 500.
     app = _secrets_app(tmp_path)
@@ -10376,15 +8604,9 @@ def test_post_secrets_write_fault_shows_error_not_500(
         raise OSError("disk full")
 
     monkeypatch.setattr(os, "replace", failing_replace)
-    status, _ctype, body = app.handle(
-        "POST",
-        "/config/secrets",
-        {
-            "name": "ANTHROPIC_API_KEY",
-            "action": "set",
-            "value": "sk-ant-value",
-        },
-    )
+    status, _ctype, body = app.handle("POST", "/config/secrets", {
+        "name": "ANTHROPIC_API_KEY", "action": "set", "value": "sk-ant-value",
+    })
     assert status == 200
     assert "could not write the secrets file" in body.decode("utf-8")
 
@@ -10400,9 +8622,7 @@ def test_set_secret_writes_lf_line_endings(tmp_path: Path, clean_secret_env) -> 
 
 
 def test_clear_secret_unreadable_file_fails_closed(
-    tmp_path: Path,
-    clean_secret_env,
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, clean_secret_env, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # If the file is present but unreadable, Clear must NOT report success while
     # the key survives on disk (it would resurrect on the next source).
@@ -10424,9 +8644,7 @@ def test_clear_secret_unreadable_file_fails_closed(
 
 
 def test_set_secret_unreadable_file_does_not_clobber_other_keys(
-    tmp_path: Path,
-    clean_secret_env,
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, clean_secret_env, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app = _secrets_app(tmp_path)
     app.set_secret("GEMINI_API_KEY", "sk-gem-keep")
@@ -10445,8 +8663,7 @@ def test_set_secret_unreadable_file_does_not_clobber_other_keys(
 
 
 def test_set_secret_is_serialized_by_secret_lock(
-    tmp_path: Path,
-    clean_secret_env,
+    tmp_path: Path, clean_secret_env,
 ) -> None:
     app = _secrets_app(tmp_path)
     done: list[bool] = []
@@ -10471,9 +8688,7 @@ def test_pricing_fetch_banner_reports_zero_match_provider() -> None:
         "rates_written": 0,
         "providers": {
             "anthropic": {
-                "url": "https://a",
-                "matched": [],
-                "unmatched": ["claude-x"],
+                "url": "https://a", "matched": [], "unmatched": ["claude-x"],
                 "note": "",
             },
         },
@@ -10501,9 +8716,7 @@ def test_pricing_fetch_banner_reports_added_roster_models() -> None:
 
 
 def test_set_secret_atomic_write_preserves_prior_file_on_fault(
-    tmp_path: Path,
-    clean_secret_env,
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, clean_secret_env, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # A mid-write fault must leave the PRIOR secrets file intact (atomic), not
     # an empty/truncated file, and no stray .tmp behind.
@@ -10526,14 +8739,11 @@ def test_rate_for_same_date_operator_beats_auto_any_order() -> None:
     # The billing resolver must bill at the operator's same-date rate, never the
     # auto-fetched one, regardless of which entry is first in the list.
     auto = {
-        "effective_date": "2026-08-16",
-        "currency": "USD",
-        "per_million_tokens": {"input": 1.4, "output": 4.4},
-        "auto_fetched": True,
+        "effective_date": "2026-08-16", "currency": "USD",
+        "per_million_tokens": {"input": 1.4, "output": 4.4}, "auto_fetched": True,
     }
     operator = {
-        "effective_date": "2026-08-16",
-        "currency": "USD",
+        "effective_date": "2026-08-16", "currency": "USD",
         "per_million_tokens": {"input": 9.99, "output": 9.99},
     }
     for order in ([auto, operator], [operator, auto]):
@@ -10545,21 +8755,20 @@ def test_rate_for_same_date_operator_beats_auto_any_order() -> None:
 
 def _auto_rate(inp: float, out: float, date: str = "2026-08-16") -> dict:
     return {
-        "effective_date": date,
-        "currency": "USD",
+        "effective_date": date, "currency": "USD",
         "per_million_tokens": {"input": inp, "output": out},
-        "auto_fetched": True,
-        "source_url": "https://z/pricing",
-        "fetched_at": date,
+        "auto_fetched": True, "source_url": "https://z/pricing", "fetched_at": date,
     }
 
 
 def test_reconcile_pricing_ownership_deauthes_edited_rate() -> None:
-    current = {"providers": {"glm": {"models": {"glm-5.2": {"rates": [_auto_rate(1.4, 4.4)]}}}}}
+    current = {"providers": {"glm": {"models": {"glm-5.2": {
+        "rates": [_auto_rate(1.4, 4.4)]}}}}}
     # Operator corrected input to 9.99 in place, keeping the auto flags.
     edited = _auto_rate(1.4, 4.4)
     edited["per_million_tokens"]["input"] = 9.99
-    submitted = {"providers": {"glm": {"models": {"glm-5.2": {"rates": [edited]}}}}}
+    submitted = {"providers": {"glm": {"models": {"glm-5.2": {
+        "rates": [edited]}}}}}
     reconcile_pricing_ownership(submitted, current)
     rate = submitted["providers"]["glm"]["models"]["glm-5.2"]["rates"][0]
     assert "auto_fetched" not in rate
@@ -10568,8 +8777,10 @@ def test_reconcile_pricing_ownership_deauthes_edited_rate() -> None:
 
 
 def test_reconcile_pricing_ownership_keeps_untouched_rate() -> None:
-    current = {"providers": {"glm": {"models": {"glm-5.2": {"rates": [_auto_rate(1.4, 4.4)]}}}}}
-    submitted = {"providers": {"glm": {"models": {"glm-5.2": {"rates": [_auto_rate(1.4, 4.4)]}}}}}
+    current = {"providers": {"glm": {"models": {"glm-5.2": {
+        "rates": [_auto_rate(1.4, 4.4)]}}}}}
+    submitted = {"providers": {"glm": {"models": {"glm-5.2": {
+        "rates": [_auto_rate(1.4, 4.4)]}}}}}
     reconcile_pricing_ownership(submitted, current)
     rate = submitted["providers"]["glm"]["models"]["glm-5.2"]["rates"][0]
     assert rate.get("auto_fetched") is True  # unchanged: provenance retained
@@ -10584,9 +8795,8 @@ def test_edited_fetched_rate_survives_refetch(tmp_path: Path) -> None:
     (repo / "experiments" / "rig").mkdir(parents=True, exist_ok=True)
     pricing_path = repo / "experiments" / "pricing.json"
     pricing_path.write_text(
-        json.dumps(
-            {"providers": {"glm": {"models": {"glm-5.2": {"rates": [_auto_rate(1.4, 4.4)]}}}}}
-        ),
+        json.dumps({"providers": {"glm": {"models": {"glm-5.2": {
+            "rates": [_auto_rate(1.4, 4.4)]}}}}}),
         encoding="utf-8",
     )
     (repo / "experiments" / "pricing-sources.json").write_text(
@@ -10596,31 +8806,29 @@ def test_edited_fetched_rate_survives_refetch(tmp_path: Path) -> None:
     results = tmp_path / "runs"
     results.mkdir()
     app = RigWebApp(
-        results_root=results,
-        state_dir=tmp_path / "state",
-        repo_root=repo,
+        results_root=results, state_dir=tmp_path / "state", repo_root=repo,
     )
     # Operator edits the fetched rate's input to 9.99 in place and saves.
     edited = _auto_rate(1.4, 4.4)
     edited["per_million_tokens"]["input"] = 9.99
-    content = json.dumps({"providers": {"glm": {"models": {"glm-5.2": {"rates": [edited]}}}}})
+    content = json.dumps({"providers": {"glm": {"models": {"glm-5.2": {
+        "rates": [edited]}}}}})
     app.save_config("pricing", content)
     saved = json.loads(pricing_path.read_text("utf-8"))
     rate = saved["providers"]["glm"]["models"]["glm-5.2"]["rates"][0]
     assert "auto_fetched" not in rate  # de-authed on save
 
     # A re-fetch on the same date must not revert the correction.
-    glm_html = (Path(__file__).parent / "fixtures" / "pricing" / "glm.html").read_text("utf-8")
+    glm_html = (Path(__file__).parent / "fixtures" / "pricing" / "glm.html").read_text(
+        "utf-8"
+    )
     summary = pricing_fetch.fetch_pricing(
-        repo,
-        today="2026-08-16",
-        fetcher=lambda url: glm_html,
+        repo, today="2026-08-16", fetcher=lambda url: glm_html,
     )
     assert summary["rates_written"] == 0
     final = json.loads(pricing_path.read_text("utf-8"))
     effective = pricing_fetch._current_effective(
-        final["providers"]["glm"]["models"]["glm-5.2"],
-        "2026-08-16",
+        final["providers"]["glm"]["models"]["glm-5.2"], "2026-08-16",
     )
     assert effective["per_million_tokens"]["input"] == 9.99
 
@@ -10629,16 +8837,15 @@ def test_rate_for_skips_null_placeholder_and_bills_earlier_operator_rate() -> No
     # A later-dated all-null placeholder must not shadow an operator's earlier
     # real rate: the billed figure is the operator's, not N/A.
     operator = {
-        "effective_date": "2026-08-10",
-        "currency": "USD",
+        "effective_date": "2026-08-10", "currency": "USD",
         "per_million_tokens": {"input": 9.99, "output": 9.99},
     }
     placeholder = {
-        "effective_date": "2026-08-16",
-        "currency": "USD",
+        "effective_date": "2026-08-16", "currency": "USD",
         "per_million_tokens": {"input": None, "output": None},
     }
-    pricing = {"providers": {"glm": {"models": {"glm-5.2": {"rates": [operator, placeholder]}}}}}
+    pricing = {"providers": {"glm": {"models": {"glm-5.2": {
+        "rates": [operator, placeholder]}}}}}
     rate, why = rate_for(pricing, "glm", "glm-5.2", on_date="2026-08-16")
     assert why == ""
     assert rate["per_million_tokens"]["input"] == 9.99
@@ -10685,19 +8892,15 @@ def test_pricing_fetch_route_delegates_and_redirects(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     (repo / "experiments" / "rig").mkdir(parents=True, exist_ok=True)
     (repo / "experiments" / "pricing.json").write_text(
-        json.dumps({"providers": {}}),
-        encoding="utf-8",
+        json.dumps({"providers": {}}), encoding="utf-8",
     )
     (repo / "experiments" / "pricing-sources.json").write_text(
-        json.dumps({"providers": {}}),
-        encoding="utf-8",
+        json.dumps({"providers": {}}), encoding="utf-8",
     )
     results = tmp_path / "runs"
     results.mkdir()
     app = RigWebApp(
-        results_root=results,
-        state_dir=tmp_path / "state",
-        repo_root=repo,
+        results_root=results, state_dir=tmp_path / "state", repo_root=repo,
     )
     status, location, _ = app.handle("POST", "/pricing/fetch", {})
     assert status == 303
