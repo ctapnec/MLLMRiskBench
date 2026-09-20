@@ -261,6 +261,7 @@ def export_rows(data):
 
 
 def render(data, campaign, query):
+    from .comparison_insights import overview
     from .workspace_comparison import CHOICES, FILTERS, render_groups, _condition_tokens
     from .workspace_judging_charts import _judge_name
 
@@ -386,6 +387,21 @@ def render(data, campaign, query):
             )
         )
 
+    content += overview(
+        [
+            dict(
+                rows=p["rows"],
+                title=_ui_text(
+                    "comparison_insights.pair_title",
+                    left=model_label(p["left"]["model"]),
+                    left_condition=p["left"]["number"],
+                    right=model_label(p["right"]["model"]),
+                    right_condition=p["right"]["number"],
+                ),
+            )
+            for p in data["pairs"]
+        ]
+    )
     for pair in data["pairs"]:
         rows = pair["rows"]
         matched = sum(r["count"] for r in rows if r["match_status"] == "matched")
@@ -395,6 +411,8 @@ def render(data, campaign, query):
             if r["match_status"] == "matched"
             and r["left_status"] == "valid"
             and r["right_status"] == "valid"
+            and r["left_label"] is not None
+            and r["right_label"] is not None
         )
         content += (
             "<details class='comparison-pair' data-model-comparison><summary>"
@@ -439,7 +457,12 @@ def render(data, campaign, query):
             )
         )
         content += (
-            render_groups(rows)
+            render_groups(
+                rows,
+                left_name=model_label(pair["left"]["model"]),
+                right_name=model_label(pair["right"]["model"]),
+                context={"left_campaign": campaign, **pair["query"]},
+            )
             if rows
             else _ui_template(
                 "<p>[[text:workspace_comparison_many.no_measured_inputs_in_these_conditions_under_the_selected_filters]]</p>"

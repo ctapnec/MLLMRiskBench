@@ -207,6 +207,25 @@ source-native metrics and approximate common metrics are not pooled. Report
 benign judging coverage beside over-refusal. Page exports and full campaign cost
 exports have different scopes and label them explicitly.
 
+Compare exposes a page-scoped source-by-condition-pair difference heatmap and
+paired percentage plots. Each measure uses a common denominator on both sides:
+all matched assignments for outcome yield, jointly valid non-null labels for
+exact label prevalence, or jointly known flags for truncation. Unknown evidence
+is not drawn as zero. Labels are not aliased; not_applicable remains a recorded
+label. Different labels across different target answers are not automatically
+judge disagreement. Source strata and generation conditions are never pooled
+into a global safety ranking. These are descriptive proportions, not native
+benchmark success rates, significance tests or causal estimates.
+
+The figures reuse the existing indexed comparison counts without extra SQL,
+model loading, artifact scans or rescoring. Metric switching and selected SVG
+export are browser-local and survive asynchronous comparison-form updates.
+The vector chart and the original page CSV share the same selected count rows.
+The All view remains bounded to twelve condition pairs per page. Both the
+page scope and repeated-input caveat remain visible. Test common denominators,
+missing/ambiguous inputs, replaced responses, source filters, pagination,
+catalog coverage, escaping, narrow screens, all themes and downloaded SVG data.
+
 Job comparison uses indexed measured outcomes and their recorded ownership;
 a shared recovery output directory cannot be credited independently to two jobs.
 SVM Stats presents retained studies, held-out metrics, baselines, class support

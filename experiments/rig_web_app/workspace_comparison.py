@@ -589,7 +589,12 @@ def _comparison_body(db, campaign, query):
             "'>[[text:workspace_comparison.download_this_page_s_counts]]</a></p><p id='campaign-export-status' role='status'></p>"
         )
     )
-    content += render_groups([row for group in groups[:12] for row in group])
+    content += render_groups(
+        [row for group in groups[:12] for row in group],
+        left_name=many.model_label(query["left_model"]),
+        right_name=many.model_label(query["right_model"]),
+        context={"left_campaign": campaign, **saved},
+    )
     for label, number in (
         (_ui_text("workspace_comparison.previous"), page - 1),
         (_ui_text("workspace_comparison.next"), page + 1),
@@ -606,8 +611,10 @@ def _comparison_body(db, campaign, query):
     return form + explanation + "<div data-comparison-results>" + content + "</div>"
 
 
-def render_groups(rows):
-    content = ""
+def render_groups(rows, *, left_name="", right_name="", context=None):
+    from .comparison_insights import detail
+
+    content = detail(rows, left_name=left_name, right_name=right_name, context=context)
     for group in comparison_groups(rows):
         totals = {
             key: sum(row["count"] for row in group if row["match_status"] == key)
@@ -823,6 +830,8 @@ def coverage_chart(totals):
 
 
 def comparison_page(db, campaign, query):
+    from .comparison_insights import SCRIPT
+
     return (
         "<div id='campaign-comparison'><p data-comparison-feedback role='status' aria-live='polite'></p>"
         "<div data-comparison-body>"
@@ -830,6 +839,7 @@ def comparison_page(db, campaign, query):
         + "</div></div>"
         + EXPORT_SCRIPT
         + COMPARISON_SCRIPT
+        + SCRIPT
     )
 
 

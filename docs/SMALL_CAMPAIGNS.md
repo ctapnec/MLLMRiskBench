@@ -472,8 +472,41 @@ no latest/best output is selected and no scores are pooled. Choosing All starts
 no jobs. An
 available judge is never substituted for a missing selected judge.
 
-The view contains up to twelve model/generation-setting pairs per page. Expand
-a pair to inspect source-specific outcomes, missing responses and judgments.
+The view contains up to twelve model/generation-setting pairs per page. Above
+the expandable pairs, **Where do model outcomes differ?** shows a heatmap:
+
+1. Use **Compare a measure** above the heatmap. Recorded violation labels are
+   initially shown when that label exists in paired evidence; otherwise it shows usable-response
+   yield. You can select missing responses, provider-policy outcomes, observed
+   truncation or another exact recorded label. Switching measures makes no
+   backend request and starts no work.
+2. Each column is a model/condition pair, each row a corpus/framework/modality.
+   A cell shows right minus left in percentage points and the common sample
+   size. A positive difference is not automatically better: more usable answers
+   and more violation labels have different meanings. Hatched **N/A** cells
+   lack eligible paired evidence; they are not a tie or zero rate.
+3. Expand a pair. **Paired evidence at a glance** shows matched input-task pairs,
+   paired labels, different labels and missing paired judgments. The source
+   plots place the left circle and right square on the same percentage scale,
+   with both counts and the difference. Their own **Compare a measure** selector
+   is independent of the overview selector.
+4. Click **Download selected chart (SVG)** for the current pair's selected
+   vector plot. Keep **Download this page's counts** beside it for the exact
+   generation/judging identities and source counts. The SVG also retains the
+   exact selection in its metadata. On narrow screens, scroll
+   within a chart or heatmap rather than shrinking its labels.
+5. Expand **Measure definition and limitations** when interpreting a measure.
+   Outcome proportions use all matched assignments, including pending work.
+   Label proportions use only pairs with two valid, non-null labels. Truncation
+   uses only pairs with flags known on both sides. Different labels measure
+   judge disagreement only when the two judges assessed the same saved answer.
+   These descriptive plots do not establish benchmark attack-success rates,
+   causal effects or statistically significant model rankings.
+
+Single explicit-condition comparisons show the same paired plots directly,
+without the multi-pair heatmap. The detailed coverage rings, label matrices and
+outcome tables remain below the plots.
+
 Next/Previous and the CSV download refer to these same pairs. Each exported
 row identifies the actual models and generation settings. Do not add counts
 across pairs as independent inputs or treat condition numbers as equivalent
@@ -490,9 +523,10 @@ the active corpus/framework/modality filters. Ties remain separate. Token rules
 rank only fully recorded, uniform finite settings; unknown, mixed or
 native-maximum settings are listed as unranked, not guessed.
 
-Usable-response rate is usable outputs divided by saved terminal responses
+The **Highest usable-response rate** selection rule uses usable outputs divided by saved terminal responses
 (usable, provider-policy or missing). Pending responses do not enter that
-denominator. Inspect the usable/terminal counts and total assigned count:
+denominator. This is distinct from the plot's usable-response yield, which
+includes pending matched assignments. Inspect the usable/terminal counts and total assigned count:
 small or incomplete conditions can rank highest. This is an exploratory,
 post-hoc selection, not attack success, safety or a universal optimum. Preserve
 the selection rule in reporting; the CSV includes it beside the exact chosen
