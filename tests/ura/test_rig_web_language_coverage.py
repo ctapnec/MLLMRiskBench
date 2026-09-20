@@ -324,6 +324,15 @@ def test_lifecycle_count_fields_and_job_filter_states_have_labels():
             assert keys <= display_labels.LABELS.keys(), keys - display_labels.LABELS.keys()
 
 
+def test_imported_cohort_names_remain_data_not_shared_catalog_policy():
+    from experiments.rig_web_app import display_labels
+
+    value = "an_unseen_cohort_<&>"
+    assert display_labels.data_label(value) == "an unseen cohort <&>"
+    assert display_labels.label(value) == value
+    assert value not in display_labels.LABELS
+
+
 @pytest.mark.parametrize(
     "source",
     [

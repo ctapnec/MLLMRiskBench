@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-from .display_labels import label as _ui_label
+from .display_labels import data_label, label as _ui_label
 from .i18n import template as _ui_template, text as _ui_text
 
 import hashlib
@@ -2268,7 +2268,7 @@ class DashboardMixin:
             parts.append(
                 (
                     "<h4>"
-                    + f"{_ui_label(cohort)}"
+                    + f"{html.escape(data_label(cohort))}"
                     + _ui_template(" [[text:dashboard.source_frame]]</h4>")
                 )
                 + self._count_bar_chart(
@@ -3059,7 +3059,7 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
             state_counts[state] = state_counts.get(state, 0) + 1
 
         cohort_chart = self._count_bar_chart(
-            [(_ui_label(str(cohort)), int(cohort_counts[cohort])) for cohort in cohort_order],
+            [(data_label(cohort), int(cohort_counts[cohort])) for cohort in cohort_order],
             label=_ui_text("dashboard.campaign_terminal_rows_by_cohort"),
         )
         state_chart = self._count_bar_chart(

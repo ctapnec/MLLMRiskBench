@@ -47,6 +47,9 @@ with scripts through `window.uraLabel`. The option's value, request parameter
 and saved rating are still the original identifier. Unknown identifiers and
 research content pass through unchanged. Never decide pagination, numeric
 validity, cost completeness or execution behavior by comparing display text.
+Imported cohort tags are data, not shared UI vocabulary. Their display may
+separate underscore-delimited words, but must not introduce campaign-specific
+policy into the application or alter the stored tag.
 
 Command flags, model/corpus identifiers, enum values, stored scientific labels,
 provider errors and original prompts, answers, judgments and logs remain in
