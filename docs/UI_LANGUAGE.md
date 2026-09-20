@@ -78,6 +78,9 @@ independent of the UI catalog and can still execute directly.
    inspect decoded Python literals and explicit HTML entities.
    Negative controls keep HTTP headers, CSS classes, SQL, keyboard keys,
    capture-method identifiers and retained log markers out of translations.
+   `tests/ura/test_rig_web_language_confirmation.py` independently round-trips
+   every message through HTML, attributes and browser script contexts. It also
+   checks browser-generated review states and preserves their stored values.
 4. Exercise the relevant real page and its errors, loading states and recovery
    controls. Language work must not change execution semantics or research data.
 

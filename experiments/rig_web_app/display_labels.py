@@ -174,6 +174,7 @@ LABELS = {
     "draft": _ui_text("labels.draft"),
     "pending": _ui_text("labels.pending"),
     "submitted": _ui_text("labels.submitted"),
+    "unstarted": _ui_text("labels.unstarted"),
     "deferred": _ui_text("labels.deferred"),
     "outputs": _ui_text("labels.outputs"),
     "assignments": _ui_text("labels.assignments"),
