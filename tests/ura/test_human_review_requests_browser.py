@@ -91,8 +91,13 @@ def test_review_save_blocks_duplicates_and_recovers_without_losing_choices(
         ready(page)
         page.get_by_role("button", name="2. Refusal", exact=True).click()
         if outcome == "timeout":
+            # Trigger only the held request's deadline. A shortened global timer
+            # also times out the recovery save under concurrent browser load.
             page.evaluate("""()=>{const native=window.setTimeout;
-                window.setTimeout=(fn,ms,...args)=>native(fn,ms===30000?250:ms,...args);} """)
+                window.setTimeout=(fn,ms,...args)=>{
+                    if(ms===30000){window.expireReviewRequest=()=>fn(...args);window.setTimeout=native;}
+                    return native(fn,ms,...args);
+                };} """)
         holding["rating"] = True
         page.locator("[data-rating=refusal_label]").select_option("not_refusal")
         page.evaluate("""()=>{const button=Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='Save draft');
@@ -116,6 +121,9 @@ def test_review_save_blocks_duplicates_and_recovers_without_losing_choices(
             held[0].abort("failed")
         elif outcome == "invalid_json":
             held[0].fulfill(status=200, content_type="text/html", body="<p>Not JSON</p>")
+        elif outcome == "timeout":
+            page.evaluate("window.expireReviewRequest()")
+            held[0].abort("timedout")
         page.wait_for_function("!window.uraBusy.isBusy()")
         status = page.locator("#review-status")
         if outcome == "success":
